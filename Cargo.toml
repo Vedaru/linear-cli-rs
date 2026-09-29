@@ -43,3 +43,14 @@ tempfile = "3"
 lto = true
 codegen-units = 1
 strip = true
+# Size over throughput: every command is network-bound, so the slower code this
+# generates is invisible next to an API round trip, while the binary itself ships
+# to servers and agents. Measured on the same source and toolchain:
+# 8.25 MiB -> 4.74 MiB (-43%), with peak memory unchanged.
+#
+# panic = "abort" additionally drops the unwinding tables (.eh_frame,
+# .gcc_except_table) that stripping cannot remove. Nothing in this crate catches
+# panics and tests run on the dev profile, so abort is safe here - but a
+# release-mode test run would need -Z panic-abort-tests.
+opt-level = "z"
+panic = "abort"
