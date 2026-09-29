@@ -342,7 +342,12 @@ pub fn parse_linear_url(value: &str) -> LinearUrlParse {
                 return unsupported(format!("\"{raw}\" does not end in a Linear slug ID"));
             };
             let tail = rest[1..].join("/");
-            if !tail.is_empty() && !(entity == "project" && PROJECT_SUBPAGES.contains(&tail.as_str())) {
+            // Written as `!(A || (B && C))` rather than `!A && !(B && C)`:
+            // clippy's `nonminimal_bool` flags the second shape under the
+            // toolchain CI pins, and this is the same predicate.
+            if !(tail.is_empty()
+                || entity == "project" && PROJECT_SUBPAGES.contains(&tail.as_str()))
+            {
                 return unsupported(format!("\"{tail}\" is not a page this command can use"));
             }
             if !anchor.is_empty() && !PROJECT_UPDATE_ANCHOR_RE.is_match(anchor) {
