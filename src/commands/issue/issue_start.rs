@@ -55,7 +55,7 @@ pub fn run(args: IssueStartArgs) -> Result<()> {
 }
 
 fn run_inner(args: IssueStartArgs) -> Result<()> {
-    let Some(team_id) = linear::get_team_key() else {
+    let Some(team_id) = linear::get_team_key()? else {
         return Err(CliError::validation("Could not determine team ID"));
     };
 

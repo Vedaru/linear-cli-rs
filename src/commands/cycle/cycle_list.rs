@@ -47,7 +47,7 @@ pub struct ListArgs {
 pub fn run(args: ListArgs) -> Result<()> {
     let team_key = match args.team {
         Some(team) => team,
-        None => linear::get_team_key().ok_or_else(|| {
+        None => linear::get_team_key()?.ok_or_else(|| {
             CliError::validation("Could not determine team key from directory name or team flag")
         })?,
     };

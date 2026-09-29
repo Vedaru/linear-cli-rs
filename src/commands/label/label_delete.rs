@@ -71,7 +71,7 @@ pub fn run(args: LabelDeleteArgs) -> Result<()> {
     // canonical key. The configured default is already a key.
     let effective_team_key = match &args.team {
         Some(team) => Some(linear::resolve_team(team)?.key),
-        None => linear::get_team_key(),
+        None => linear::get_team_key()?,
     };
 
     let label = resolve_label_id(&client, &args.name_or_id, effective_team_key.as_deref())?;

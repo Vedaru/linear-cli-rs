@@ -73,11 +73,11 @@ pub fn run(args: ViewArgs) -> Result<()> {
         _ => None,
     });
 
-    let team_key = args
-        .team
-        .or(url_team_key)
-        .or_else(linear::get_team_key)
-        .ok_or_else(|| {
+    let team_key = match args.team.or(url_team_key) {
+        Some(team_key) => Some(team_key),
+        None => linear::get_team_key()?,
+    }
+    .ok_or_else(|| {
             CliError::validation("Could not determine team key from directory name or team flag")
         })?;
 

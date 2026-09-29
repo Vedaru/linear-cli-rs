@@ -115,10 +115,10 @@ fn mine(args: &IssueMineArgs) -> Result<()> {
         .as_deref()
         .map(linear::resolve_team)
         .transpose()?;
-    let team_key = explicit_team
-        .as_ref()
-        .map(|team| team.key.clone())
-        .or_else(linear::get_team_key);
+    let team_key = match explicit_team.as_ref().map(|team| team.key.clone()) {
+        Some(team_key) => Some(team_key),
+        None => linear::get_team_key()?,
+    };
     let Some(team_key) = team_key else {
         let suggestion = if git::is_inside_git_repo() {
             "Use --team <key, name, or ID> to specify a team, or run `linear config` to link this repository to a team."

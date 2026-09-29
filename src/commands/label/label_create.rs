@@ -112,7 +112,7 @@ pub fn run(args: LabelCreateArgs) -> Result<()> {
                 values.push(team.key.clone());
             }
 
-            let default_index = linear::get_team_key()
+            let default_index = linear::get_team_key()?
                 .and_then(|default_team| values.iter().position(|value| *value == default_team))
                 .unwrap_or(0);
 

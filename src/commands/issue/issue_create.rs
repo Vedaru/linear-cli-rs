@@ -284,7 +284,7 @@ fn run_flags(
         team_id = resolved.id;
         team_key = resolved.key;
     } else {
-        let default_team = linear::get_team_key()
+        let default_team = linear::get_team_key()?
             .ok_or_else(|| CliError::validation("Could not determine team key"))?;
         team_key = default_team.clone();
         match linear::find_team(&default_team)? {
@@ -741,7 +741,7 @@ fn prompt_interactive_issue_creation(
 
     // Resolve the default team from the configured key, if any.
     let mut resolved_team: Option<(String, String)> = None;
-    if let Some(default_team_key) = linear::get_team_key() {
+    if let Some(default_team_key) = linear::get_team_key()? {
         if let Some(team) = linear::find_team(&default_team_key)? {
             resolved_team = Some((team.id, team.key));
         }

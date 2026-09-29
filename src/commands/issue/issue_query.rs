@@ -170,7 +170,7 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
         }
         Some(teams.into_iter().map(|team| team.key).collect())
     } else {
-        let Some(resolved) = linear::get_team_key_with_source() else {
+        let Some(resolved) = linear::get_team_key_with_source()? else {
             return Err(CliError::validation(
                 "No default team configured and no team scope provided",
             )

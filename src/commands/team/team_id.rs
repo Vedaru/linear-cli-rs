@@ -5,7 +5,7 @@ use crate::linear::get_team_key;
 use crate::output;
 
 pub fn run() -> Result<()> {
-    match get_team_key() {
+    match get_team_key()? {
         Some(team_id) => {
             output::line(&team_id);
             Ok(())

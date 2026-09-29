@@ -64,7 +64,7 @@ pub fn open_project_page(project_id: &str, app: bool) -> Result<()> {
 /// [`open_issue_page`], upstream prints no "Opening …" line, so neither does
 /// this.
 pub fn open_team_assignee_view(app: bool) -> Result<()> {
-    let Some(team_id) = linear::get_team_key() else {
+    let Some(team_id) = linear::get_team_key()? else {
         return Err(CliError::validation(
             "Could not determine team id from configuration or directory name.",
         ));

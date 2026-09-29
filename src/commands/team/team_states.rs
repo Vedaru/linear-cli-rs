@@ -38,7 +38,7 @@ pub struct StatesArgs {
 pub fn run(args: StatesArgs) -> Result<()> {
     let resolved_team_key = match &args.team {
         Some(team) => resolve_team(team)?.key,
-        None => get_team_key().ok_or_else(|| {
+        None => get_team_key()?.ok_or_else(|| {
             CliError::validation("Could not determine team key from directory name").suggestion(
                 "Please specify a team key, name, or ID as an argument.",
             )

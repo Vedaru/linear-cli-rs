@@ -56,7 +56,7 @@ pub fn run(args: LabelListArgs) -> Result<()> {
         let team = linear::resolve_team(team_key)?;
         filter = or_filter(&team.key);
     } else if !args.all {
-        if let Some(default_team) = linear::get_team_key() {
+        if let Some(default_team) = linear::get_team_key()? {
             filter = or_filter(&default_team);
         }
         // If no team configured and not --all, show all anyway.

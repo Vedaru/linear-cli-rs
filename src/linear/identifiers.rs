@@ -11,21 +11,59 @@ pub fn format_issue_identifier(provided_id: &str) -> String {
     normalize_issue_identifier(provided_id).unwrap_or_else(|| provided_id.to_uppercase())
 }
 
-/// The configured team key and where it came from.
-pub fn get_team_key_with_source() -> Option<Resolved<String>> {
+/// The configured team reference (`team_id`) and where it came from.
+///
+/// Upstream's `config` command writes a team KEY into this field, but every
+/// consumer reads it back through `resolveTeam(...)` - so the value is a
+/// *reference*: a key, a team name, or a team UUID all resolve. Nothing here may
+/// assume it is already a key, which is exactly the assumption that made a UUID
+/// in the config filter every team-scoped listing down to nothing. Callers
+/// resolve it with [`resolve_configured_team`].
+pub fn configured_team_reference() -> Option<Resolved<String>> {
     let resolved = config::team_id_resolved(None)?;
-    if resolved.value.is_empty() {
+    let reference = resolved.value.trim();
+    if reference.is_empty() {
         return None;
     }
     Some(Resolved {
-        value: resolved.value.to_uppercase(),
+        value: reference.to_string(),
         source: resolved.source,
     })
 }
 
-/// The configured team key, upper-cased.
-pub fn get_team_key() -> Option<String> {
-    get_team_key_with_source().map(|resolved| resolved.value)
+/// The configured team, resolved.
+///
+/// This is the port of the `resolveTeam(teamKey)` call upstream wraps the
+/// configured value in, and `resolve_team` is the right resolver for it: it
+/// matches a UUID through `teamById`, and keys and names case-insensitively. So
+/// a UUID, a key or a name in `team_id` all work, and an unknown reference is an
+/// error instead of a listing that quietly comes back empty.
+pub fn resolve_configured_team() -> Result<Option<ResolvedTeam>> {
+    match configured_team_reference() {
+        Some(reference) => Ok(Some(resolve_team(&reference.value)?)),
+        None => Ok(None),
+    }
+}
+
+/// The configured team's canonical key, resolved.
+///
+/// Fallible on purpose: resolving a reference can fail (unknown team, no
+/// network), and swallowing that would put back the silent-empty behaviour this
+/// replaced.
+pub fn get_team_key() -> Result<Option<String>> {
+    Ok(resolve_configured_team()?.map(|team| team.key))
+}
+
+/// The configured team's canonical key, with where the reference came from.
+pub fn get_team_key_with_source() -> Result<Option<Resolved<String>>> {
+    let Some(reference) = configured_team_reference() else {
+        return Ok(None);
+    };
+    let team = resolve_team(&reference.value)?;
+    Ok(Some(Resolved {
+        value: team.key,
+        source: reference.source,
+    }))
 }
 
 /// Turn loose input into a canonical issue identifier like `ABC-123`.
@@ -48,7 +86,7 @@ pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>>
         }
 
         if is_bare_integer(provided) {
-            let Some(team_key) = get_team_key() else {
+            let Some(team_key) = get_team_key()? else {
                 return Err(CliError::validation(
                     "an integer id was provided, but no team is set",
                 )

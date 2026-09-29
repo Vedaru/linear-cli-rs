@@ -8,7 +8,7 @@ use crate::linear::get_team_key;
 use crate::proc::{self, DEFAULT_TIMEOUT};
 
 pub fn run() -> Result<()> {
-    let Some(team_id) = get_team_key() else {
+    let Some(team_id) = get_team_key()? else {
         return Err(
             CliError::validation("Could not determine team id from directory name")
                 .suggestion("Run `linear config` to set a team."),

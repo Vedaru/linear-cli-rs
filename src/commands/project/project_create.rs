@@ -305,7 +305,7 @@ pub fn run(args: ProjectCreateArgs) -> Result<()> {
     };
 
     if teams.is_empty() {
-        match linear::get_team_key() {
+        match linear::get_team_key()? {
             Some(default_team) => teams = vec![default_team],
             None => {
                 return Err(
@@ -554,7 +554,7 @@ fn interactive_prompt(
             .map(|team| (team.key.clone(), format!("{} ({})", team.name, team.key)))
             .collect();
         if !options.is_empty() {
-            let default_index = linear::get_team_key()
+            let default_index = linear::get_team_key()?
                 .and_then(|key| options.iter().position(|(value, _)| value == &key))
                 .unwrap_or(0);
             let selected = prompt_select("Team:", &options, default_index)?;

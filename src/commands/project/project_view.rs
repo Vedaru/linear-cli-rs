@@ -466,7 +466,7 @@ fn select_project(json_output: bool) -> Result<String> {
         ));
     }
 
-    let team_key = linear::get_team_key();
+    let team_key = linear::get_team_key()?;
     let projects = fetch_projects_for_picker(team_key.as_deref())?;
     if projects.is_empty() {
         let (identifier, suggestion) = match &team_key {

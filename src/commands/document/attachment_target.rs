@@ -201,7 +201,7 @@ fn resolve_cycle_scope_team_id(explicit_team: Option<&str>) -> Result<String> {
     if let Some(explicit) = explicit_team {
         return resolve_team_id_strict(explicit);
     }
-    if let Some(config_team) = linear::get_team_key() {
+    if let Some(config_team) = linear::get_team_key()? {
         return resolve_team_id_strict(&config_team);
     }
     Err(

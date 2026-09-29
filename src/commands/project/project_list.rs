@@ -106,7 +106,7 @@ fn resolve_team_key(team: &Option<String>, all_teams: bool) -> Result<Option<Str
     }
     match team {
         Some(reference) => Ok(Some(linear::resolve_team(reference)?.key)),
-        None => Ok(linear::get_team_key()),
+        None => linear::get_team_key(),
     }
 }
 

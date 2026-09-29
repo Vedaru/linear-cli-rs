@@ -357,7 +357,7 @@ fn prompt_for_target() -> Result<DocumentTarget> {
             DocumentTargetSelector::Issue(issue)
         }
         2 => {
-            let default = linear::get_team_key().unwrap_or_default();
+            let default = linear::get_team_key()?.unwrap_or_default();
             let team = prompt_text_with_default("Team key (e.g., ENG)", &default)?;
             DocumentTargetSelector::Team(team)
         }
@@ -366,7 +366,7 @@ fn prompt_for_target() -> Result<DocumentTarget> {
             DocumentTargetSelector::Initiative(initiative)
         }
         4 => {
-            let default = linear::get_team_key().unwrap_or_default();
+            let default = linear::get_team_key()?.unwrap_or_default();
             let team = prompt_text_with_default("Team key for the cycle (e.g., ENG)", &default)?;
             let cycle = prompt_text("Cycle (name, number, 'active', 'next', or 'previous')")?;
             DocumentTargetSelector::Cycle {
