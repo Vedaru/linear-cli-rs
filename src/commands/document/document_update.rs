@@ -271,7 +271,10 @@ fn get_first_active_inline_comment(
             return Err(CliError::not_found("Document", document_id));
         };
 
-        if let Some(nodes) = document.pointer("/comments/nodes").and_then(Value::as_array) {
+        if let Some(nodes) = document
+            .pointer("/comments/nodes")
+            .and_then(Value::as_array)
+        {
             if let Some(comment) = nodes.iter().find(|comment| {
                 comment
                     .get("quotedText")

@@ -10,9 +10,7 @@ pub fn run() -> Result<()> {
             output::line(&team_id);
             Ok(())
         }
-        None => Err(
-            CliError::validation("No team id configured")
-                .suggestion("Run `linear config` to set a team."),
-        ),
+        None => Err(CliError::validation("No team id configured")
+            .suggestion("Run `linear config` to set a team.")),
     }
 }

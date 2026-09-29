@@ -294,7 +294,10 @@ pub fn color_cycle_short(short: &CycleShort) -> String {
 /// Read a string field, treating a missing or null value as empty — matching
 /// the way the renderer tests `if (member.email)` upstream.
 fn member_str<'a>(member: &'a serde_json::Value, key: &str) -> &'a str {
-    member.get(key).and_then(serde_json::Value::as_str).unwrap_or("")
+    member
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
 }
 
 fn member_bool(member: &serde_json::Value, key: &str) -> bool {
@@ -337,7 +340,10 @@ fn member_markers(member: &serde_json::Value) -> String {
 fn format_last_seen(raw: &str) -> String {
     let parsed = DateTime::parse_from_rfc3339(raw)
         .map(|date| date.with_timezone(&Local))
-        .or_else(|_| raw.parse::<DateTime<Utc>>().map(|date| date.with_timezone(&Local)));
+        .or_else(|_| {
+            raw.parse::<DateTime<Utc>>()
+                .map(|date| date.with_timezone(&Local))
+        });
     match parsed {
         Ok(local) => local.format("%-m/%-d/%Y, %-I:%M:%S %p").to_string(),
         Err(_) => raw.to_string(),

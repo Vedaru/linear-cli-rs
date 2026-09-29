@@ -114,17 +114,10 @@ fn run_inner() -> Result<()> {
     );
 
     std::fs::write(&file_path, toml_content).map_err(|error| {
-        CliError::cli(format!(
-            "Failed to write {}: {error}",
-            file_path.display()
-        ))
-        .cause(error)
+        CliError::cli(format!("Failed to write {}: {error}", file_path.display())).cause(error)
     })?;
 
-    output::line(&format!(
-        "Configuration written to {}",
-        file_path.display()
-    ));
+    output::line(&format!("Configuration written to {}", file_path.display()));
     Ok(())
 }
 
@@ -136,7 +129,9 @@ fn resolve_workspace() -> Result<()> {
         .ok()
         .filter(|value| !value.is_empty())
         .is_some();
-    let has_config_key = config::api_key().filter(|value| !value.is_empty()).is_some();
+    let has_config_key = config::api_key()
+        .filter(|value| !value.is_empty())
+        .is_some();
     if has_env_key || has_config_key || config::cli_workspace().is_some() {
         return Ok(());
     }

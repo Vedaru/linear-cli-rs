@@ -57,10 +57,12 @@ pub fn run(args: TeamArgs) -> Result<()> {
     };
 
     match command {
-        TeamCommand::Create(args) => team_create::run(args)
-            .map_err(|error| error.with_context("Failed to create team")),
-        TeamCommand::Delete(args) => team_delete::run(args)
-            .map_err(|error| error.with_context("Failed to delete team")),
+        TeamCommand::Create(args) => {
+            team_create::run(args).map_err(|error| error.with_context("Failed to create team"))
+        }
+        TeamCommand::Delete(args) => {
+            team_delete::run(args).map_err(|error| error.with_context("Failed to delete team"))
+        }
         TeamCommand::List(args) => {
             team_list::run(args).map_err(|error| error.with_context("Failed to fetch teams"))
         }

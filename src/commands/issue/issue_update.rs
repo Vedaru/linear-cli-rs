@@ -165,12 +165,11 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
         }
 
         if clear_cycle && cycle.is_some() {
-            return Err(CliError::validation(
-                "Cannot specify both --cycle and --clear-cycle",
-            )
-            .suggestion(
-                "Use --cycle <cycle> to set a cycle, or --clear-cycle on its own to remove it.",
-            ));
+            return Err(
+                CliError::validation("Cannot specify both --cycle and --clear-cycle").suggestion(
+                    "Use --cycle <cycle> to set a cycle, or --clear-cycle on its own to remove it.",
+                ),
+            );
         }
 
         if clear_due_date && due_date.is_some() {
@@ -247,7 +246,9 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             return Err(CliError::validation(
                 "Cannot combine --team with --add-label or --remove-label",
             )
-            .suggestion("Move the issue with --team first, then change labels in a second update."));
+            .suggestion(
+                "Move the issue with --team first, then change labels in a second update.",
+            ));
         }
 
         if truthy(description.as_deref()) && description_file.is_some() {
@@ -354,10 +355,12 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             .iter()
             .any(|id| removed_label_ids.contains(id))
         {
-            return Err(CliError::validation(
-                "Cannot add and remove the same label in one update",
-            )
-            .suggestion("Remove the duplicate label from either --add-label or --remove-label."));
+            return Err(
+                CliError::validation("Cannot add and remove the same label in one update")
+                    .suggestion(
+                        "Remove the duplicate label from either --add-label or --remove-label.",
+                    ),
+            );
         }
 
         let project_id = match &project {
@@ -465,7 +468,10 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
         if clear_milestone {
             input.insert("projectMilestoneId".to_string(), Value::Null);
         } else if let Some(project_milestone_id) = &project_milestone_id {
-            input.insert("projectMilestoneId".to_string(), json!(project_milestone_id));
+            input.insert(
+                "projectMilestoneId".to_string(),
+                json!(project_milestone_id),
+            );
         }
         if clear_cycle {
             input.insert("cycleId".to_string(), Value::Null);
@@ -500,7 +506,10 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             .filter(|value| !value.is_null())
             .ok_or_else(|| CliError::cli("Issue update failed - no issue returned"))?;
 
-        let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+        let identifier = issue
+            .get("identifier")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
         let url = issue.get("url").and_then(Value::as_str).unwrap_or("");
 

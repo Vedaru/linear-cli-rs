@@ -16,10 +16,13 @@ fn jj(args: &[&str]) -> Option<proc::ProcOutput> {
 /// Build the description written by `jj describe`:
 /// `"{issueId} {title}"`, a blank line, then the `Linear-issue` and
 /// `Linear-issue-url` trailers.
-pub fn format_issue_description(issue_id: &str, title: &str, url: &str, magic_word: &str) -> String {
-    format!(
-        "{issue_id} {title}\n\nLinear-issue: {magic_word} {issue_id}\nLinear-issue-url: {url}"
-    )
+pub fn format_issue_description(
+    issue_id: &str,
+    title: &str,
+    url: &str,
+    magic_word: &str,
+) -> String {
+    format!("{issue_id} {title}\n\nLinear-issue: {magic_word} {issue_id}\nLinear-issue-url: {url}")
 }
 
 /// Whether the current change is empty — no description and no file changes.
@@ -129,8 +132,12 @@ mod tests {
 
     #[test]
     fn description_has_title_and_both_trailers() {
-        let description =
-            format_issue_description("ENG-123", "Fix the thing", "https://linear.app/x/ENG-123", "Fixes");
+        let description = format_issue_description(
+            "ENG-123",
+            "Fix the thing",
+            "https://linear.app/x/ENG-123",
+            "Fixes",
+        );
         assert_eq!(
             description,
             "ENG-123 Fix the thing\n\nLinear-issue: Fixes ENG-123\nLinear-issue-url: https://linear.app/x/ENG-123"

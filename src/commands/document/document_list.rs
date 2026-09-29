@@ -132,9 +132,9 @@ pub fn run(args: DocumentListArgs) -> Result<()> {
     variables.insert("first".to_string(), json!(args.limit));
     let result = client.request(LIST_DOCUMENTS_QUERY, Value::Object(variables))?;
 
-    let documents_connection = result.get("documents").cloned().unwrap_or_else(|| {
-        json!({ "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } })
-    });
+    let documents_connection = result.get("documents").cloned().unwrap_or_else(
+        || json!({ "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } }),
+    );
 
     if args.json {
         output::print_json(&documents_connection);
@@ -179,7 +179,10 @@ pub fn run(args: DocumentListArgs) -> Result<()> {
     let space_width = 3usize;
     let fixed = slug_width + attachment_width + updated_width + space_width;
     let padding = 1usize;
-    let available_width = columns.saturating_sub(padding).saturating_sub(fixed).max(10);
+    let available_width = columns
+        .saturating_sub(padding)
+        .saturating_sub(fixed)
+        .max(10);
     let max_title_width = documents
         .iter()
         .map(|doc| display::display_width(str_at(doc, "title")))
@@ -217,7 +220,10 @@ pub fn run(args: DocumentListArgs) -> Result<()> {
         line.push(' ');
         line.push_str(&display::pad_display(&attachment, attachment_width));
         line.push(' ');
-        line.push_str(&colors::muted(&display::pad_display(&updated, updated_width)));
+        line.push_str(&colors::muted(&display::pad_display(
+            &updated,
+            updated_width,
+        )));
         output::line(&line);
     }
 

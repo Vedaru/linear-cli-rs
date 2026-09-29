@@ -152,8 +152,13 @@ fn view(args: &IssueViewArgs) -> Result<()> {
         .get("priority")
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    meta_parts.push(format!("**Priority:** {}", display::get_priority_display(priority)));
-    let assignee_display = match issue_data.pointer("/assignee/displayName").and_then(Value::as_str)
+    meta_parts.push(format!(
+        "**Priority:** {}",
+        display::get_priority_display(priority)
+    ));
+    let assignee_display = match issue_data
+        .pointer("/assignee/displayName")
+        .and_then(Value::as_str)
     {
         Some(name) => format!("@{name}"),
         None => "Unassigned".to_string(),
@@ -249,12 +254,7 @@ struct Comment {
 }
 
 fn parse_comment(value: &Value) -> Comment {
-    let string_at = |key: &str| {
-        value
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    };
+    let string_at = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
     Comment {
         id: string_at("id").unwrap_or_default(),
         body: string_at("body").unwrap_or_default(),
@@ -314,7 +314,10 @@ fn derive_comment_view(comments: &[Comment], show_resolved_threads: bool) -> Com
             continue;
         }
         let root_id = resolve_root_id(&comment.id, &by_id, &mut root_cache);
-        replies_by_root.entry(root_id).or_default().push(comment.clone());
+        replies_by_root
+            .entry(root_id)
+            .or_default()
+            .push(comment.clone());
     }
     for replies in replies_by_root.values_mut() {
         sort_by_created(replies);
@@ -400,9 +403,15 @@ fn format_issue_hierarchy_as_markdown(parent: Option<&Value>, children: &[Value]
 }
 
 fn format_issue_ref_line(issue: &Value) -> String {
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
-    let state = issue.pointer("/state/name").and_then(Value::as_str).unwrap_or("");
+    let state = issue
+        .pointer("/state/name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     format!("- **{identifier}**: {title} _[{state}]_\n")
 }
 
@@ -418,7 +427,10 @@ fn format_attachments_as_markdown(
     let mut result = String::from("\n\n## Attachments\n\n");
     for attachment in attachments {
         let url = attachment.get("url").and_then(Value::as_str).unwrap_or("");
-        let title = attachment.get("title").and_then(Value::as_str).unwrap_or("");
+        let title = attachment
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let source_label = attachment
             .get("sourceType")
             .and_then(Value::as_str)
@@ -491,10 +503,12 @@ fn thread_header_suffix(root: &Comment) -> String {
 
 /// `formatResolvedThreadsSummary`.
 fn format_resolved_threads_summary(hidden_count: usize) -> String {
-    let noun = if hidden_count == 1 { "thread" } else { "threads" };
-    format!(
-        "Resolved {noun} hidden: {hidden_count}. Use --show-resolved-threads to show them."
-    )
+    let noun = if hidden_count == 1 {
+        "thread"
+    } else {
+        "threads"
+    };
+    format!("Resolved {noun} hidden: {hidden_count}. Use --show-resolved-threads to show them.")
 }
 
 /// `getAttachmentCacheDir`: configured dir, else `$TMPDIR|$TMP|$TEMP|/tmp` +
@@ -517,15 +531,22 @@ fn attachment_cache_dir() -> PathBuf {
 /// `downloadAttachments`: cache each upload-host attachment under
 /// `<dir>/<identifier>/<sanitized title>`. Non-upload URLs are skipped; a single
 /// failure is reported on stderr but does not abort the rest.
-fn download_attachments(identifier: &str, attachments: &[Value]) -> Result<HashMap<String, String>> {
+fn download_attachments(
+    identifier: &str,
+    attachments: &[Value],
+) -> Result<HashMap<String, String>> {
     let issue_dir = attachment_cache_dir().join(identifier);
-    std::fs::create_dir_all(&issue_dir)
-        .map_err(|error| CliError::cli(format!("Failed to create attachment cache dir: {error}")))?;
+    std::fs::create_dir_all(&issue_dir).map_err(|error| {
+        CliError::cli(format!("Failed to create attachment cache dir: {error}"))
+    })?;
 
     let mut url_to_path = HashMap::new();
     for attachment in attachments {
         let url = attachment.get("url").and_then(Value::as_str).unwrap_or("");
-        let title = attachment.get("title").and_then(Value::as_str).unwrap_or("");
+        let title = attachment
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
         if markdown::get_linear_upload_host(url).is_none() {
             continue;

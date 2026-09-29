@@ -94,9 +94,13 @@ pub fn render(issues: &[Value], options: &Options) -> Vec<String> {
         cells
     };
     let fixed = fixed_cells.iter().sum::<usize>() + fixed_cells.len() + 1;
-    let title_width = options
-        .min_title_width
-        .max(max_title_width.min(columns.saturating_sub(options.padding).saturating_sub(fixed)));
+    let title_width = options.min_title_width.max(
+        max_title_width.min(
+            columns
+                .saturating_sub(options.padding)
+                .saturating_sub(fixed),
+        ),
+    );
 
     // --- header ------------------------------------------------------------
     let mut header: Vec<String> = vec![display::pad_display("◌", PRIORITY_WIDTH)];
@@ -155,11 +159,18 @@ pub fn render(issues: &[Value], options: &Options) -> Vec<String> {
         if show_cycle {
             let short = cycle_short(issue);
             let padding = cycle_width.saturating_sub(display::display_width(&short.text));
-            row.push(format!("{}{}", display::color_cycle_short(&short), " ".repeat(padding)));
+            row.push(format!(
+                "{}{}",
+                display::color_cycle_short(&short),
+                " ".repeat(padding)
+            ));
         }
 
         if options.show_assignee_column {
-            row.push(display::pad_display(&assignee_initials(issue), ASSIGNEE_WIDTH));
+            row.push(display::pad_display(
+                &assignee_initials(issue),
+                ASSIGNEE_WIDTH,
+            ));
         }
 
         let state_text = display::truncate_text(state_name(issue), state_width);
@@ -196,15 +207,24 @@ fn str_at<'a>(issue: &'a Value, key: &str) -> &'a str {
 }
 
 fn team_key(issue: &Value) -> &str {
-    issue.pointer("/team/key").and_then(Value::as_str).unwrap_or("")
+    issue
+        .pointer("/team/key")
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 fn state_name(issue: &Value) -> &str {
-    issue.pointer("/state/name").and_then(Value::as_str).unwrap_or("")
+    issue
+        .pointer("/state/name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 fn state_color(issue: &Value) -> &str {
-    issue.pointer("/state/color").and_then(Value::as_str).unwrap_or("")
+    issue
+        .pointer("/state/color")
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 /// `initials.slice(0, 2)`, or `-` when unassigned / lacking initials.

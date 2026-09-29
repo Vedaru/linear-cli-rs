@@ -18,9 +18,8 @@ pub fn run(args: IssueCommitsArgs) -> Result<()> {
     let result = (|| -> Result<()> {
         if vcs::get_vcs() != Vcs::Jj {
             return Err(
-                CliError::validation("commits is only supported with jj-vcs").suggestion(
-                    "This command requires jujutsu (jj) version control.",
-                ),
+                CliError::validation("commits is only supported with jj-vcs")
+                    .suggestion("This command requires jujutsu (jj) version control."),
             );
         }
 

@@ -130,7 +130,10 @@ fn attach(args: IssueAttachArgs) -> Result<()> {
         .and_then(|value| value.get("attachment"))
         .filter(|value| !value.is_null())
         .ok_or_else(|| CliError::cli("Failed to create attachment"))?;
-    let title = attachment.get("title").and_then(Value::as_str).unwrap_or("");
+    let title = attachment
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let url = attachment.get("url").and_then(Value::as_str).unwrap_or("");
 
     output::line(&format!("✓ Sidebar link attachment created: {title}"));

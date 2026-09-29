@@ -428,10 +428,7 @@ fn fetch_project_details(project_id: &str, original_input: &str) -> Result<Value
         cursor = next_cursor;
     }
 
-    if let Some(issues_value) = project
-        .get_mut("issues")
-        .and_then(Value::as_object_mut)
-    {
+    if let Some(issues_value) = project.get_mut("issues").and_then(Value::as_object_mut) {
         issues_value.insert("nodes".to_string(), Value::Array(issues));
         issues_value.insert("pageInfo".to_string(), page_info);
     }
@@ -458,8 +455,7 @@ fn select_project(json_output: bool) -> Result<String> {
     let in_ci = std::env::var("CI")
         .map(|value| !value.is_empty() && value != "false")
         .unwrap_or(false);
-    let interactive =
-        !in_ci && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let interactive = !in_ci && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     if !interactive {
         return Err(CliError::validation("No project specified").suggestion(
             "Pass a project UUID, slug ID, or exact name. Running `linear project view` with no argument picks from a list, but only on a terminal.",
@@ -485,10 +481,7 @@ fn select_project(json_output: bool) -> Result<String> {
     }
 
     let options = build_project_picker_options(&projects);
-    let labels: Vec<String> = options
-        .iter()
-        .map(|(_, display)| display.clone())
-        .collect();
+    let labels: Vec<String> = options.iter().map(|(_, display)| display.clone()).collect();
     let selected = prompt::select("Select a project", &labels)?;
     Ok(options[selected].0.clone())
 }
@@ -690,7 +683,9 @@ fn by_sort_order<'a>(
         let a_order = a.get("sortOrder").and_then(Value::as_f64).unwrap_or(0.0);
         let b_order = b.get("sortOrder").and_then(Value::as_f64).unwrap_or(0.0);
         compare_sort_order(a_order, b_order, field, project_name).ok();
-        a_order.partial_cmp(&b_order).unwrap_or(std::cmp::Ordering::Equal)
+        a_order
+            .partial_cmp(&b_order)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(sorted)
 }
@@ -727,7 +722,9 @@ fn format_milestones_as_markdown(
             markdown += &format!("  {}\n", description.replace('\n', "\n  "));
         }
     }
-    Ok((markdown + &truncation_note(page_info)).trim_end().to_string())
+    Ok((markdown + &truncation_note(page_info))
+        .trim_end()
+        .to_string())
 }
 
 fn format_resources_as_markdown(
@@ -747,7 +744,9 @@ fn format_resources_as_markdown(
             str_at(link, "/url")
         );
     }
-    Ok((markdown + &truncation_note(page_info)).trim_end().to_string())
+    Ok((markdown + &truncation_note(page_info))
+        .trim_end()
+        .to_string())
 }
 
 fn format_documents_as_markdown(
@@ -767,7 +766,9 @@ fn format_documents_as_markdown(
             str_at(document, "/url")
         );
     }
-    Ok((markdown + &truncation_note(page_info)).trim_end().to_string())
+    Ok((markdown + &truncation_note(page_info))
+        .trim_end()
+        .to_string())
 }
 
 fn format_attachments_as_markdown(nodes: &[Value], page_info: &Value) -> String {
@@ -790,7 +791,9 @@ fn format_attachments_as_markdown(nodes: &[Value], page_info: &Value) -> String 
             markdown += &format!("  _{subtitle}_\n");
         }
     }
-    (markdown + &truncation_note(page_info)).trim_end().to_string()
+    (markdown + &truncation_note(page_info))
+        .trim_end()
+        .to_string()
 }
 
 /// `end -> start` is "this must finish before that begins". `inverseRelations`
@@ -1040,13 +1043,7 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
         if !nodes.is_empty() {
             let teams: Vec<String> = nodes
                 .iter()
-                .map(|team| {
-                    format!(
-                        "{} ({})",
-                        str_at(team, "/name"),
-                        str_at(team, "/key")
-                    )
-                })
+                .map(|team| format!("{} ({})", str_at(team, "/name"), str_at(team, "/key")))
                 .collect();
             let page_info = project
                 .pointer("/teams/pageInfo")
@@ -1097,7 +1094,12 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
     // issues, so it is reported on its own.
     meta_parts.push(format!(
         "**Progress:** {}",
-        format_ratio_as_percent(project.get("progress").and_then(Value::as_f64).unwrap_or(0.0))
+        format_ratio_as_percent(
+            project
+                .get("progress")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+        )
     ));
 
     let mut markdown = format!("{title}\n\n{}", meta_parts.join(" | "));
@@ -1127,7 +1129,9 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]),
-        project.pointer("/externalLinks/pageInfo").unwrap_or(&empty_page),
+        project
+            .pointer("/externalLinks/pageInfo")
+            .unwrap_or(&empty_page),
         name,
     )?;
     markdown += &format_documents_as_markdown(
@@ -1136,7 +1140,9 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]),
-        project.pointer("/documents/pageInfo").unwrap_or(&empty_page),
+        project
+            .pointer("/documents/pageInfo")
+            .unwrap_or(&empty_page),
         name,
     )?;
     markdown += &format_attachments_as_markdown(
@@ -1145,7 +1151,9 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]),
-        project.pointer("/attachments/pageInfo").unwrap_or(&empty_page),
+        project
+            .pointer("/attachments/pageInfo")
+            .unwrap_or(&empty_page),
     );
     markdown += &format_related_projects_as_markdown(
         project
@@ -1153,7 +1161,9 @@ fn format_project_as_markdown(project: &Value) -> Result<String> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]),
-        project.pointer("/relations/pageInfo").unwrap_or(&empty_page),
+        project
+            .pointer("/relations/pageInfo")
+            .unwrap_or(&empty_page),
         project
             .pointer("/inverseRelations/nodes")
             .and_then(Value::as_array)

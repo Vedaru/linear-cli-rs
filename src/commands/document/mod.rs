@@ -60,12 +60,15 @@ pub fn run(args: DocumentArgs) -> Result<()> {
         }
         // Self-wraps with `Failed to view document`; do not double-wrap.
         DocumentCommand::View(a) => document_view::run(a),
-        DocumentCommand::Create(a) => document_create::run(a)
-            .map_err(|error| error.with_context("Failed to create document")),
-        DocumentCommand::Update(a) => document_update::run(a)
-            .map_err(|error| error.with_context("Failed to update document")),
-        DocumentCommand::Delete(a) => document_delete::run(a)
-            .map_err(|error| error.with_context("Failed to delete document")),
+        DocumentCommand::Create(a) => {
+            document_create::run(a).map_err(|error| error.with_context("Failed to create document"))
+        }
+        DocumentCommand::Update(a) => {
+            document_update::run(a).map_err(|error| error.with_context("Failed to update document"))
+        }
+        DocumentCommand::Delete(a) => {
+            document_delete::run(a).map_err(|error| error.with_context("Failed to delete document"))
+        }
         // The comment subgroup supplies its own per-subcommand context.
         DocumentCommand::Comment(a) => document_comment::run(a),
     }

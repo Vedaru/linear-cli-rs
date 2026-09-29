@@ -107,9 +107,7 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             .collect();
 
         if other_teams.is_empty() {
-            return Err(CliError::cli(
-                "No other teams available to move issues to",
-            ));
+            return Err(CliError::cli("No other teams available to move issues to"));
         }
 
         let labels: Vec<String> = other_teams
@@ -139,10 +137,8 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     // Confirm deletion.
     if !args.force {
         if !prompt::is_interactive() {
-            return Err(
-                CliError::validation("Interactive confirmation required")
-                    .suggestion("Use --force to skip."),
-            );
+            return Err(CliError::validation("Interactive confirmation required")
+                .suggestion("Use --force to skip."));
         }
 
         let confirmed = prompt::confirm(
@@ -185,8 +181,11 @@ fn move_issues_to_team(
     let mut variables = Map::new();
     variables.insert("teamId".to_string(), json!(source_team_id));
     variables.insert("first".to_string(), json!(100));
-    let all_issues =
-        client.paginate_connection(GET_TEAM_ISSUES_FOR_MOVE_QUERY, variables, &["team", "issues"])?;
+    let all_issues = client.paginate_connection(
+        GET_TEAM_ISSUES_FOR_MOVE_QUERY,
+        variables,
+        &["team", "issues"],
+    )?;
 
     let mut moved_count = 0usize;
     for issue in &all_issues {
@@ -200,8 +199,6 @@ fn move_issues_to_team(
         moved_count += 1;
     }
 
-    output::line(&format!(
-        "✓ Moved {moved_count} issue(s) to target team"
-    ));
+    output::line(&format!("✓ Moved {moved_count} issue(s) to target team"));
     Ok(())
 }

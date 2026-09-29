@@ -292,7 +292,10 @@ fn apply_collection_edit(
             return Err(on_missing(reference));
         }
     }
-    let remove_ids: HashSet<&str> = remove.iter().map(|reference| reference.id.as_str()).collect();
+    let remove_ids: HashSet<&str> = remove
+        .iter()
+        .map(|reference| reference.id.as_str())
+        .collect();
     let mut result: Vec<String> = current
         .iter()
         .filter(|id| !remove_ids.contains(id.as_str()))
@@ -311,14 +314,20 @@ fn reject_add_remove_overlap(
     add: &[ResolvedRef],
     remove: &[ResolvedRef],
 ) -> Result<()> {
-    let remove_ids: HashSet<&str> = remove.iter().map(|reference| reference.id.as_str()).collect();
-    if add.iter().any(|reference| remove_ids.contains(reference.id.as_str())) {
-        return Err(
-            CliError::validation(format!("Cannot add and remove the same {kind} in one update"))
-                .suggestion(format!(
-                    "Remove the duplicate {kind} from either --add-{kind} or --remove-{kind}."
-                )),
-        );
+    let remove_ids: HashSet<&str> = remove
+        .iter()
+        .map(|reference| reference.id.as_str())
+        .collect();
+    if add
+        .iter()
+        .any(|reference| remove_ids.contains(reference.id.as_str()))
+    {
+        return Err(CliError::validation(format!(
+            "Cannot add and remove the same {kind} in one update"
+        ))
+        .suggestion(format!(
+            "Remove the duplicate {kind} from either --add-{kind} or --remove-{kind}."
+        )));
     }
     Ok(())
 }
@@ -373,9 +382,8 @@ fn resolve_initiatives(
                 .and_then(Value::as_array)
                 .and_then(|nodes| nodes.first());
             let Some(initiative) = initiative else {
-                return Err(CliError::not_found("Initiative", reference).suggestion(
-                    "Pass an initiative UUID, slug ID, or exact initiative name.",
-                ));
+                return Err(CliError::not_found("Initiative", reference)
+                    .suggestion("Pass an initiative UUID, slug ID, or exact initiative name."));
             };
             ResolvedRef {
                 id: initiative
@@ -396,7 +404,10 @@ fn resolve_initiatives(
                 label: reference.clone(),
             }
         };
-        if !resolved.iter().any(|existing| existing.id == resolved_ref.id) {
+        if !resolved
+            .iter()
+            .any(|existing| existing.id == resolved_ref.id)
+        {
             resolved.push(resolved_ref);
         }
     }
@@ -600,12 +611,11 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
     }
 
     if args.clear_lead && args.lead.is_some() {
-        return Err(CliError::validation(
-            "Cannot specify both --lead and --clear-lead",
-        )
-        .suggestion(
-            "Use --lead <user> to set a lead, or --clear-lead on its own to remove it.",
-        ));
+        return Err(
+            CliError::validation("Cannot specify both --lead and --clear-lead").suggestion(
+                "Use --lead <user> to set a lead, or --clear-lead on its own to remove it.",
+            ),
+        );
     }
     if args.clear_start_date && args.start_date.is_some() {
         return Err(CliError::validation(
@@ -640,11 +650,8 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
         .chain(args.remove_label.iter())
     {
         if label.trim().is_empty() {
-            return Err(
-                CliError::validation("Project label cannot be empty").suggestion(
-                    "Provide a label name, e.g. --label \"My Label\".",
-                ),
-            );
+            return Err(CliError::validation("Project label cannot be empty")
+                .suggestion("Provide a label name, e.g. --label \"My Label\"."));
         }
     }
 
@@ -702,9 +709,11 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
     if let Some(status) = &args.status {
         if !status.is_empty() {
             let Some(api_type) = api_status_type(status) else {
-                return Err(CliError::validation(format!("Invalid status: {status}")).suggestion(
-                    "Valid values: planned, started, paused, completed, canceled, backlog",
-                ));
+                return Err(
+                    CliError::validation(format!("Invalid status: {status}")).suggestion(
+                        "Valid values: planned, started, paused, completed, canceled, backlog",
+                    ),
+                );
             };
             let data = client.request(GET_PROJECT_STATUSES_QUERY, json!({}))?;
             let nodes = data
@@ -976,7 +985,10 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
         if project_update.get("success").and_then(Value::as_bool) != Some(true) {
             return Err(CliError::cli("Failed to update project"));
         }
-        if let Some(updated) = project_update.get("project").filter(|value| !value.is_null()) {
+        if let Some(updated) = project_update
+            .get("project")
+            .filter(|value| !value.is_null())
+        {
             project = Some((
                 updated
                     .get("name")

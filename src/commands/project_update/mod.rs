@@ -34,9 +34,8 @@ pub enum ProjectUpdateCommand {
 
 pub fn run(args: ProjectUpdateArgs) -> Result<()> {
     let Some(command) = args.command else {
-        let mut cmd = <ProjectUpdateArgs as clap::Args>::augment_args(clap::Command::new(
-            "project-update",
-        ));
+        let mut cmd =
+            <ProjectUpdateArgs as clap::Args>::augment_args(clap::Command::new("project-update"));
         let _ = cmd.print_help();
         output::blank();
         return Ok(());

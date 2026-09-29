@@ -267,8 +267,9 @@ fn list_sessions(args: AgentSessionListArgs) -> Result<()> {
     };
 
     if let Some(status) = &args.status {
-        sessions
-            .retain(|session| session.get("status").and_then(Value::as_str) == Some(status.as_str()));
+        sessions.retain(|session| {
+            session.get("status").and_then(Value::as_str) == Some(status.as_str())
+        });
     }
 
     if args.json {
@@ -328,7 +329,12 @@ fn list_sessions(args: AgentSessionListArgs) -> Result<()> {
                 agent_width,
             ),
             display::pad_display(
-                &format_date(session.get("createdAt").and_then(Value::as_str).unwrap_or("")),
+                &format_date(
+                    session
+                        .get("createdAt")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                ),
                 DATE_WIDTH,
             ),
             summary_text,
@@ -400,7 +406,10 @@ fn view_session(args: AgentSessionViewArgs) -> Result<()> {
     }
 
     if let Some(issue) = session.get("issue").filter(|value| !value.is_null()) {
-        let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+        let identifier = issue
+            .get("identifier")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
         lines.push(format!("**Issue:** {identifier} - {title}"));
     }
@@ -469,7 +478,10 @@ fn view_session(args: AgentSessionViewArgs) -> Result<()> {
         lines.push(String::new());
         for activity in &activities {
             let time = display::format_relative_time(
-                activity.get("createdAt").and_then(Value::as_str).unwrap_or(""),
+                activity
+                    .get("createdAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
             );
             let content = activity.get("content").cloned().unwrap_or(Value::Null);
             let activity_type = content
@@ -489,7 +501,10 @@ fn view_session(args: AgentSessionViewArgs) -> Result<()> {
                 .and_then(Value::as_str)
                 .filter(|action| !action.is_empty())
             {
-                let parameter = content.get("parameter").and_then(Value::as_str).unwrap_or("");
+                let parameter = content
+                    .get("parameter")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 detail = format!(" - {action}: {parameter}");
             }
             lines.push(format!("- **{activity_type}** ({time}){detail}"));

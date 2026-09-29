@@ -6,10 +6,7 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// An issue label ID for an exact, case-insensitive name in a team.
-pub fn get_issue_label_id_by_name_for_team(
-    name: &str,
-    team_key: &str,
-) -> Result<Option<String>> {
+pub fn get_issue_label_id_by_name_for_team(name: &str, team_key: &str) -> Result<Option<String>> {
     reject_linear_url(name, "a label name")?;
     let client = graphql::client()?;
     let data = client.request(
@@ -81,4 +78,3 @@ pub(crate) fn first_id(connection: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
 }
-

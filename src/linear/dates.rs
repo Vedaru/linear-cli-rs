@@ -71,12 +71,10 @@ pub fn parse_date_filter(value: &str, flag_name: &str) -> Result<String> {
     }
     match parse_iso_utc(value) {
         Some(parsed) => Ok(parsed.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
-        None => Err(CliError::validation(format!(
-            "Invalid date for {flag_name}: \"{value}\""
-        ))
-        .suggestion(
-            "Use YYYY-MM-DD or ISO 8601 format (e.g. 2024-01-15 or 2024-01-15T09:00:00Z).",
-        )),
+        None => Err(
+            CliError::validation(format!("Invalid date for {flag_name}: \"{value}\"")).suggestion(
+                "Use YYYY-MM-DD or ISO 8601 format (e.g. 2024-01-15 or 2024-01-15T09:00:00Z).",
+            ),
+        ),
     }
 }
-

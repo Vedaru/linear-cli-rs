@@ -158,10 +158,8 @@ pub fn resolve_comment_body(body: Option<&str>, body_file: Option<&str>) -> Resu
 
     if let Some(text) = body {
         if text.trim().is_empty() {
-            return Err(
-                CliError::validation("Comment body cannot be empty")
-                    .suggestion("Pass text with --body, or omit it to be prompted."),
-            );
+            return Err(CliError::validation("Comment body cannot be empty")
+                .suggestion("Pass text with --body, or omit it to be prompted."));
         }
         return Ok(Some(text.to_string()));
     }
@@ -343,11 +341,13 @@ fn indent(text: &str) -> String {
 
 fn format_reply_header(reply: &Value, verb: &str) -> String {
     let author = format_comment_author(reply);
-    let date = display::format_relative_time(
-        reply.get("createdAt").and_then(Value::as_str).unwrap_or(""),
-    );
+    let date =
+        display::format_relative_time(reply.get("createdAt").and_then(Value::as_str).unwrap_or(""));
     let id = reply.get("id").and_then(Value::as_str).unwrap_or("");
-    format!("{} {verb} {date} [{id}]", colors::bold(&format!("@{author}")))
+    format!(
+        "{} {verb} {date} [{id}]",
+        colors::bold(&format!("@{author}"))
+    )
 }
 
 fn quoted_text(comment: &Value) -> Option<&str> {
@@ -420,10 +420,7 @@ pub fn render_comment_threads(comments: &[Value], empty_message: &str) {
         }
         crate::output::line(root.get("body").and_then(Value::as_str).unwrap_or(""));
 
-        let mut replies = replies_by_parent
-            .get(id)
-            .cloned()
-            .unwrap_or_default();
+        let mut replies = replies_by_parent.get(id).cloned().unwrap_or_default();
         replies.sort_by_key(|reply| created_at_millis(reply));
         if !replies.is_empty() {
             crate::output::blank();

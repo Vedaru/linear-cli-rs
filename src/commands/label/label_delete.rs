@@ -192,10 +192,10 @@ fn resolve_label_id(
     // If multiple labels with same name exist, let user choose.
     if labels.len() > 1 {
         if !prompt::is_interactive() {
-            return Err(
-                CliError::validation(format!("Multiple labels named \"{name_or_id}\" found"))
-                    .suggestion("Use --team to disambiguate."),
-            );
+            return Err(CliError::validation(format!(
+                "Multiple labels named \"{name_or_id}\" found"
+            ))
+            .suggestion("Use --team to disambiguate."));
         }
         let options: Vec<String> = labels
             .iter()

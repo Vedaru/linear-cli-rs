@@ -63,11 +63,7 @@ pub fn run(args: ViewArgs) -> Result<()> {
     // A pasted cycle URL names its team. With no --team, that is the team
     // meant — not whichever one happens to be configured. An explicit --team
     // still wins, and the lookup refuses it if it contradicts the URL.
-    let url_ref = expect_linear_url_kind(
-        &args.cycle_ref,
-        "cycle",
-        "a cycle URL, number, or name",
-    )?;
+    let url_ref = expect_linear_url_kind(&args.cycle_ref, "cycle", "a cycle URL, number, or name")?;
     let url_team_key = url_ref.as_ref().and_then(|reference| match reference {
         LinearUrlRef::Cycle { team_key, .. } => Some(team_key.clone()),
         _ => None,
@@ -78,8 +74,8 @@ pub fn run(args: ViewArgs) -> Result<()> {
         None => linear::get_team_key()?,
     }
     .ok_or_else(|| {
-            CliError::validation("Could not determine team key from directory name or team flag")
-        })?;
+        CliError::validation("Could not determine team key from directory name or team flag")
+    })?;
 
     let team_id = linear::resolve_team(&team_key)?.id;
     let cycle_id = linear::get_cycle_id_by_name_or_number(&team_id, &args.cycle_ref)?;

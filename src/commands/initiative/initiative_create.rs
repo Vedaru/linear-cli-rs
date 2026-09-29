@@ -132,8 +132,7 @@ pub fn run(args: InitiativeCreateArgs) -> Result<()> {
 
         // Owner (optional).
         if owner.is_none() {
-            let value =
-                prompt_text("Owner (username, email, or @me - press Enter to skip)", "")?;
+            let value = prompt_text("Owner (username, email, or @me - press Enter to skip)", "")?;
             owner = if value.is_empty() { None } else { Some(value) };
         }
 
@@ -252,7 +251,10 @@ pub fn run(args: InitiativeCreateArgs) -> Result<()> {
 
     let created_name = initiative.get("name").and_then(Value::as_str).unwrap_or("");
     output::line(&format!("✓ Created initiative: {created_name}"));
-    let slug = initiative.get("slugId").and_then(Value::as_str).unwrap_or("");
+    let slug = initiative
+        .get("slugId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     output::line(&format!("  Slug: {slug}"));
     if let Some(url) = initiative.get("url").and_then(Value::as_str) {
         if !url.is_empty() {
@@ -272,9 +274,7 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 /// `#RRGGBB`, mirroring upstream's `/^#[0-9A-Fa-f]{6}$/`.
 fn is_hex_color(value: &str) -> bool {
     let bytes = value.as_bytes();
-    bytes.len() == 7
-        && bytes[0] == b'#'
-        && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// `YYYY-MM-DD`, mirroring upstream's `/^\d{4}-\d{2}-\d{2}$/`.

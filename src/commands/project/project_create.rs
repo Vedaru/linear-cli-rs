@@ -145,8 +145,7 @@ fn parse_priority(priority: &str) -> Result<i64> {
         "medium" => Ok(3),
         "low" => Ok(4),
         _ => Err(
-            CliError::validation(format!("Invalid priority: {priority}"))
-                .suggestion(PRIORITY_HELP),
+            CliError::validation(format!("Invalid priority: {priority}")).suggestion(PRIORITY_HELP),
         ),
     }
 }
@@ -256,11 +255,7 @@ fn is_iso_date(value: &str) -> bool {
 
 pub fn run(args: ProjectCreateArgs) -> Result<()> {
     let content = resolve_project_content(args.content.as_deref(), args.content_file.as_deref())?;
-    let priority = args
-        .priority
-        .as_deref()
-        .map(parse_priority)
-        .transpose()?;
+    let priority = args.priority.as_deref().map(parse_priority).transpose()?;
 
     let client = graphql::client()?;
 
@@ -274,8 +269,9 @@ pub fn run(args: ProjectCreateArgs) -> Result<()> {
     let mut target_date = args.target_date.clone();
 
     let no_flags_provided = name.is_none() && teams.is_empty();
-    let is_interactive =
-        (no_flags_provided || args.interactive) && std::io::stdout().is_terminal() && prompt::is_interactive();
+    let is_interactive = (no_flags_provided || args.interactive)
+        && std::io::stdout().is_terminal()
+        && prompt::is_interactive();
 
     if is_interactive {
         interactive_prompt(
@@ -291,27 +287,20 @@ pub fn run(args: ProjectCreateArgs) -> Result<()> {
         )?;
     }
 
-    let resolved_description = resolve_project_description(
-        description.as_deref(),
-        description_file.as_deref(),
-    )?;
+    let resolved_description =
+        resolve_project_description(description.as_deref(), description_file.as_deref())?;
 
     let Some(name) = name else {
-        return Err(
-            CliError::validation("Project name is required").suggestion(
-                "Use --name or -n flag to specify a project name.",
-            ),
-        );
+        return Err(CliError::validation("Project name is required")
+            .suggestion("Use --name or -n flag to specify a project name."));
     };
 
     if teams.is_empty() {
         match linear::get_team_key()? {
             Some(default_team) => teams = vec![default_team],
             None => {
-                return Err(
-                    CliError::validation("At least one team is required")
-                        .suggestion("Use --team or -t flag to specify a team."),
-                );
+                return Err(CliError::validation("At least one team is required")
+                    .suggestion("Use --team or -t flag to specify a team."));
             }
         }
     }
@@ -441,8 +430,13 @@ pub fn run(args: ProjectCreateArgs) -> Result<()> {
         return Err(CliError::cli("Failed to create project"));
     }
 
-    let Some(project) = project_create.get("project").filter(|value| !value.is_null()) else {
-        return Err(CliError::cli("Failed to create project: no project returned"));
+    let Some(project) = project_create
+        .get("project")
+        .filter(|value| !value.is_null())
+    else {
+        return Err(CliError::cli(
+            "Failed to create project: no project returned",
+        ));
     };
 
     if let Some(initiative) = &args.initiative {
@@ -584,10 +578,7 @@ fn interactive_prompt(
     }
 
     if lead.is_none() {
-        let value = prompt_text(
-            "Lead (username, email, or @me - press Enter to skip):",
-            "",
-        )?;
+        let value = prompt_text("Lead (username, email, or @me - press Enter to skip):", "")?;
         *lead = if value.is_empty() { None } else { Some(value) };
     }
 
@@ -638,7 +629,11 @@ fn prompt_text_required(message: &str) -> Result<String> {
     }
 }
 
-fn prompt_select(message: &str, options: &[(String, String)], default_index: usize) -> Result<String> {
+fn prompt_select(
+    message: &str,
+    options: &[(String, String)],
+    default_index: usize,
+) -> Result<String> {
     if options.is_empty() {
         return Err(CliError::validation("No options available"));
     }
@@ -654,7 +649,11 @@ fn prompt_select(message: &str, options: &[(String, String)], default_index: usi
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("Enter a number (1-{}) [{}]: ", options.len(), default_index + 1);
+        eprint!(
+            "Enter a number (1-{}) [{}]: ",
+            options.len(),
+            default_index + 1
+        );
         let _ = std::io::Write::flush(&mut std::io::stderr());
 
         let mut line = String::new();
@@ -680,7 +679,11 @@ fn prompt_select(message: &str, options: &[(String, String)], default_index: usi
 // Scoped template resolution (ported from utils/templates.ts, project scope)
 // ---------------------------------------------------------------------------
 
-fn resolve_template_scoped(reference: &str, template_type: &str, team_ids: &[String]) -> Result<Value> {
+fn resolve_template_scoped(
+    reference: &str,
+    template_type: &str,
+    team_ids: &[String],
+) -> Result<Value> {
     crate::linear_url::reject_linear_url(reference, "a template name or UUID")?;
     if linear::is_linear_uuid(reference) {
         let template = tmpl::fetch_template(reference)?;
@@ -740,13 +743,11 @@ fn resolve_template_scoped(reference: &str, template_type: &str, team_ids: &[Str
         })
         .collect::<Vec<_>>()
         .join(", ");
-    Err(
-        CliError::validation(format!(
-            "Template name \"{reference}\" is ambiguous: it matches {} templates",
-            candidates.len()
-        ))
-        .suggestion(format!("Pass the template ID instead: {ids}")),
-    )
+    Err(CliError::validation(format!(
+        "Template name \"{reference}\" is ambiguous: it matches {} templates",
+        candidates.len()
+    ))
+    .suggestion(format!("Pass the template ID instead: {ids}")))
 }
 
 fn available_names(all: &[Value], template_type: &str, team_ids: &[String]) -> Vec<String> {

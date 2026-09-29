@@ -95,8 +95,7 @@ pub struct CommentListArgs {
 
 pub fn run(args: IssueCommentArgs) -> Result<()> {
     let Some(command) = args.command else {
-        let mut cmd =
-            <IssueCommentArgs as clap::Args>::augment_args(clap::Command::new("comment"));
+        let mut cmd = <IssueCommentArgs as clap::Args>::augment_args(clap::Command::new("comment"));
         let _ = cmd.print_help();
         output::blank();
         return Ok(());
@@ -123,10 +122,8 @@ pub fn run(args: IssueCommentArgs) -> Result<()> {
 fn is_uuid_v4(value: &str) -> bool {
     static UUID_V4: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     let regex = UUID_V4.get_or_init(|| {
-        Regex::new(
-            r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-        )
-        .expect("uuid v4 regex")
+        Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+            .expect("uuid v4 regex")
     });
     regex.is_match(value)
 }
@@ -140,15 +137,13 @@ fn add_comment(args: CommentAddArgs) -> Result<()> {
     // the user gets an actionable message instead of a raw GraphQL error.
     if let Some(id) = &args.id {
         if !is_uuid_v4(id) {
-            return Err(
-                CliError::validation(format!("Invalid comment ID: {id}")).suggestion(
-                    "--id must be a v4 UUID, like 123e4567-e89b-42d3-a456-426614174000.",
-                ),
-            );
+            return Err(CliError::validation(format!("Invalid comment ID: {id}"))
+                .suggestion("--id must be a v4 UUID, like 123e4567-e89b-42d3-a456-426614174000."));
         }
     }
 
-    let text_body = comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
+    let text_body =
+        comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
 
     let Some(resolved_identifier) = linear::get_issue_identifier(args.issue_id.as_deref())? else {
         return Err(CliError::validation("Could not determine issue ID")
@@ -157,8 +152,10 @@ fn add_comment(args: CommentAddArgs) -> Result<()> {
 
     // Validate and upload attachments first.
     if args.public && args.attach.is_empty() {
-        return Err(CliError::validation("--public requires at least one --attach")
-            .suggestion("Add --attach <file> to upload, or remove --public."));
+        return Err(
+            CliError::validation("--public requires at least one --attach")
+                .suggestion("Add --attach <file> to upload, or remove --public."),
+        );
     }
 
     let mut attachment_links: Vec<String> = Vec::new();

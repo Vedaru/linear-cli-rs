@@ -100,11 +100,7 @@ fn is_bulk_mode(args: &InitiativeArchiveArgs) -> bool {
     !args.bulk.is_empty() || args.bulk_file.is_some() || args.bulk_stdin
 }
 
-fn handle_single_archive(
-    client: &graphql::Client,
-    initiative_id: &str,
-    force: bool,
-) -> Result<()> {
+fn handle_single_archive(client: &graphql::Client, initiative_id: &str, force: bool) -> Result<()> {
     // Resolve first so a bad reference fails with upstream's
     // `Initiative not found: ...`.
     let resolved_id = linear::resolve_initiative_id(initiative_id)?;
@@ -177,20 +173,16 @@ fn handle_bulk_archive(client: &graphql::Client, args: &InitiativeArchiveArgs) -
                 "Interactive confirmation required. Use --force to skip.",
             ));
         }
-        let confirmed = prompt::confirm(
-            &format!("Archive {} initiative(s)?", ids.len()),
-            false,
-        )?;
+        let confirmed = prompt::confirm(&format!("Archive {} initiative(s)?", ids.len()), false)?;
         if !confirmed {
             output::line("Bulk archive cancelled.");
             return Ok(());
         }
     }
 
-    let operation =
-        |id_or_slug_or_name: &str| -> Result<BulkOperationResult> {
-            bulk_archive_one(client, id_or_slug_or_name)
-        };
+    let operation = |id_or_slug_or_name: &str| -> Result<BulkOperationResult> {
+        bulk_archive_one(client, id_or_slug_or_name)
+    };
 
     let summary = execute_bulk_operations(&ids, operation);
     print_bulk_summary(&summary, "initiative", "archived");
@@ -240,7 +232,10 @@ fn bulk_archive_one(
         return Ok(BulkOperationResult::success(&resolved_id, Some(name)));
     }
 
-    let result = client.request(BULK_ARCHIVE_INITIATIVE_MUTATION, json!({ "id": resolved_id }))?;
+    let result = client.request(
+        BULK_ARCHIVE_INITIATIVE_MUTATION,
+        json!({ "id": resolved_id }),
+    )?;
     let success = result
         .pointer("/initiativeArchive/success")
         .and_then(Value::as_bool)

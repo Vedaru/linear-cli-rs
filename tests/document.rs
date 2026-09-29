@@ -123,7 +123,8 @@ fn document_create_with_team_target_posts_create_input() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("https://linear.app/acme/document/runbook"),
+        out.stdout
+            .contains("https://linear.app/acme/document/runbook"),
         "stdout: {}",
         out.stdout
     );
@@ -138,7 +139,8 @@ fn document_create_requires_a_target() {
     );
     assert!(!out.success());
     assert!(
-        out.stderr.contains("A document attachment target is required"),
+        out.stderr
+            .contains("A document attachment target is required"),
         "stderr: {}",
         out.stderr
     );
@@ -246,8 +248,7 @@ fn document_comment_add_without_content_record_explains_why() {
     );
     assert!(!out.success());
     assert!(
-        out.stderr
-            .contains("has no content record to comment on"),
+        out.stderr.contains("has no content record to comment on"),
         "stderr: {}",
         out.stderr
     );
@@ -288,7 +289,11 @@ fn document_comment_list_renders_threads() {
         "stdout: {}",
         out.stdout
     );
-    assert!(out.stdout.contains("First thought"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("First thought"),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]

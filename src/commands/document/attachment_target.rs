@@ -9,9 +9,9 @@
 use serde_json::{json, Map, Value};
 
 use crate::errors::{CliError, Result};
+use crate::graphql;
 use crate::linear;
 use crate::linear_url::{expect_linear_url_kind, LinearUrlRef};
-use crate::graphql;
 
 pub const TARGET_FLAGS_SUGGESTION: &str = "Pass exactly one of --project, --issue, --initiative, --team, --cycle, or --release. (--team combined with --cycle scopes the cycle lookup and does not count as a second target.)";
 
@@ -123,15 +123,17 @@ pub fn parse_document_target_options(
             .map(|selector| selector.kind().flag())
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(
-            CliError::validation(format!("Only one attachment target may be set (got {flags})"))
-                .suggestion(TARGET_FLAGS_SUGGESTION),
-        );
+        return Err(CliError::validation(format!(
+            "Only one attachment target may be set (got {flags})"
+        ))
+        .suggestion(TARGET_FLAGS_SUGGESTION));
     }
     if selectors.is_empty() {
         if requirement == TargetRequirement::ExactlyOne {
-            return Err(CliError::validation("A document attachment target is required")
-                .suggestion(TARGET_FLAGS_SUGGESTION));
+            return Err(
+                CliError::validation("A document attachment target is required")
+                    .suggestion(TARGET_FLAGS_SUGGESTION),
+            );
         }
         return Ok(None);
     }

@@ -60,12 +60,15 @@ pub fn run(args: ProjectArgs) -> Result<()> {
         ProjectCommand::List(a) => project_list::run(a),
         // Self-wraps with `Failed to view project`; do not double-wrap.
         ProjectCommand::View(a) => project_view::run(a),
-        ProjectCommand::Create(a) => project_create::run(a)
-            .map_err(|error| error.with_context("Failed to create project")),
-        ProjectCommand::Update(a) => project_update::run(a)
-            .map_err(|error| error.with_context("Failed to update project")),
-        ProjectCommand::Delete(a) => project_delete::run(a)
-            .map_err(|error| error.with_context("Failed to delete project")),
+        ProjectCommand::Create(a) => {
+            project_create::run(a).map_err(|error| error.with_context("Failed to create project"))
+        }
+        ProjectCommand::Update(a) => {
+            project_update::run(a).map_err(|error| error.with_context("Failed to update project"))
+        }
+        ProjectCommand::Delete(a) => {
+            project_delete::run(a).map_err(|error| error.with_context("Failed to delete project"))
+        }
         // The comment subgroup supplies its own per-subcommand context.
         ProjectCommand::Comment(a) => project_comment::run(a),
     }

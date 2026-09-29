@@ -29,7 +29,11 @@ pub fn run(args: IssueDescribeArgs) -> Result<()> {
         let title = details.get("title").and_then(Value::as_str).unwrap_or("");
         let url = details.get("url").and_then(Value::as_str).unwrap_or("");
 
-        let magic_word = if args.references { "References" } else { "Fixes" };
+        let magic_word = if args.references {
+            "References"
+        } else {
+            "Fixes"
+        };
         output::line(&jj::format_issue_description(
             &resolved_id,
             title,

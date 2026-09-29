@@ -81,7 +81,10 @@ fn variable_filters_select_the_right_response() {
         "POST",
         &server.get_endpoint(),
         &[],
-        &graphql("query GetIssue($id: String!) { issue(id: $id) { id } }", json!({ "id": "i2" })),
+        &graphql(
+            "query GetIssue($id: String!) { issue(id: $id) { id } }",
+            json!({ "id": "i2" }),
+        ),
     );
     let parsed: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["data"]["issue"]["id"], "two");

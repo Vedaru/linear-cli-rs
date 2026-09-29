@@ -53,7 +53,12 @@ pub fn get_pager_command() -> Option<PagerCommand> {
 fn run_pager(pager: &PagerCommand, content: &str) -> bool {
     let args: Vec<&str> = pager.args.iter().map(String::as_str).collect();
     matches!(
-        proc::run_inherit(&pager.command, &args, Some(content.as_bytes()), proc::DEFAULT_TIMEOUT),
+        proc::run_inherit(
+            &pager.command,
+            &args,
+            Some(content.as_bytes()),
+            proc::DEFAULT_TIMEOUT
+        ),
         Some(true)
     )
 }

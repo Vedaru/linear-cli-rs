@@ -71,9 +71,8 @@ pub fn run(args: MembersArgs) -> Result<()> {
     let resolved_team_key = match &args.team {
         Some(team) => resolve_team(team)?.key,
         None => get_team_key()?.ok_or_else(|| {
-            CliError::validation("Could not determine team key from directory name").suggestion(
-                "Please specify a team key, name, or ID as an argument.",
-            )
+            CliError::validation("Could not determine team key from directory name")
+                .suggestion("Please specify a team key, name, or ID as an argument.")
         })?,
     };
 
@@ -87,7 +86,12 @@ pub fn run(args: MembersArgs) -> Result<()> {
     } else {
         nodes
             .iter()
-            .filter(|member| member.get("active").and_then(Value::as_bool).unwrap_or(false))
+            .filter(|member| {
+                member
+                    .get("active")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
             .cloned()
             .collect()
     };

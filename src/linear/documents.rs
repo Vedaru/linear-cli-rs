@@ -27,4 +27,3 @@ pub fn resolve_document_reference(input: &str) -> Result<String> {
     }
     Ok(input.to_string())
 }
-

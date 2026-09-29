@@ -125,11 +125,7 @@ fn collect_bulk_ids(args: &DocumentDeleteArgs) -> Result<Vec<String>> {
     Ok(all_ids)
 }
 
-fn handle_single_delete(
-    client: &graphql::Client,
-    raw_document_id: &str,
-    yes: bool,
-) -> Result<()> {
+fn handle_single_delete(client: &graphql::Client, raw_document_id: &str, yes: bool) -> Result<()> {
     let document_id = linear::resolve_document_reference(raw_document_id)?;
     let details = client.request(GET_DOCUMENT_FOR_DELETE_QUERY, json!({ "id": document_id }))?;
 
@@ -147,8 +143,10 @@ fn handle_single_delete(
             return Err(CliError::validation("Interactive confirmation required")
                 .suggestion("Use --yes to skip."));
         }
-        let confirmed =
-            prompt::confirm(&format!("Are you sure you want to delete \"{title}\"?"), false)?;
+        let confirmed = prompt::confirm(
+            &format!("Are you sure you want to delete \"{title}\"?"),
+            false,
+        )?;
         if !confirmed {
             output::line("Delete cancelled.");
             return Ok(());
@@ -192,8 +190,9 @@ fn handle_bulk_delete(client: &graphql::Client, args: &DocumentDeleteArgs) -> Re
         }
     }
 
-    let operation =
-        |doc_id_input: &str| -> Result<BulkOperationResult> { bulk_delete_one(client, doc_id_input) };
+    let operation = |doc_id_input: &str| -> Result<BulkOperationResult> {
+        bulk_delete_one(client, doc_id_input)
+    };
 
     let summary = execute_bulk_operations(&ids, operation);
     print_bulk_summary(&summary, "document", "deleted");
@@ -211,7 +210,10 @@ fn bulk_delete_one(client: &graphql::Client, doc_id_input: &str) -> Result<BulkO
 
     // Best-effort details lookup: on any failure report "Document not found"
     // (upstream's catch branch); a null document falls through to the delete.
-    match client.request(GET_DOCUMENT_FOR_BULK_DELETE_QUERY, json!({ "id": resolved_doc_id })) {
+    match client.request(
+        GET_DOCUMENT_FOR_BULK_DELETE_QUERY,
+        json!({ "id": resolved_doc_id }),
+    ) {
         Ok(details) => {
             if let Some(document) = details.get("document").filter(|value| !value.is_null()) {
                 document_uuid = document
@@ -236,7 +238,10 @@ fn bulk_delete_one(client: &graphql::Client, doc_id_input: &str) -> Result<BulkO
         }
     }
 
-    let result = client.request(BULK_DELETE_DOCUMENT_MUTATION, json!({ "id": document_uuid }))?;
+    let result = client.request(
+        BULK_DELETE_DOCUMENT_MUTATION,
+        json!({ "id": document_uuid }),
+    )?;
     let success = result
         .get("documentDelete")
         .and_then(|delete| delete.get("success"))

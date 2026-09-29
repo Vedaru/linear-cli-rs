@@ -43,4 +43,3 @@ pub fn select_option(
         Ok(Some(options[selected].0.clone()))
     }
 }
-

@@ -57,9 +57,8 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         && args.project.is_none()
     {
         return Err(
-            CliError::validation("At least one update option must be provided").suggestion(
-                "Use --name, --description, --target-date, --sort-order, or --project",
-            ),
+            CliError::validation("At least one update option must be provided")
+                .suggestion("Use --name, --description, --target-date, --sort-order, or --project"),
         );
     }
 
@@ -114,8 +113,12 @@ pub fn run(args: UpdateArgs) -> Result<()> {
         "✓ Updated milestone: {}",
         string_field(milestone, "name").unwrap_or("")
     ));
-    output::line(&format!("  ID: {}", string_field(milestone, "id").unwrap_or("")));
-    if let Some(target_date) = string_field(milestone, "targetDate").filter(|date| !date.is_empty()) {
+    output::line(&format!(
+        "  ID: {}",
+        string_field(milestone, "id").unwrap_or("")
+    ));
+    if let Some(target_date) = string_field(milestone, "targetDate").filter(|date| !date.is_empty())
+    {
         output::line(&format!("  Target Date: {target_date}"));
     }
     // `${milestone.sortOrder}` renders a nullable field as "null".

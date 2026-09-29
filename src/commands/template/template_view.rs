@@ -64,7 +64,10 @@ fn format_template(template: &Value, line_width: usize) -> Result<String> {
             format!("Team {key} ({name})")
         }
     };
-    lines.push(format!("{} template · {scope}", capitalize(&template_type(template))));
+    lines.push(format!(
+        "{} template · {scope}",
+        capitalize(&template_type(template))
+    ));
     lines.push(format!("ID: {}", template_id(template)));
     if let Some(description) = template
         .get("description")
@@ -83,7 +86,10 @@ fn format_template(template: &Value, line_width: usize) -> Result<String> {
                 .to_string(),
         );
     }
-    if let Some(inherited) = template.get("inheritedFrom").filter(|value| !value.is_null()) {
+    if let Some(inherited) = template
+        .get("inheritedFrom")
+        .filter(|value| !value.is_null())
+    {
         let name = inherited.get("name").and_then(Value::as_str).unwrap_or("");
         let id = inherited.get("id").and_then(Value::as_str).unwrap_or("");
         lines.push(format!("Inherited from: {name} ({id})"));
@@ -106,7 +112,10 @@ fn format_template(template: &Value, line_width: usize) -> Result<String> {
         .get("updatedAt")
         .and_then(Value::as_str)
         .unwrap_or("");
-    lines.push(format!("Updated: {}", display::format_relative_time(updated)));
+    lines.push(format!(
+        "Updated: {}",
+        display::format_relative_time(updated)
+    ));
 
     lines.push(String::new());
     lines.push("Pre-fills:".to_string());
@@ -230,8 +239,10 @@ fn render_pre_fill(
             Ok(lines)
         }
         Value::Object(map) => {
-            let entries: Vec<(String, Value)> =
-                map.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+            let entries: Vec<(String, Value)> = map
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
             let mut lines = vec![format!("{indent}{key}:")];
             lines.extend(render_entries(entries, nested, line_width)?);
             Ok(lines)

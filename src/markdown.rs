@@ -27,7 +27,8 @@ use crate::graphql;
 /// Appended as a second paragraph to the description of every command that
 /// takes a rich Markdown body. It carries the rule an agent gets wrong when it
 /// has never been told (`@name` mentions nobody) plus the lookup it needs next.
-pub const MARKDOWN_HINT: &str = "Linear Markdown: a plain Linear URL creates a mention; `@name`, `@[Name](id)`,\n\
+pub const MARKDOWN_HINT: &str =
+    "Linear Markdown: a plain Linear URL creates a mention; `@name`, `@[Name](id)`,\n\
 and `[Name](url)` do not. Get a person's URL from the `url` field of\n\
 `linear team members <TEAM> --json`, or an issue's from `linear issue url <ID>`.\n\
 Run `linear markdown` for collapsible sections and the full reference.";
@@ -38,7 +39,8 @@ pub fn with_markdown_hint(description: &str) -> String {
 }
 
 /// Used both as the `markdown` command's description and as what it prints.
-pub const LINEAR_MARKDOWN_REFERENCE: &str = "Linear-flavored Markdown: mentions and collapsible sections\n\
+pub const LINEAR_MARKDOWN_REFERENCE: &str =
+    "Linear-flavored Markdown: mentions and collapsible sections\n\
 \n\
 These rules apply to comment bodies, issue descriptions, document content,\n\
 project overviews, and status update bodies.\n\

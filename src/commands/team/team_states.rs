@@ -6,9 +6,7 @@ use crate::colors;
 use crate::display;
 use crate::errors::{CliError, Result};
 use crate::graphql;
-use crate::linear::{
-    compare_workflow_states, get_team_key, resolve_team, WorkflowState,
-};
+use crate::linear::{compare_workflow_states, get_team_key, resolve_team, WorkflowState};
 use crate::output;
 
 const GET_WORKFLOW_STATES_QUERY: &str = r#"
@@ -39,14 +37,16 @@ pub fn run(args: StatesArgs) -> Result<()> {
     let resolved_team_key = match &args.team {
         Some(team) => resolve_team(team)?.key,
         None => get_team_key()?.ok_or_else(|| {
-            CliError::validation("Could not determine team key from directory name").suggestion(
-                "Please specify a team key, name, or ID as an argument.",
-            )
+            CliError::validation("Could not determine team key from directory name")
+                .suggestion("Please specify a team key, name, or ID as an argument.")
         })?,
     };
 
     let client = graphql::client()?;
-    let data = client.request(GET_WORKFLOW_STATES_QUERY, json!({ "teamKey": resolved_team_key }))?;
+    let data = client.request(
+        GET_WORKFLOW_STATES_QUERY,
+        json!({ "teamKey": resolved_team_key }),
+    )?;
     let nodes = data
         .get("team")
         .and_then(|team| team.get("states"))

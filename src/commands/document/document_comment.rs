@@ -34,9 +34,8 @@ pub fn run(args: DocumentCommentArgs) -> Result<()> {
     };
 
     match command {
-        DocumentCommentCommand::Add(a) => {
-            document_comment_add::run(a).map_err(|error| error.with_context("Failed to add comment"))
-        }
+        DocumentCommentCommand::Add(a) => document_comment_add::run(a)
+            .map_err(|error| error.with_context("Failed to add comment")),
         DocumentCommentCommand::List(a) => document_comment_list::run(a)
             .map_err(|error| error.with_context("Failed to list comments")),
     }

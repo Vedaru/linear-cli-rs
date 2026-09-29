@@ -76,7 +76,10 @@ fn env_with_configured_team(server: &MockLinearServer, reference: &str) -> Vec<(
 #[test]
 fn configured_team_uuid_resolves_to_the_team_key() {
     let server = MockLinearServer::start(vec![team_lookup_response(), projects_response()]);
-    let out = run_cli(&["project", "list"], &env_with_configured_team(&server, WAVE_TEAM_ID));
+    let out = run_cli(
+        &["project", "list"],
+        &env_with_configured_team(&server, WAVE_TEAM_ID),
+    );
 
     assert!(
         out.success(),
@@ -95,10 +98,17 @@ fn configured_team_uuid_resolves_to_the_team_key() {
 #[test]
 fn configured_lowercase_team_key_still_resolves() {
     let server = MockLinearServer::start(vec![team_lookup_response(), projects_response()]);
-    let out = run_cli(&["project", "list"], &env_with_configured_team(&server, "wav"));
+    let out = run_cli(
+        &["project", "list"],
+        &env_with_configured_team(&server, "wav"),
+    );
 
     assert!(out.success(), "stderr: {}", out.stderr);
-    assert!(out.stdout.contains(WAVE_PROJECT_SLUG), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains(WAVE_PROJECT_SLUG),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 /// A team that does not exist must be an error. Before the fix this was the

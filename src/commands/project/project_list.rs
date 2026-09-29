@@ -133,7 +133,11 @@ fn open_projects(args: &ProjectListArgs) -> Result<()> {
         ),
         None => format!("{}/{}/projects/all", consts::LINEAR_WEB_BASE_URL, workspace),
     };
-    let destination = if args.app { "Linear.app" } else { "web browser" };
+    let destination = if args.app {
+        "Linear.app"
+    } else {
+        "web browser"
+    };
     output::line(&format!("Opening {url} in {destination}"));
     crate::actions::open_url(&url, args.app)
 }
@@ -155,10 +159,7 @@ fn list(args: &ProjectListArgs) -> Result<()> {
         );
     }
     if let Some(status) = &args.status {
-        filter.insert(
-            "status".to_string(),
-            json!({ "name": { "eq": status } }),
-        );
+        filter.insert("status".to_string(), json!({ "name": { "eq": status } }));
     }
 
     let client = graphql::client()?;
@@ -236,10 +237,10 @@ fn sort_projects(projects: &mut [Value]) -> Result<()> {
     for project in projects.iter() {
         let field = project.get("sortOrder");
         if field.and_then(Value::as_f64).is_none() {
-            return Err(CliError::cli(
-                "Linear returned a non-numeric sortOrder for a project.",
-            )
-            .suggestion("Retry, or report this if it keeps happening."));
+            return Err(
+                CliError::cli("Linear returned a non-numeric sortOrder for a project.")
+                    .suggestion("Retry, or report this if it keeps happening."),
+            );
         }
     }
     projects.sort_by(|a, b| {
@@ -465,10 +466,7 @@ fn teams_of(project: &Value) -> String {
 }
 
 fn priority_of(project: &Value) -> i64 {
-    project
-        .get("priority")
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
+    project.get("priority").and_then(Value::as_i64).unwrap_or(0)
 }
 
 fn non_empty(value: Option<&Value>) -> Option<String> {

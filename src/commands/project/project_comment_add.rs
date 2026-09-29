@@ -34,7 +34,8 @@ pub struct ProjectCommentAddArgs {
 
 pub fn run(args: ProjectCommentAddArgs) -> Result<()> {
     let project = linear::resolve_project_id(&args.project)?;
-    let text_body = comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
+    let text_body =
+        comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
 
     let comment_body = match text_body {
         Some(body) => body,

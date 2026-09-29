@@ -75,9 +75,11 @@ pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>>
     if let Some(provided) = provided_id {
         // A pasted URL carries the identifier in its path; reading it here
         // covers every command and flag that funnels through this function.
-        if let Some(LinearUrlRef::Issue { identifier, .. }) =
-            expect_linear_url_kind(provided, "issue", "an issue URL or an identifier like ENG-123")?
-        {
+        if let Some(LinearUrlRef::Issue { identifier, .. }) = expect_linear_url_kind(
+            provided,
+            "issue",
+            "an issue URL or an identifier like ENG-123",
+        )? {
             return Ok(Some(identifier));
         }
 
@@ -87,12 +89,14 @@ pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>>
 
         if is_bare_integer(provided) {
             let Some(team_key) = get_team_key()? else {
-                return Err(CliError::validation(
-                    "an integer id was provided, but no team is set",
-                )
-                .suggestion("Run `linear config` to set a team."));
+                return Err(
+                    CliError::validation("an integer id was provided, but no team is set")
+                        .suggestion("Run `linear config` to set a team."),
+                );
             };
-            return Ok(normalize_issue_identifier(&format!("{team_key}-{provided}")));
+            return Ok(normalize_issue_identifier(&format!(
+                "{team_key}-{provided}"
+            )));
         }
     }
 
@@ -103,9 +107,7 @@ pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>>
 /// `true` for a positive integer with no leading zero, matching upstream's
 /// `/^[1-9][0-9]*$/`.
 pub(crate) fn is_bare_integer(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('0')
-        && value.bytes().all(|byte| byte.is_ascii_digit())
+    !value.is_empty() && !value.starts_with('0') && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// `true` for a `+N`/`-N` cycle offset token.
@@ -126,4 +128,3 @@ pub fn get_issue_id(identifier: &str) -> Result<Option<String>> {
         .and_then(Value::as_str)
         .map(str::to_string))
 }
-

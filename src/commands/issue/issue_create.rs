@@ -143,9 +143,7 @@ pub fn run(args: IssueCreateArgs) -> Result<()> {
         && falsy(&args.due_date)
         && args.priority.is_none()
         && args.estimate.is_none()
-        && final_description
-            .as_deref()
-            .map_or(true, str::is_empty)
+        && final_description.as_deref().map_or(true, str::is_empty)
         && args.label.is_empty()
         && falsy(&args.team)
         && falsy(&args.state)
@@ -155,9 +153,8 @@ pub fn run(args: IssueCreateArgs) -> Result<()> {
         && args.template.is_none();
 
     if only_interactive_seed_flags_provided && interactive {
-        return run_interactive(&args, interactive).map_err(|error| {
-            error.with_context("Failed to create issue")
-        });
+        return run_interactive(&args, interactive)
+            .map_err(|error| error.with_context("Failed to create issue"));
     }
 
     // Fallback to flag-based mode. A template can supply the title.
@@ -184,11 +181,8 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
         Some(project) => Some(resolve_project_id_for_create(project, interactive)?),
     };
 
-    let data = prompt_interactive_issue_creation(
-        explicit_project_id,
-        parent_id,
-        parent_data.as_ref(),
-    )?;
+    let data =
+        prompt_interactive_issue_creation(explicit_project_id, parent_id, parent_data.as_ref())?;
 
     output::line("Creating issue...");
     output::blank();
@@ -214,7 +208,10 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
     if let Some(state_id) = &data.state_id {
         input.insert("stateId".to_string(), json!(state_id));
     }
-    input.insert("useDefaultTemplate".to_string(), json!(args.use_default_template));
+    input.insert(
+        "useDefaultTemplate".to_string(),
+        json!(args.use_default_template),
+    );
     if let Some(description) = &data.description {
         input.insert("description".to_string(), json!(description));
     }
@@ -226,13 +223,13 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
     )?;
     let issue = created_issue(&result)?;
     let issue_id = issue.get("id").and_then(Value::as_str).unwrap_or("");
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let url = issue.get("url").and_then(Value::as_str).unwrap_or("");
 
-    output::line(&format!(
-        "✓ Created issue {identifier}: {}",
-        data.title
-    ));
+    output::line(&format!("✓ Created issue {identifier}: {}", data.title));
     output::line(url);
 
     if data.start {
@@ -250,10 +247,7 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
 
 /// `issueCreate` result validation shared by both paths.
 fn created_issue(result: &Value) -> Result<Value> {
-    let issue_create = result
-        .get("issueCreate")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let issue_create = result.get("issueCreate").cloned().unwrap_or(Value::Null);
     if !issue_create
         .get("success")
         .and_then(Value::as_bool)
@@ -308,7 +302,8 @@ fn run_flags(
     let template_id = match &args.template {
         None => None,
         Some(template) => {
-            let resolved = resolve_template_scoped(template, "issue", std::slice::from_ref(&team_id))?;
+            let resolved =
+                resolve_template_scoped(template, "issue", std::slice::from_ref(&team_id))?;
             Some(tmpl::template_id(&resolved))
         }
     };
@@ -383,8 +378,10 @@ fn run_flags(
                     "Use --project to specify which project the milestone belongs to, or pass a milestone UUID directly.",
                 ));
             }
-            project_milestone_id =
-                Some(linear::resolve_milestone_id(milestone, project_id.as_deref())?);
+            project_milestone_id = Some(linear::resolve_milestone_id(
+                milestone,
+                project_id.as_deref(),
+            )?);
         }
     }
 
@@ -429,7 +426,10 @@ fn run_flags(
         input.insert("projectId".to_string(), project_id_value);
     }
     if let Some(project_milestone_id) = &project_milestone_id {
-        input.insert("projectMilestoneId".to_string(), json!(project_milestone_id));
+        input.insert(
+            "projectMilestoneId".to_string(),
+            json!(project_milestone_id),
+        );
     }
     if let Some(cycle_id) = &cycle_id {
         input.insert("cycleId".to_string(), json!(cycle_id));
@@ -541,18 +541,15 @@ fn prompt_project_selection(team_id: &str, preloaded: Option<&[Value]>) -> Resul
     }
 
     const NO_PROJECT: &str = "__none__";
-    let mut options: Vec<(String, String)> = vec![(NO_PROJECT.to_string(), "No project".to_string())];
+    let mut options: Vec<(String, String)> =
+        vec![(NO_PROJECT.to_string(), "No project".to_string())];
     for project in &projects {
         let id = project.get("id").and_then(Value::as_str).unwrap_or("");
         let name = project.get("name").and_then(Value::as_str).unwrap_or("");
         options.push((id.to_string(), name.to_string()));
     }
 
-    let selected = prompt_select(
-        "Which project should this issue belong to?",
-        &options,
-        0,
-    )?;
+    let selected = prompt_select("Which project should this issue belong to?", &options, 0)?;
     if selected == NO_PROJECT {
         Ok(None)
     } else {
@@ -606,7 +603,11 @@ fn prompt_additional_fields(
                 None => label.to_string(),
             }
         } else if key == "assignee" {
-            let who = if auto_assign_to_self { "self" } else { "unassigned" };
+            let who = if auto_assign_to_self {
+                "self"
+            } else {
+                "unassigned"
+            };
             format!("{label} ({who})")
         } else {
             label.to_string()
@@ -680,11 +681,7 @@ fn prompt_additional_fields(
                         )
                     })
                     .collect();
-                let selected = prompt_select(
-                    "What priority should this issue have?",
-                    &options,
-                    0,
-                )?;
+                let selected = prompt_select("What priority should this issue have?", &options, 0)?;
                 let selected = selected.parse::<i64>().unwrap_or(0);
                 result.priority = if selected == 0 { None } else { Some(selected) };
             }
@@ -697,7 +694,11 @@ fn prompt_additional_fields(
                     .iter()
                     .map(|label| {
                         (
-                            label.get("id").and_then(Value::as_str).unwrap_or("").to_string(),
+                            label
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
                             label
                                 .get("name")
                                 .and_then(Value::as_str)
@@ -752,7 +753,10 @@ fn prompt_interactive_issue_creation(
             .get("identifier")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let title = parent_data.get("title").and_then(Value::as_str).unwrap_or("");
+        let title = parent_data
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         output::line(&format!("Creating sub-issue for: {identifier}: {title}"));
         output::blank();
     }
@@ -768,11 +772,8 @@ fn prompt_interactive_issue_creation(
                 .iter()
                 .map(|team| (team.id.clone(), format!("{} ({})", team.name, team.key)))
                 .collect();
-            let selected_team_id = prompt_select(
-                "Which team should this issue belong to?",
-                &options,
-                0,
-            )?;
+            let selected_team_id =
+                prompt_select("Which team should this issue belong to?", &options, 0)?;
             let team = teams
                 .iter()
                 .find(|team| team.id == selected_team_id)
@@ -967,7 +968,11 @@ fn should_ask_project_during_interactive_create() -> bool {
 // Scoped template resolution (ported from utils/templates.ts, issue scope)
 // ---------------------------------------------------------------------------
 
-fn resolve_template_scoped(reference: &str, template_type: &str, team_ids: &[String]) -> Result<Value> {
+fn resolve_template_scoped(
+    reference: &str,
+    template_type: &str,
+    team_ids: &[String],
+) -> Result<Value> {
     crate::linear_url::reject_linear_url(reference, "a template name or UUID")?;
     if linear::is_linear_uuid(reference) {
         let template = tmpl::fetch_template(reference)?;
@@ -1027,13 +1032,11 @@ fn resolve_template_scoped(reference: &str, template_type: &str, team_ids: &[Str
         })
         .collect::<Vec<_>>()
         .join(", ");
-    Err(
-        CliError::validation(format!(
-            "Template name \"{reference}\" is ambiguous: it matches {} templates",
-            candidates.len()
-        ))
-        .suggestion(format!("Pass the template ID instead: {ids}")),
-    )
+    Err(CliError::validation(format!(
+        "Template name \"{reference}\" is ambiguous: it matches {} templates",
+        candidates.len()
+    ))
+    .suggestion(format!("Pass the template ID instead: {ids}")))
 }
 
 fn available_names(all: &[Value], template_type: &str, team_ids: &[String]) -> Vec<String> {
@@ -1225,19 +1228,31 @@ fn prompt_text_required(message: &str) -> Result<String> {
 }
 
 /// A numbered single-choice prompt returning the selected option's *value*.
-fn prompt_select(message: &str, options: &[(String, String)], default_index: usize) -> Result<String> {
+fn prompt_select(
+    message: &str,
+    options: &[(String, String)],
+    default_index: usize,
+) -> Result<String> {
     if options.is_empty() {
         return Err(CliError::validation("No options available"));
     }
     eprintln!("{message}");
     for (index, (_, display)) in options.iter().enumerate() {
-        let marker = if index == default_index { " (default)" } else { "" };
+        let marker = if index == default_index {
+            " (default)"
+        } else {
+            ""
+        };
         eprintln!("  {}. {display}{marker}", index + 1);
     }
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("Enter a number (1-{}) [{}]: ", options.len(), default_index + 1);
+        eprint!(
+            "Enter a number (1-{}) [{}]: ",
+            options.len(),
+            default_index + 1
+        );
         let _ = std::io::stderr().flush();
 
         let mut line = String::new();

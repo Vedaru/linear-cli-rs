@@ -36,7 +36,8 @@ pub fn run(args: InitiativeCommentAddArgs) -> Result<()> {
     // A comment attaches to the initiative's *id*, which the resolver returns
     // for a URL, UUID, slug ID, or exact name.
     let initiative = linear::resolve_initiative_id(&args.initiative)?;
-    let text_body = comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
+    let text_body =
+        comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
 
     let comment_body = match text_body {
         Some(body) => body,
@@ -54,7 +55,10 @@ pub fn run(args: InitiativeCommentAddArgs) -> Result<()> {
         },
     )?;
 
-    output::line(&format!("✓ Comment added to initiative {}", args.initiative));
+    output::line(&format!(
+        "✓ Comment added to initiative {}",
+        args.initiative
+    ));
     output::line(&url);
     Ok(())
 }

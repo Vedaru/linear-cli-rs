@@ -101,7 +101,9 @@ fn run_inner(args: IssueLinkArgs) -> Result<()> {
         .and_then(|value| value.get("title"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    output::line(&format!("✓ Linked to {resolved_identifier}: {attachment_title}"));
+    output::line(&format!(
+        "✓ Linked to {resolved_identifier}: {attachment_title}"
+    ));
 
     Ok(())
 }

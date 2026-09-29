@@ -86,4 +86,3 @@ pub fn resolve_release_id(input: &str) -> Result<String> {
     }
     Ok(candidates[0].0.clone())
 }
-

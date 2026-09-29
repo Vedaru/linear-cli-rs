@@ -157,7 +157,11 @@ fn type_cell(template: &Value) -> String {
 }
 
 fn team_rank(template: &Value) -> u8 {
-    if template.get("team").filter(|team| !team.is_null()).is_some() {
+    if template
+        .get("team")
+        .filter(|team| !team.is_null())
+        .is_some()
+    {
         1
     } else {
         0

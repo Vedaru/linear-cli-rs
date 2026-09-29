@@ -75,8 +75,7 @@ pub fn run(args: InitiativeUpdateCreateArgs) -> Result<()> {
     // raw reference on any failure, matching upstream's try/catch.
     let mut initiative_name = args.initiative_id.clone();
     if let Ok(client) = graphql::client() {
-        if let Ok(result) =
-            client.request(GET_INITIATIVE_NAME_QUERY, json!({ "id": resolved_id }))
+        if let Ok(result) = client.request(GET_INITIATIVE_NAME_QUERY, json!({ "id": resolved_id }))
         {
             if let Some(name) = result
                 .pointer("/initiative/name")
@@ -92,7 +91,8 @@ pub fn run(args: InitiativeUpdateCreateArgs) -> Result<()> {
     // `prompt::is_interactive()` (stdin + stderr), which also guarantees a
     // headless run can never block waiting for a prompt.
     let mut use_interactive = args.interactive && prompt::is_interactive();
-    let no_flags_provided = args.body.is_none() && args.body_file.is_none() && args.health.is_none();
+    let no_flags_provided =
+        args.body.is_none() && args.body_file.is_none() && args.health.is_none();
     if no_flags_provided && prompt::is_interactive() {
         use_interactive = true;
     }
@@ -143,8 +143,10 @@ pub fn run(args: InitiativeUpdateCreateArgs) -> Result<()> {
     let validated_health = match &args.health {
         Some(health) => {
             if !HEALTH_VALUES.contains(&health.as_str()) {
-                return Err(CliError::validation(format!("Invalid health value: {health}"))
-                    .suggestion(format!("Valid values: {}", HEALTH_VALUES.join(", "))));
+                return Err(
+                    CliError::validation(format!("Invalid health value: {health}"))
+                        .suggestion(format!("Valid values: {}", HEALTH_VALUES.join(", "))),
+                );
             }
             Some(health.clone())
         }
@@ -180,9 +182,7 @@ fn create_initiative_update(input: Value) -> Result<()> {
         .get("initiativeUpdateCreate")
         .and_then(|value| value.get("initiativeUpdate"))
         .filter(|value| !value.is_null())
-        .ok_or_else(|| {
-            CliError::cli("Initiative update creation failed - no update returned")
-        })?;
+        .ok_or_else(|| CliError::cli("Initiative update creation failed - no update returned"))?;
 
     let initiative_name = update
         .pointer("/initiative/name")
@@ -228,7 +228,10 @@ fn read_content_from_stdin() -> Option<String> {
             Some(content)
         });
     });
-    receiver.recv_timeout(Duration::from_millis(100)).ok().flatten()
+    receiver
+        .recv_timeout(Duration::from_millis(100))
+        .ok()
+        .flatten()
 }
 
 fn prompt_interactive_create(initiative_name: &str) -> Result<(Option<String>, Option<String>)> {
@@ -254,10 +257,7 @@ fn prompt_interactive_create(initiative_name: &str) -> Result<(Option<String>, O
         .and_then(|value| value.rsplit('/').next())
         .map(str::to_string);
 
-    let mut method_labels = vec![
-        "Skip (no content)".to_string(),
-        "Enter inline".to_string(),
-    ];
+    let mut method_labels = vec!["Skip (no content)".to_string(), "Enter inline".to_string()];
     if let Some(name) = &editor_display_name {
         method_labels.push(format!("Open {name}"));
     }

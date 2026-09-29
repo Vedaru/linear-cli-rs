@@ -91,12 +91,11 @@ fn mine(args: &IssueMineArgs) -> Result<()> {
         } else {
             "--unassigned"
         };
-        return Err(CliError::validation(format!(
-            "{flag} has been removed from 'issue mine'"
-        ))
-        .suggestion(format!(
-            "Use 'linear issue query {flag}' for assignee filtering."
-        )));
+        return Err(
+            CliError::validation(format!("{flag} has been removed from 'issue mine'")).suggestion(
+                format!("Use 'linear issue query {flag}' for assignee filtering."),
+            ),
+        );
     }
 
     let state_array = args.state.clone();
@@ -110,11 +109,7 @@ fn mine(args: &IssueMineArgs) -> Result<()> {
 
     let sort = config::resolve_issue_sort(args.sort.as_deref())?;
 
-    let explicit_team = args
-        .team
-        .as_deref()
-        .map(linear::resolve_team)
-        .transpose()?;
+    let explicit_team = args.team.as_deref().map(linear::resolve_team).transpose()?;
     let team_key = match explicit_team.as_ref().map(|team| team.key.clone()) {
         Some(team_key) => Some(team_key),
         None => linear::get_team_key()?,

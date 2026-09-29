@@ -168,7 +168,10 @@ pub fn run(args: ViewArgs) -> Result<()> {
 
     let mut lines: Vec<String> = Vec::new();
 
-    lines.push(format!("# {}", string_field(milestone, "name").unwrap_or("")));
+    lines.push(format!(
+        "# {}",
+        string_field(milestone, "name").unwrap_or("")
+    ));
     lines.push(String::new());
 
     lines.push(format!(
@@ -210,7 +213,8 @@ pub fn run(args: ViewArgs) -> Result<()> {
         display::format_relative_time(string_field(milestone, "updatedAt").unwrap_or(""))
     ));
 
-    if let Some(description) = string_field(milestone, "description").filter(|text| !text.is_empty())
+    if let Some(description) =
+        string_field(milestone, "description").filter(|text| !text.is_empty())
     {
         lines.push(String::new());
         lines.push("## Description".to_string());

@@ -153,9 +153,7 @@ fn list_marker_regex() -> &'static Regex {
 /// Markdown renderer unchanged.
 fn escape_markdown(text: &str) -> String {
     let escaped = escape_chars_regex()
-        .replace_all(text, |caps: &regex::Captures| {
-            format!("\\{}", &caps[0])
-        })
+        .replace_all(text, |caps: &regex::Captures| format!("\\{}", &caps[0]))
         .into_owned();
 
     list_marker_regex()
@@ -226,7 +224,10 @@ fn render_inline(nodes: &[Node]) -> String {
     let mut out = String::new();
     for node in nodes {
         match node.node_type.as_str() {
-            "text" => out.push_str(&apply_marks(node.text.as_deref().unwrap_or(""), &node.marks)),
+            "text" => out.push_str(&apply_marks(
+                node.text.as_deref().unwrap_or(""),
+                &node.marks,
+            )),
             "hard_break" => out.push('\n'),
             "image" => out.push_str(&format!(
                 "![{}]({})",
@@ -408,10 +409,7 @@ mod tests {
                 { "type": "text", "text": "- not a list" }
             ]}]
         });
-        assert_eq!(
-            prose_mirror_to_markdown(&doc).unwrap(),
-            "\\- not a list"
-        );
+        assert_eq!(prose_mirror_to_markdown(&doc).unwrap(), "\\- not a list");
     }
 
     #[test]

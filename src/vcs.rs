@@ -44,7 +44,9 @@ fn git_branch_exists(branch: &str) -> Result<bool> {
         DEFAULT_TIMEOUT,
     ) {
         Some(output) => Ok(output.success),
-        None => Err(CliError::cli("Failed to check if branch exists: git is not available")),
+        None => Err(CliError::cli(
+            "Failed to check if branch exists: git is not available",
+        )),
     }
 }
 

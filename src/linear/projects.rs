@@ -108,9 +108,6 @@ pub fn get_projects_for_team(team_id: &str) -> Result<Vec<Value>> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    projects.sort_by(|a, b| {
-        name_lowercase(a).cmp(&name_lowercase(b))
-    });
+    projects.sort_by_key(name_lowercase);
     Ok(projects)
 }
-

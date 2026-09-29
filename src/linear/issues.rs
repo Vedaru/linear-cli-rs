@@ -147,10 +147,7 @@ pub fn fetch_issues_for_state(
         None => None,
     };
 
-    let labels: Option<Value> = options
-        .label_names
-        .as_deref()
-        .and_then(label_filter);
+    let labels: Option<Value> = options.label_names.as_deref().and_then(label_filter);
 
     let mut filter = Map::new();
     filter.insert("team".to_string(), json!({ "key": { "eq": team_key } }));
@@ -293,15 +290,8 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
     let client = graphql::client()?;
 
     let mut filter = Map::new();
-    if let Some(team_keys) = options
-        .team_keys
-        .as_ref()
-        .filter(|keys| !keys.is_empty())
-    {
-        filter.insert(
-            "team".to_string(),
-            json!({ "key": { "in": team_keys } }),
-        );
+    if let Some(team_keys) = options.team_keys.as_ref().filter(|keys| !keys.is_empty()) {
+        filter.insert("team".to_string(), json!({ "key": { "in": team_keys } }));
     }
     if let Some(state) = &options.state {
         if let Some(state_filter) = workflow_state_filter(state)? {
@@ -313,8 +303,8 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
     if options.unassigned {
         filter.insert("assignee".to_string(), json!({ "null": true }));
     } else if let Some(assignee) = &options.assignee {
-        let user_id = lookup_user_id(assignee)?
-            .ok_or_else(|| CliError::not_found("User", assignee))?;
+        let user_id =
+            lookup_user_id(assignee)?.ok_or_else(|| CliError::not_found("User", assignee))?;
         filter.insert("assignee".to_string(), json!({ "id": { "eq": user_id } }));
     }
     if let Some(project_id) = &options.project_id {
@@ -431,18 +421,11 @@ pub struct SearchIssuesByTermOptions {
 }
 
 /// Full-text issue search, shaped `{ nodes, pageInfo, totalCount }`.
-pub fn search_issues_by_term(
-    term: &str,
-    options: &SearchIssuesByTermOptions,
-) -> Result<Value> {
+pub fn search_issues_by_term(term: &str, options: &SearchIssuesByTermOptions) -> Result<Value> {
     let client = graphql::client()?;
 
     let mut filter = Map::new();
-    if let Some(team_keys) = options
-        .team_keys
-        .as_ref()
-        .filter(|keys| !keys.is_empty())
-    {
+    if let Some(team_keys) = options.team_keys.as_ref().filter(|keys| !keys.is_empty()) {
         if team_keys.len() == 1 {
             filter.insert("team".to_string(), json!({ "key": { "eq": team_keys[0] } }));
         } else {
@@ -591,4 +574,3 @@ pub fn search_issues_by_term(
         "totalCount": total_count,
     }))
 }
-

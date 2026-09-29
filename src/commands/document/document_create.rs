@@ -249,7 +249,10 @@ fn read_content_from_stdin() -> Option<String> {
             Some(content)
         });
     });
-    receiver.recv_timeout(Duration::from_millis(100)).ok().flatten()
+    receiver
+        .recv_timeout(Duration::from_millis(100))
+        .ok()
+        .flatten()
 }
 
 struct InteractiveResult {
@@ -268,10 +271,7 @@ fn prompt_interactive_create() -> Result<InteractiveResult> {
         .and_then(|value| value.rsplit('/').next())
         .map(str::to_string);
 
-    let mut labels = vec![
-        "Skip (no content)".to_string(),
-        "Enter inline".to_string(),
-    ];
+    let mut labels = vec!["Skip (no content)".to_string(), "Enter inline".to_string()];
     if let Some(name) = &editor_display_name {
         labels.push(format!("Open {name}"));
     }
@@ -333,17 +333,10 @@ fn prompt_interactive_create() -> Result<InteractiveResult> {
 }
 
 fn prompt_for_target() -> Result<DocumentTarget> {
-    let labels = [
-        "Project",
-        "Issue",
-        "Team",
-        "Initiative",
-        "Cycle",
-        "Release",
-    ]
-    .iter()
-    .map(|value| value.to_string())
-    .collect::<Vec<_>>();
+    let labels = ["Project", "Issue", "Team", "Initiative", "Cycle", "Release"]
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
 
     let selection = prompt_select("Attach document to", &labels, 0)?;
 

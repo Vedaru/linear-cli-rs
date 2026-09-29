@@ -7,10 +7,7 @@ use super::*;
 
 /// Look up an initiative by slug ID and nothing else. A URL's slug must not
 /// fall through to a name lookup that a same-named initiative could win.
-pub fn find_initiative_id_by_slug(
-    slug_id: &str,
-    include_archived: bool,
-) -> Result<Option<String>> {
+pub fn find_initiative_id_by_slug(slug_id: &str, include_archived: bool) -> Result<Option<String>> {
     let client = graphql::client()?;
     let data = client.request(
         RESOLVE_INITIATIVE_BY_SLUG_QUERY,
@@ -29,9 +26,11 @@ pub fn find_initiative_id_by_slug(
 /// Resolve an initiative to its UUID by URL, UUID, slug ID, or exact name.
 /// An ambiguous name is an error rather than a silent pick.
 pub fn resolve_initiative_id(input: &str) -> Result<String> {
-    if let Some(LinearUrlRef::Initiative { slug_id, .. }) =
-        expect_linear_url_kind(input, "initiative", "an initiative URL, UUID, slug ID, or exact name")?
-    {
+    if let Some(LinearUrlRef::Initiative { slug_id, .. }) = expect_linear_url_kind(
+        input,
+        "initiative",
+        "an initiative URL, UUID, slug ID, or exact name",
+    )? {
         return find_initiative_id_by_slug(&slug_id, false)?.ok_or_else(|| {
             CliError::not_found("Initiative", input).suggestion(
                 "The initiative in that URL may have been deleted, or be in a workspace this key cannot see.",
@@ -102,9 +101,11 @@ pub fn resolve_initiative_id(input: &str) -> Result<String> {
 /// Same ambiguity handling as [`resolve_initiative_id`]: more than one name
 /// match is an error rather than a silent pick.
 pub fn resolve_initiative_id_including_archived(input: &str) -> Result<String> {
-    if let Some(LinearUrlRef::Initiative { slug_id, .. }) =
-        expect_linear_url_kind(input, "initiative", "an initiative URL, UUID, slug ID, or exact name")?
-    {
+    if let Some(LinearUrlRef::Initiative { slug_id, .. }) = expect_linear_url_kind(
+        input,
+        "initiative",
+        "an initiative URL, UUID, slug ID, or exact name",
+    )? {
         return find_initiative_id_by_slug(&slug_id, true)?.ok_or_else(|| {
             CliError::not_found("Initiative", input).suggestion(
                 "The initiative in that URL may have been deleted, or be in a workspace this key cannot see.",
@@ -161,4 +162,3 @@ pub fn resolve_initiative_id_including_archived(input: &str) -> Result<String> {
     Err(CliError::not_found("Initiative", input)
         .suggestion("Pass an initiative UUID, slug ID, or exact initiative name."))
 }
-

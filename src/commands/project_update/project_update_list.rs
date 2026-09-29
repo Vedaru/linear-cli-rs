@@ -118,7 +118,10 @@ pub fn run(args: ProjectUpdateListArgs) -> Result<()> {
     let space_width = 4usize;
     let fixed = id_width + health_width + date_width + author_width + space_width;
     let padding = 1usize;
-    let available_width = columns.saturating_sub(padding).saturating_sub(fixed).max(10);
+    let available_width = columns
+        .saturating_sub(padding)
+        .saturating_sub(fixed)
+        .max(10);
 
     // --- header ------------------------------------------------------------
     let header = [

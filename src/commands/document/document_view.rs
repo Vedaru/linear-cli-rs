@@ -160,7 +160,11 @@ fn get_document_with_all_comments(id: &str) -> Result<Option<Value>> {
         json!({ "id": id, "commentsAfter": Value::Null }),
     )?;
 
-    let Some(mut document) = first.get("document").filter(|value| !value.is_null()).cloned() else {
+    let Some(mut document) = first
+        .get("document")
+        .filter(|value| !value.is_null())
+        .cloned()
+    else {
         return Ok(None);
     };
 
@@ -296,7 +300,10 @@ fn render_document_markdown(document: &Value, content: Option<&str>) -> String {
         lines.push(format!("**Project:** {project}"));
     }
     if let Some(issue) = document.get("issue").filter(|value| !value.is_null()) {
-        let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+        let identifier = issue
+            .get("identifier")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
         lines.push(format!("**Issue:** {identifier} - {title}"));
     }

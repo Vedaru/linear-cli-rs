@@ -106,10 +106,12 @@ pub fn run(args: TemplateArgs) -> Result<()> {
     };
 
     match command {
-        TemplateCommand::List(args) => template_list::run(args)
-            .map_err(|error| error.with_context("Failed to list templates")),
-        TemplateCommand::View(args) => template_view::run(args)
-            .map_err(|error| error.with_context("Failed to view template")),
+        TemplateCommand::List(args) => {
+            template_list::run(args).map_err(|error| error.with_context("Failed to list templates"))
+        }
+        TemplateCommand::View(args) => {
+            template_view::run(args).map_err(|error| error.with_context("Failed to view template"))
+        }
     }
 }
 
@@ -132,7 +134,11 @@ pub(crate) fn fetch_template(id: &str) -> Result<Value> {
     match client.request(GET_TEMPLATE_QUERY, json!({ "id": id })) {
         Ok(result) => Ok(result.get("template").cloned().unwrap_or(Value::Null)),
         Err(error) => {
-            if error.user_message.to_lowercase().contains("no template found") {
+            if error
+                .user_message
+                .to_lowercase()
+                .contains("no template found")
+            {
                 Err(CliError::not_found("Template", id)
                     .suggestion("Run `linear template list` to see every template."))
             } else {
@@ -244,13 +250,11 @@ pub(crate) fn resolve_template(reference: &str) -> Result<Value> {
         .collect::<Vec<_>>()
         .join(", ");
 
-    Err(
-        CliError::validation(format!(
-            "Template name \"{reference}\" is ambiguous: it matches {} templates",
-            by_name.len()
-        ))
-        .suggestion(format!("Pass the template ID instead: {ids}")),
-    )
+    Err(CliError::validation(format!(
+        "Template name \"{reference}\" is ambiguous: it matches {} templates",
+        by_name.len()
+    ))
+    .suggestion(format!("Pass the template ID instead: {ids}")))
 }
 
 /// The pre-filled attributes of a template. Linear returns `templateData` as a

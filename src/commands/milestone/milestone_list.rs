@@ -140,13 +140,15 @@ pub fn run(args: ListArgs) -> Result<()> {
 
     const ID_WIDTH: usize = 36;
     const TARGET_DATE_WIDTH: usize = 12;
-    let project_width = 30usize.min(7usize.max(
-        milestones
-            .iter()
-            .map(|milestone| display::display_width(project_name(milestone)))
-            .max()
-            .unwrap_or(0),
-    ));
+    let project_width = 30usize.min(
+        7usize.max(
+            milestones
+                .iter()
+                .map(|milestone| display::display_width(project_name(milestone)))
+                .max()
+                .unwrap_or(0),
+        ),
+    );
 
     const SPACE_WIDTH: usize = 4;
     let fixed = ID_WIDTH + TARGET_DATE_WIDTH + project_width + SPACE_WIDTH;

@@ -90,10 +90,7 @@ pub(crate) fn collect_bulk_ids(
     Ok(all_ids)
 }
 
-pub(crate) fn execute_bulk_operations<F>(
-    ids: &[String],
-    operation: F,
-) -> BulkOperationSummary
+pub(crate) fn execute_bulk_operations<F>(ids: &[String], operation: F) -> BulkOperationSummary
 where
     F: Fn(&str) -> Result<BulkOperationResult>,
 {

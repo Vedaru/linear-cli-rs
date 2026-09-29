@@ -28,7 +28,10 @@ impl CycleNode {
                 .get("startsAt")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            is_next: value.get("isNext").and_then(Value::as_bool).unwrap_or(false),
+            is_next: value
+                .get("isNext")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             is_previous: value
                 .get("isPrevious")
                 .and_then(Value::as_bool)
@@ -45,10 +48,7 @@ struct ActiveCycle {
 
 /// Resolve a cycle to its UUID from a URL, keyword (`active`/`now`, `next`,
 /// `previous`), signed offset, number, or name.
-pub fn get_cycle_id_by_name_or_number(
-    team_id: &str,
-    cycle_name_or_number: &str,
-) -> Result<String> {
+pub fn get_cycle_id_by_name_or_number(team_id: &str, cycle_name_or_number: &str) -> Result<String> {
     let url_ref = expect_linear_url_kind(
         cycle_name_or_number,
         "cycle",
@@ -199,10 +199,9 @@ pub fn get_cycle_id_by_name_or_number(
             }
             None => "Use a cycle number or name instead.".to_string(),
         };
-        return Err(CliError::cli(format!(
-            "Team {team_key} has no active cycle"
-        ))
-        .suggestion(suggestion));
+        return Err(
+            CliError::cli(format!("Team {team_key} has no active cycle")).suggestion(suggestion),
+        );
     }
 
     if keyword == "next" {
@@ -214,10 +213,13 @@ pub fn get_cycle_id_by_name_or_number(
     }
 
     if keyword == "previous" {
-        let previous = cycles.iter().find(|cycle| cycle.is_previous).ok_or_else(|| {
-            CliError::cli(format!("Team {team_key} has no previous cycle"))
-                .suggestion("Use a cycle number or name instead.")
-        })?;
+        let previous = cycles
+            .iter()
+            .find(|cycle| cycle.is_previous)
+            .ok_or_else(|| {
+                CliError::cli(format!("Team {team_key} has no previous cycle"))
+                    .suggestion("Use a cycle number or name instead.")
+            })?;
         return Ok(previous.id.clone());
     }
 
@@ -236,9 +238,7 @@ pub fn get_cycle_id_by_name_or_number(
             return Err(CliError::validation(format!(
                 "Cannot resolve relative cycle {reference}: the team has no active cycle"
             ))
-            .suggestion(
-                "Use 'next', a cycle number, or a cycle name while no cycle is active.",
-            ));
+            .suggestion("Use 'next', a cycle number, or a cycle name while no cycle is active."));
         };
         let Some(target_number) = active.number.checked_add(offset) else {
             return Err(CliError::not_found("Cycle", &reference));
@@ -279,4 +279,3 @@ fn url_ref_cycle(url_ref: &LinearUrlRef) -> Option<&CycleRef> {
         _ => None,
     }
 }
-

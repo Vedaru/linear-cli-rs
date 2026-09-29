@@ -55,8 +55,14 @@ fn project_list_renders_columns_and_rows() {
         &common::mock_env(&server),
     );
     assert!(out.success(), "stderr: {}", out.stderr);
-    for header in ["SLUG", "NAME", "STATUS", "PRIORITY", "HEALTH", "LEAD", "TEAMS", "DATE"] {
-        assert!(out.stdout.contains(header), "missing {header}: {}", out.stdout);
+    for header in [
+        "SLUG", "NAME", "STATUS", "PRIORITY", "HEALTH", "LEAD", "TEAMS", "DATE",
+    ] {
+        assert!(
+            out.stdout.contains(header),
+            "missing {header}: {}",
+            out.stdout
+        );
     }
     assert!(out.stdout.contains("launch"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("Launch"), "stdout: {}", out.stdout);
@@ -93,7 +99,8 @@ fn project_list_rejects_team_with_all_teams() {
     );
     assert!(!out.success());
     assert!(
-        out.stderr.contains("Cannot use both --team and --all-teams flags"),
+        out.stderr
+            .contains("Cannot use both --team and --all-teams flags"),
         "stderr: {}",
         out.stderr
     );
@@ -150,8 +157,16 @@ fn project_view_prints_markdown() {
     // stdout is piped (not a TTY); the markdown renderer is the only branch.
     let out = run_cli(&["project", "view", PROJECT_ID], &common::mock_env(&server));
     assert!(out.success(), "stderr: {}", out.stderr);
-    assert!(out.stdout.contains("# Launch [LNCH]"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("**Status:** In Progress"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("# Launch [LNCH]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("**Status:** In Progress"),
+        "stdout: {}",
+        out.stdout
+    );
     assert!(out.stdout.contains("Ship it"), "stdout: {}", out.stdout);
 }
 
@@ -162,10 +177,7 @@ fn project_view_missing_reports_against_raw_id() {
         json!({ "data": { "project": null } }),
     )]);
 
-    let out = run_cli(
-        &["project", "view", PROJECT_ID],
-        &common::mock_env(&server),
-    );
+    let out = run_cli(&["project", "view", PROJECT_ID], &common::mock_env(&server));
     assert!(!out.success());
     assert!(
         out.stderr.contains("Failed to view project"),
@@ -173,7 +185,8 @@ fn project_view_missing_reports_against_raw_id() {
         out.stderr
     );
     assert!(
-        out.stderr.contains(&format!("Project not found: {PROJECT_ID}")),
+        out.stderr
+            .contains(&format!("Project not found: {PROJECT_ID}")),
         "stderr: {}",
         out.stderr
     );
@@ -219,7 +232,8 @@ fn project_create_posts_create_input() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("https://linear.app/acme/project/runbook"),
+        out.stdout
+            .contains("https://linear.app/acme/project/runbook"),
         "stdout: {}",
         out.stdout
     );
@@ -367,7 +381,11 @@ fn project_comment_list_renders_threads() {
         "stdout: {}",
         out.stdout
     );
-    assert!(out.stdout.contains("First thought"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("First thought"),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]

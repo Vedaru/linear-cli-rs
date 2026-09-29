@@ -51,8 +51,11 @@ pub fn sort_issues_by_workflow_state(issues: &mut [Value]) {
             .and_then(|state| state.get("position"))
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
-        compare_workflow_state_types(a_type, b_type)
-            .then_with(|| b_position.partial_cmp(&a_position).unwrap_or(std::cmp::Ordering::Equal))
+        compare_workflow_state_types(a_type, b_type).then_with(|| {
+            b_position
+                .partial_cmp(&a_position)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 }
 
@@ -73,4 +76,3 @@ pub(crate) fn integer_field(value: Option<&Value>) -> Option<i64> {
         _ => None,
     }
 }
-

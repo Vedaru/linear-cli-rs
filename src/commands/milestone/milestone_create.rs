@@ -85,8 +85,12 @@ pub fn run(args: CreateArgs) -> Result<()> {
         "✓ Created milestone: {}",
         string_field(milestone, "name").unwrap_or("")
     ));
-    output::line(&format!("  ID: {}", string_field(milestone, "id").unwrap_or("")));
-    if let Some(target_date) = string_field(milestone, "targetDate").filter(|date| !date.is_empty()) {
+    output::line(&format!(
+        "  ID: {}",
+        string_field(milestone, "id").unwrap_or("")
+    ));
+    if let Some(target_date) = string_field(milestone, "targetDate").filter(|date| !date.is_empty())
+    {
         output::line(&format!("  Target Date: {target_date}"));
     }
     output::line(&format!(

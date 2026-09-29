@@ -135,7 +135,10 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
     // Current values: upstream always fetches these, and the wizard uses them
     // as the prefilled defaults.
     let details = client
-        .request(GET_INITIATIVE_FOR_UPDATE_QUERY, json!({ "id": &resolved_id }))
+        .request(
+            GET_INITIATIVE_FOR_UPDATE_QUERY,
+            json!({ "id": &resolved_id }),
+        )
         .map_err(|error| error.with_context("Failed to fetch initiative details"))?;
     let initiative = details
         .get("initiative")
@@ -155,7 +158,10 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
         && icon.is_none();
 
     if no_flags_provided && is_interactive {
-        output::line(&format!("\nUpdating initiative: {}\n", str_at(initiative, "name")));
+        output::line(&format!(
+            "\nUpdating initiative: {}\n",
+            str_at(initiative, "name")
+        ));
 
         // Name
         let current_name = str_at(initiative, "name");
@@ -267,7 +273,10 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
         .filter(|value| !value.is_null())
         .ok_or_else(|| CliError::cli("Failed to update initiative"))?;
 
-    output::line(&format!("✓ Updated initiative: {}", str_at(updated, "name")));
+    output::line(&format!(
+        "✓ Updated initiative: {}",
+        str_at(updated, "name")
+    ));
     if let Some(url) = updated.get("url").and_then(Value::as_str) {
         if !url.is_empty() {
             output::line(url);

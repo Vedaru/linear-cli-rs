@@ -238,10 +238,7 @@ fn find_page_info(value: &Value) -> Option<PageResult> {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                let has_next_page = page_info
-                    .get("hasNextPage")
-                    .map(js_truthy)
-                    .unwrap_or(false);
+                let has_next_page = page_info.get("hasNextPage").map(js_truthy).unwrap_or(false);
                 let end_cursor = page_info
                     .get("endCursor")
                     .and_then(Value::as_str)
@@ -351,10 +348,7 @@ fn read_stdin_with_timeout(timeout: Duration) -> Option<String> {
     receiver.recv_timeout(timeout).ok().flatten()
 }
 
-fn build_variables(
-    entries: &[String],
-    variables_json: Option<&str>,
-) -> Result<Map<String, Value>> {
+fn build_variables(entries: &[String], variables_json: Option<&str>) -> Result<Map<String, Value>> {
     let mut variables = Map::new();
 
     if let Some(raw) = variables_json {
@@ -415,9 +409,9 @@ fn resolve_typed_value(value: &str) -> Result<Value> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Err(CliError::validation(format!("File not found: {file_path}")))
             }
-            Err(error) => Err(
-                CliError::cli(format!("Failed to read file: {file_path}")).cause(error)
-            ),
+            Err(error) => {
+                Err(CliError::cli(format!("Failed to read file: {file_path}")).cause(error))
+            }
         };
     }
 
@@ -454,9 +448,8 @@ fn coerce_value(value: &str) -> Value {
             // Mirror JS `String(Number(value)) === value`: only coerce when the
             // canonical rendering round-trips, so "1.0", "1e3", "-0" stay strings.
             if number.is_finite() && js_number_string(number) == value {
-                let integral = number.fract() == 0.0
-                    && number >= -(2f64.powi(63))
-                    && number < 2f64.powi(63);
+                let integral =
+                    number.fract() == 0.0 && number >= -(2f64.powi(63)) && number < 2f64.powi(63);
                 if integral {
                     return Value::Number(serde_json::Number::from(number as i64));
                 }

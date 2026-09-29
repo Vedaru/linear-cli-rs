@@ -49,9 +49,8 @@ pub fn run(args: MilestoneArgs) -> Result<()> {
     };
 
     match command {
-        MilestoneCommand::List(args) => {
-            milestone_list::run(args).map_err(|error| error.with_context("Failed to fetch milestones"))
-        }
+        MilestoneCommand::List(args) => milestone_list::run(args)
+            .map_err(|error| error.with_context("Failed to fetch milestones")),
         MilestoneCommand::View(args) => milestone_view::run(args)
             .map_err(|error| error.with_context("Failed to fetch milestone details")),
         MilestoneCommand::Create(args) => milestone_create::run(args)

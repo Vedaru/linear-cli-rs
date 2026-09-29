@@ -62,7 +62,8 @@ pub enum InitiativeCommand {
 
 pub fn run(args: InitiativeArgs) -> Result<()> {
     let Some(command) = args.command else {
-        let mut cmd = <InitiativeArgs as clap::Args>::augment_args(clap::Command::new("initiative"));
+        let mut cmd =
+            <InitiativeArgs as clap::Args>::augment_args(clap::Command::new("initiative"));
         let _ = cmd.print_help();
         output::blank();
         return Ok(());

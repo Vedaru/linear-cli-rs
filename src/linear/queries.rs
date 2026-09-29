@@ -742,4 +742,3 @@ query ResolveReleases($input: String!, $after: String) {
   }
 }
 "#;
-

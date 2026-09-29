@@ -104,7 +104,10 @@ fn initiative_list_json_output() {
     assert_eq!(parsed["nodes"][0]["owner"]["displayName"], "Alex Active");
     assert_eq!(parsed["nodes"][0]["owner"]["initials"], "AA");
     assert_eq!(parsed["nodes"][0]["archivedAt"], serde_json::Value::Null);
-    assert_eq!(parsed["nodes"][0]["projects"]["nodes"][0]["name"], "Project A");
+    assert_eq!(
+        parsed["nodes"][0]["projects"]["nodes"][0]["name"],
+        "Project A"
+    );
     assert_eq!(
         parsed["nodes"][0]["projects"]["nodes"][0]["status"]["name"],
         "In Progress"
@@ -329,8 +332,9 @@ fn initiative_comment_help_through_parent() {
     assert!(out.stdout.contains("add"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("list"), "stdout: {}", out.stdout);
     assert!(
-        out.stdout
-            .contains("Add a comment or reply to an initiative's discussion (by ID, slug, or name)"),
+        out.stdout.contains(
+            "Add a comment or reply to an initiative's discussion (by ID, slug, or name)"
+        ),
         "stdout: {}",
         out.stdout
     );
@@ -442,7 +446,8 @@ fn initiative_comment_add_by_name_with_reply_to_flag() {
     );
     assert!(out.success(), "stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("✓ Comment added to initiative Platform"),
+        out.stdout
+            .contains("✓ Comment added to initiative Platform"),
         "stdout: {}",
         out.stdout
     );
@@ -474,14 +479,17 @@ fn initiative_comment_add_help() {
         "stdout: {}",
         out.stdout
     );
-    assert!(out.stdout.contains("<initiative>"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("<initiative>"),
+        "stdout: {}",
+        out.stdout
+    );
     assert!(out.stdout.contains("--body"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("--body-file"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("--parent"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("--reply-to"), "stdout: {}", out.stdout);
     assert!(
-        out.stdout
-            .contains("Comment body text"),
+        out.stdout.contains("Comment body text"),
         "stdout: {}",
         out.stdout
     );
@@ -567,12 +575,24 @@ fn initiative_comment_list_by_uuid() {
         "stdout: {}",
         out.stdout
     );
-    assert!(out.stdout.contains("[comment-uuid-1]"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("[comment-uuid-1]"),
+        "stdout: {}",
+        out.stdout
+    );
     // The reply is an integration-authored comment: no `user`, so the bot actor
     // name is what renders.
-    assert!(out.stdout.contains("@Slack replied"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("@Slack replied"),
+        "stdout: {}",
+        out.stdout
+    );
     assert!(out.stdout.contains("Noted."), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("[comment-uuid-2]"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("[comment-uuid-2]"),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 /// `initiative-comment-list.test.ts` — "Initiative Comment List Command - By
@@ -701,9 +721,8 @@ fn initiative_update_status_is_sent_in_the_enum_case() {
     let server = MockLinearServer::start(vec![
         MockResponse::new("GetInitiativeForUpdate", initiative_for_update("Planned"))
             .with_variables(json!({ "id": INITIATIVE_ID })),
-        MockResponse::new("UpdateInitiative", updated_initiative_response()).with_variables(
-            json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } }),
-        ),
+        MockResponse::new("UpdateInitiative", updated_initiative_response())
+            .with_variables(json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } })),
     ]);
 
     let out = run_cli(
@@ -727,9 +746,8 @@ fn initiative_update_status_accepts_any_casing() {
     let server = MockLinearServer::start(vec![
         MockResponse::new("GetInitiativeForUpdate", initiative_for_update("Planned"))
             .with_variables(json!({ "id": INITIATIVE_ID })),
-        MockResponse::new("UpdateInitiative", updated_initiative_response()).with_variables(
-            json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } }),
-        ),
+        MockResponse::new("UpdateInitiative", updated_initiative_response())
+            .with_variables(json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } })),
     ]);
 
     let out = run_cli(

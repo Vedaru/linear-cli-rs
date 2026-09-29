@@ -94,14 +94,10 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
         ));
     }
 
-    let assignee_filters = [
-        args.assignee.is_some(),
-        args.all_assignees,
-        args.unassigned,
-    ]
-    .iter()
-    .filter(|set| **set)
-    .count();
+    let assignee_filters = [args.assignee.is_some(), args.all_assignees, args.unassigned]
+        .iter()
+        .filter(|set| **set)
+        .count();
     if assignee_filters > 1 {
         return Err(CliError::validation(
             "Cannot specify multiple assignee filters (--assignee, --all-assignees, --unassigned)",
@@ -132,10 +128,11 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
                 ));
         }
         if args.project_label.is_some() {
-            return Err(CliError::validation(
-                "--milestone cannot be used with --project-label",
-            )
-            .suggestion("Use --project to specify a single project when filtering by milestone."));
+            return Err(
+                CliError::validation("--milestone cannot be used with --project-label").suggestion(
+                    "Use --project to specify a single project when filtering by milestone.",
+                ),
+            );
         }
     }
 
@@ -147,9 +144,11 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
     }
 
     if args.sort.is_some() && args.search.is_some() {
-        return Err(CliError::validation("--sort cannot be used with --search").suggestion(
-            "Search results use relevance ordering. Remove --sort when using --search.",
-        ));
+        return Err(
+            CliError::validation("--sort cannot be used with --search").suggestion(
+                "Search results use relevance ordering. Remove --sort when using --search.",
+            ),
+        );
     }
 
     if args.limit < 0 {
@@ -220,7 +219,10 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
     let milestone_id = match args.milestone.as_deref() {
         None => None,
         Some(milestone) if linear::is_linear_uuid(milestone) => Some(milestone.to_string()),
-        Some(milestone) => Some(linear::resolve_milestone_id(milestone, project_id.as_deref())?),
+        Some(milestone) => Some(linear::resolve_milestone_id(
+            milestone,
+            project_id.as_deref(),
+        )?),
     };
 
     let label_names = if args.labels.is_empty() {

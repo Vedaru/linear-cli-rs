@@ -86,4 +86,3 @@ pub fn get_organization_members() -> Result<Value> {
     }
     Ok(json!({ "nodes": nodes, "pageInfo": last_page_info }))
 }
-

@@ -65,20 +65,15 @@ pub fn run(args: CreateArgs) -> Result<()> {
 
         output::line(&format!("\nCreating team \"{name}\"..."));
 
-        return create_and_report(
-            &name,
-            description.as_deref(),
-            key.as_deref(),
-            is_private,
-        );
+        return create_and_report(&name, description.as_deref(), key.as_deref(), is_private);
     }
 
     // Fallback to flag-based mode.
     let Some(name) = args.name.as_deref() else {
-        return Err(CliError::validation(
-            "Team name is required when not using interactive mode",
-        )
-        .suggestion("Use --name or run without any flags for interactive mode."));
+        return Err(
+            CliError::validation("Team name is required when not using interactive mode")
+                .suggestion("Use --name or run without any flags for interactive mode."),
+        );
     };
 
     output::line(&format!("Creating team \"{name}\""));

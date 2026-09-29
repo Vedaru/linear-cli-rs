@@ -78,18 +78,15 @@ fn run_inner(args: IssueDeleteArgs) -> Result<()> {
 
     // Single mode requires issueId.
     let Some(issue_id) = args.issue_id.as_deref() else {
-        return Err(CliError::validation("Issue ID required")
-            .suggestion("Use --bulk for multiple issues."));
+        return Err(
+            CliError::validation("Issue ID required").suggestion("Use --bulk for multiple issues.")
+        );
     };
 
     handle_single_delete(&client, issue_id, args.confirm)
 }
 
-fn handle_single_delete(
-    client: &graphql::Client,
-    issue_id: &str,
-    confirm: bool,
-) -> Result<()> {
+fn handle_single_delete(client: &graphql::Client, issue_id: &str, confirm: bool) -> Result<()> {
     // First resolve the issue ID to get the issue details.
     let Some(resolved_id) = linear::get_issue_identifier(Some(issue_id))? else {
         return Err(CliError::not_found("Issue", issue_id));
@@ -103,7 +100,10 @@ fn handle_single_delete(
     };
 
     let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
 
     // Show confirmation prompt unless --confirm flag is used.
     if !confirm {
@@ -154,20 +154,16 @@ fn handle_bulk_delete(client: &graphql::Client, args: &IssueDeleteArgs) -> Resul
             return Err(CliError::validation("Interactive confirmation required")
                 .suggestion("Use --confirm to skip."));
         }
-        let confirmed = prompt::confirm(
-            &format!("Delete {} issue(s)?", ids.len()),
-            false,
-        )?;
+        let confirmed = prompt::confirm(&format!("Delete {} issue(s)?", ids.len()), false)?;
         if !confirmed {
             output::line("Bulk delete cancelled.");
             return Ok(());
         }
     }
 
-    let operation =
-        |issue_id_input: &str| -> Result<BulkOperationResult> {
-            bulk_delete_one(client, issue_id_input)
-        };
+    let operation = |issue_id_input: &str| -> Result<BulkOperationResult> {
+        bulk_delete_one(client, issue_id_input)
+    };
 
     let summary = execute_bulk_operations(&ids, operation);
     print_bulk_summary(&summary, "issue", "deleted");
@@ -178,10 +174,7 @@ fn handle_bulk_delete(client: &graphql::Client, args: &IssueDeleteArgs) -> Resul
     Ok(())
 }
 
-fn bulk_delete_one(
-    client: &graphql::Client,
-    issue_id_input: &str,
-) -> Result<BulkOperationResult> {
+fn bulk_delete_one(client: &graphql::Client, issue_id_input: &str) -> Result<BulkOperationResult> {
     let Some(resolved_id) = linear::get_issue_identifier(Some(issue_id_input))? else {
         return Ok(BulkOperationResult::failure(
             issue_id_input,
@@ -193,9 +186,10 @@ fn bulk_delete_one(
     // Best-effort details lookup: on any failure fall back to the resolved id.
     let mut identifier = resolved_id.clone();
     let mut title = String::new();
-    if let Ok(details) =
-        client.request(GET_ISSUE_DETAILS_FOR_BULK_DELETE_QUERY, json!({ "id": resolved_id }))
-    {
+    if let Ok(details) = client.request(
+        GET_ISSUE_DETAILS_FOR_BULK_DELETE_QUERY,
+        json!({ "id": resolved_id }),
+    ) {
         if let Some(issue) = details.get("issue").filter(|value| !value.is_null()) {
             identifier = issue
                 .get("identifier")
@@ -322,10 +316,7 @@ pub(crate) fn collect_bulk_ids(args: &IssueDeleteArgs) -> Result<Vec<String>> {
     Ok(all_ids)
 }
 
-pub(crate) fn execute_bulk_operations<F>(
-    ids: &[String],
-    operation: F,
-) -> BulkOperationSummary
+pub(crate) fn execute_bulk_operations<F>(ids: &[String], operation: F) -> BulkOperationSummary
 where
     F: Fn(&str) -> Result<BulkOperationResult>,
 {

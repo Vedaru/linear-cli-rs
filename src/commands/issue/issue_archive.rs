@@ -94,11 +94,7 @@ fn run_inner(args: IssueArchiveArgs) -> Result<()> {
     archive_issue(&client, args.issue_id.as_deref(), args.confirm)
 }
 
-fn archive_issue(
-    client: &graphql::Client,
-    issue_id: Option<&str>,
-    confirm: bool,
-) -> Result<()> {
+fn archive_issue(client: &graphql::Client, issue_id: Option<&str>, confirm: bool) -> Result<()> {
     let resolved_id = linear::get_issue_identifier(issue_id)?;
     let Some(resolved_id) = resolved_id else {
         return Err(CliError::validation("Could not determine issue ID")
@@ -108,17 +104,20 @@ fn archive_issue(
     // Linear answers an unknown identifier with a GraphQL not-found error
     // rather than a null issue; translate both into the same clean error.
     let issue_details = errors::translate_not_found("Issue", &resolved_id, || {
-        client.request(GET_ISSUE_ARCHIVE_DETAILS_QUERY, json!({ "id": resolved_id }))
+        client.request(
+            GET_ISSUE_ARCHIVE_DETAILS_QUERY,
+            json!({ "id": resolved_id }),
+        )
     })?;
 
-    let Some(issue) = issue_details
-        .get("issue")
-        .filter(|value| !value.is_null())
-    else {
+    let Some(issue) = issue_details.get("issue").filter(|value| !value.is_null()) else {
         return Err(CliError::not_found("Issue", &resolved_id));
     };
 
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
     let archived_at = issue.get("archivedAt").filter(|value| !value.is_null());
 
@@ -178,10 +177,7 @@ fn handle_bulk_archive(client: &graphql::Client, args: &IssueArchiveArgs) -> Res
             return Err(CliError::validation("Interactive confirmation required")
                 .suggestion("Use --confirm to skip."));
         }
-        let confirmed = prompt::confirm(
-            &format!("Archive {} issue(s)?", ids.len()),
-            false,
-        )?;
+        let confirmed = prompt::confirm(&format!("Archive {} issue(s)?", ids.len()), false)?;
         if !confirmed {
             output::line("Bulk archive cancelled.");
             return Ok(());
@@ -201,10 +197,7 @@ fn handle_bulk_archive(client: &graphql::Client, args: &IssueArchiveArgs) -> Res
     Ok(())
 }
 
-fn bulk_archive_one(
-    client: &graphql::Client,
-    issue_id_input: &str,
-) -> Result<BulkOperationResult> {
+fn bulk_archive_one(client: &graphql::Client, issue_id_input: &str) -> Result<BulkOperationResult> {
     let Some(resolved_id) = linear::get_issue_identifier(Some(issue_id_input))? else {
         return Ok(BulkOperationResult::failure(
             issue_id_input,
@@ -240,7 +233,10 @@ fn bulk_archive_one(
         ));
     };
 
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
     let archived_at = issue.get("archivedAt").filter(|value| !value.is_null());
     let name = format!("{identifier}: {title}");
@@ -373,10 +369,7 @@ pub(crate) fn collect_bulk_ids(args: &IssueArchiveArgs) -> Result<Vec<String>> {
 /// Run the operation for every ID, preserving input order. Errors thrown by
 /// the operation become failed results carrying the error message, matching
 /// `executeBulkOperations` upstream.
-pub(crate) fn execute_bulk_operations<F>(
-    ids: &[String],
-    operation: F,
-) -> BulkOperationSummary
+pub(crate) fn execute_bulk_operations<F>(ids: &[String], operation: F) -> BulkOperationSummary
 where
     F: Fn(&str) -> Result<BulkOperationResult>,
 {

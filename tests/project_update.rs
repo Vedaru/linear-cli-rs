@@ -48,7 +48,11 @@ fn project_update_list_renders_health_date_author_and_body() {
     assert!(out.stdout.contains("AUTHOR"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("onTrack"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("Ada"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("Shipping on time"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Shipping on time"),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -65,7 +69,10 @@ fn project_update_list_alias_and_json() {
         } } }),
     )]);
 
-    let out = run_cli(&["project-update", "l", PROJECT_UUID, "--json"], &common::mock_env(&server));
+    let out = run_cli(
+        &["project-update", "l", PROJECT_UUID, "--json"],
+        &common::mock_env(&server),
+    );
     assert!(out.success(), "stderr: {}", out.stderr);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).expect("json output");
     assert_eq!(parsed["name"], "Launch");
@@ -160,7 +167,11 @@ fn project_update_create_posts_input_and_reports_health() {
         "stdout: {}",
         out.stdout
     );
-    assert!(out.stdout.contains("Health: onTrack"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Health: onTrack"),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -185,7 +196,8 @@ fn project_update_create_rejects_invalid_health() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("Must be one of: onTrack, atRisk, offTrack"),
+        out.stderr
+            .contains("Must be one of: onTrack, atRisk, offTrack"),
         "stderr: {}",
         out.stderr
     );

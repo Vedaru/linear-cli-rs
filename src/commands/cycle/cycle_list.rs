@@ -178,8 +178,14 @@ pub fn run(args: ListArgs) -> Result<()> {
             "{} {} {} {} {}",
             display::pad_display(&cycle_number(cycle).to_string(), number_width),
             trunc_name,
-            display::pad_display(&format_date(cycle.get("startsAt").and_then(Value::as_str)), START_WIDTH),
-            display::pad_display(&format_date(cycle.get("endsAt").and_then(Value::as_str)), END_WIDTH),
+            display::pad_display(
+                &format_date(cycle.get("startsAt").and_then(Value::as_str)),
+                START_WIDTH
+            ),
+            display::pad_display(
+                &format_date(cycle.get("endsAt").and_then(Value::as_str)),
+                END_WIDTH
+            ),
             status_display,
         );
         output::line(&line);

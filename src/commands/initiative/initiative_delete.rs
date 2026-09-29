@@ -110,18 +110,17 @@ pub fn run(args: InitiativeDeleteArgs) -> Result<()> {
     handle_single_delete(&client, initiative_id, args.force)
 }
 
-fn handle_single_delete(
-    client: &graphql::Client,
-    initiative_id: &str,
-    force: bool,
-) -> Result<()> {
+fn handle_single_delete(client: &graphql::Client, initiative_id: &str, force: bool) -> Result<()> {
     // Upstream's local `resolveInitiativeId`: archived entities included, so an
     // archived initiative can be addressed by URL, slug ID, or name.
     let resolved_id = linear::resolve_initiative_id_including_archived(initiative_id)?;
 
     // Details for the confirmation message.
     let details = client
-        .request(GET_INITIATIVE_FOR_DELETE_QUERY, json!({ "id": &resolved_id }))
+        .request(
+            GET_INITIATIVE_FOR_DELETE_QUERY,
+            json!({ "id": &resolved_id }),
+        )
         .map_err(|error| error.with_context("Failed to fetch initiative details"))?;
     let initiative = details
         .get("initiative")
@@ -240,9 +239,10 @@ fn bulk_delete_one(client: &graphql::Client, reference: &str) -> Result<BulkOper
     // Best-effort name lookup for the summary; the raw reference stands in when
     // it fails, matching upstream's try/catch around this request.
     let mut name = reference.to_string();
-    if let Ok(details) =
-        client.request(GET_INITIATIVE_NAME_FOR_BULK_DELETE_QUERY, json!({ "id": &resolved_id }))
-    {
+    if let Ok(details) = client.request(
+        GET_INITIATIVE_NAME_FOR_BULK_DELETE_QUERY,
+        json!({ "id": &resolved_id }),
+    ) {
         if let Some(initiative) = details.get("initiative").filter(|value| !value.is_null()) {
             if let Some(found) = initiative.get("name").and_then(Value::as_str) {
                 name = found.to_string();
@@ -250,7 +250,10 @@ fn bulk_delete_one(client: &graphql::Client, reference: &str) -> Result<BulkOper
         }
     }
 
-    let result = client.request(BULK_DELETE_INITIATIVE_MUTATION, json!({ "id": &resolved_id }))?;
+    let result = client.request(
+        BULK_DELETE_INITIATIVE_MUTATION,
+        json!({ "id": &resolved_id }),
+    )?;
     let deleted = result
         .pointer("/initiativeDelete/success")
         .and_then(Value::as_bool)

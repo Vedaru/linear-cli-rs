@@ -136,12 +136,7 @@ pub struct UploadOptions {
 fn can_be_public(content_type: &str) -> bool {
     matches!(
         content_type,
-        "image/png"
-            | "image/jpeg"
-            | "image/gif"
-            | "image/webp"
-            | "image/bmp"
-            | "image/tiff"
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/tiff"
     )
 }
 
@@ -183,16 +178,13 @@ pub fn upload_file(filepath: &str, options: &UploadOptions) -> Result<UploadResu
         if error.kind() == std::io::ErrorKind::NotFound {
             CliError::not_found("File", filepath)
         } else {
-            CliError::validation(format!("Not a file: {filepath}")).suggestion(
-                "Please provide a path to a valid file",
-            )
+            CliError::validation(format!("Not a file: {filepath}"))
+                .suggestion("Please provide a path to a valid file")
         }
     })?;
     if !metadata.is_file() {
-        return Err(
-            CliError::validation(format!("Not a file: {filepath}"))
-                .suggestion("Please provide a path to a valid file"),
-        );
+        return Err(CliError::validation(format!("Not a file: {filepath}"))
+            .suggestion("Please provide a path to a valid file"));
     }
 
     let size = metadata.len();
@@ -228,7 +220,9 @@ pub fn upload_file(filepath: &str, options: &UploadOptions) -> Result<UploadResu
         .get("success")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let upload_file = file_upload.get("uploadFile").filter(|value| !value.is_null());
+    let upload_file = file_upload
+        .get("uploadFile")
+        .filter(|value| !value.is_null());
     let (Some(upload_file), true) = (upload_file, success) else {
         return Err(CliError::cli("Failed to get upload URL from Linear"));
     };
@@ -249,7 +243,9 @@ pub fn upload_file(filepath: &str, options: &UploadOptions) -> Result<UploadResu
 
     // Content-Type is required by the signed URL; Linear's returned headers may
     // override it.
-    let mut request = upload_agent().put(&upload_url).header("content-type", &content_type);
+    let mut request = upload_agent()
+        .put(&upload_url)
+        .header("content-type", &content_type);
     if let Some(headers) = upload_file.get("headers").and_then(Value::as_array) {
         for header in headers {
             let key = header.get("key").and_then(Value::as_str);
@@ -265,10 +261,7 @@ pub fn upload_file(filepath: &str, options: &UploadOptions) -> Result<UploadResu
         .map_err(|error| CliError::cli(format!("Failed to upload file: {error}")))?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .unwrap_or_default();
+        let body = response.body_mut().read_to_string().unwrap_or_default();
         let status_text = response.status().canonical_reason().unwrap_or("");
         return Err(CliError::cli(format!(
             "Failed to upload file: {status} {status_text} - {}",
@@ -306,10 +299,8 @@ pub fn upload_files(filepaths: &[String], options: &UploadOptions) -> Result<Vec
 pub fn validate_file_path(filepath: &str) -> Result<()> {
     match std::fs::metadata(filepath) {
         Ok(metadata) if metadata.is_file() => Ok(()),
-        Ok(_) => Err(
-            CliError::validation(format!("Not a file: {filepath}"))
-                .suggestion("Please provide a path to a valid file"),
-        ),
+        Ok(_) => Err(CliError::validation(format!("Not a file: {filepath}"))
+            .suggestion("Please provide a path to a valid file")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(CliError::not_found("File", filepath))
         }

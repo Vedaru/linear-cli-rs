@@ -122,8 +122,12 @@ pub enum LinearUrlParse {
     NotLinearUrl,
     /// Recognisably a Linear URL, but not one that names something usable.
     /// Callers must report this rather than retrying it as a name.
-    Unsupported { reason: String },
-    Ok { reference: LinearUrlRef },
+    Unsupported {
+        reason: String,
+    },
+    Ok {
+        reference: LinearUrlRef,
+    },
 }
 
 fn entity_label_of(kind: &str) -> &'static str {
@@ -206,7 +210,9 @@ fn extract_slug_id(segment: &str) -> Option<String> {
     }
     let last_dash = lower.rfind('-')?;
     let candidate = &lower[last_dash + 1..];
-    SLUG_ID_RE.is_match(candidate).then(|| candidate.to_string())
+    SLUG_ID_RE
+        .is_match(candidate)
+        .then(|| candidate.to_string())
 }
 
 fn parse_cycle_path(workspace: &str, team_key: &str, rest: &[String]) -> LinearUrlParse {
@@ -262,7 +268,10 @@ fn parse_positive_integer(segment: &str) -> Option<u64> {
     {
         return None;
     }
-    segment.parse::<u64>().ok().filter(|n| *n <= 9_007_199_254_740_991)
+    segment
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n <= 9_007_199_254_740_991)
 }
 
 /// Classify a user-supplied reference. See the module docs.
@@ -286,7 +295,11 @@ pub fn parse_linear_url(value: &str) -> LinearUrlParse {
     }
 
     let mut segments = Vec::new();
-    for segment in url.path_segments().map(|s| s.collect::<Vec<_>>()).unwrap_or_default() {
+    for segment in url
+        .path_segments()
+        .map(|s| s.collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
         if segment.is_empty() {
             continue;
         }
@@ -378,7 +391,9 @@ pub fn parse_linear_url(value: &str) -> LinearUrlParse {
             }
             let tail = rest[1..].join("/");
             if !tail.is_empty() && !TEAM_SUBPAGES.contains(&tail.as_str()) {
-                return unsupported(format!("\"{tail}\" is not a team page this command can use"));
+                return unsupported(format!(
+                    "\"{tail}\" is not a team page this command can use"
+                ));
             }
             LinearUrlParse::Ok {
                 reference: LinearUrlRef::Team {
@@ -625,7 +640,9 @@ mod tests {
 
     #[test]
     fn reject_comment_url_reports_comment_links() {
-        assert!(reject_comment_url("https://linear.app/acme/issue/ENG-42#comment-deadbeef").is_err());
+        assert!(
+            reject_comment_url("https://linear.app/acme/issue/ENG-42#comment-deadbeef").is_err()
+        );
         assert!(reject_comment_url("https://linear.app/acme/issue/ENG-42").is_ok());
         assert!(reject_comment_url("ENG-42").is_ok());
     }

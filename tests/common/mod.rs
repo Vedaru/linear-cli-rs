@@ -150,7 +150,10 @@ impl Drop for MockLinearServer {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, state: &Arc<Mutex<ServerState>>) -> std::io::Result<()> {
+fn handle_connection(
+    mut stream: TcpStream,
+    state: &Arc<Mutex<ServerState>>,
+) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
 
     let mut request_line = String::new();
@@ -350,10 +353,7 @@ impl CliOutput {
 }
 
 fn quote_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Run the `linear` binary with the given args and environment.

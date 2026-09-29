@@ -51,7 +51,8 @@ pub fn run(args: DocumentCommentAddArgs) -> Result<()> {
     // Inside the resolution: a wrong-kind or cross-workspace URL is rejected
     // here, and that error has to reach the group's context like any other.
     let document = linear::resolve_document_reference(&args.document)?;
-    let text_body = comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
+    let text_body =
+        comments::resolve_comment_body(args.body.as_deref(), args.body_file.as_deref())?;
 
     let client = graphql::client()?;
     let data = errors::translate_not_found("Document", &document, || {

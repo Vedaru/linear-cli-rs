@@ -54,4 +54,3 @@ pub fn lookup_user_id(input: &str) -> Result<Option<String>> {
         .and_then(Value::as_str)
         .map(str::to_string))
 }
-

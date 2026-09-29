@@ -234,13 +234,7 @@ fn initiative_update_create_surfaces_failed_mutation() {
     ]);
 
     let out = run_cli(
-        &[
-            "initiative-update",
-            "create",
-            INITIATIVE_ID,
-            "--body",
-            "hi",
-        ],
+        &["initiative-update", "create", INITIATIVE_ID, "--body", "hi"],
         &common::mock_env(&server),
     );
     assert!(!out.success());

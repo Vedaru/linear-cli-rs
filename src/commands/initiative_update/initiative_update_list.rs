@@ -78,9 +78,7 @@ pub fn run(args: InitiativeUpdateListArgs) -> Result<()> {
     let initiative_name = initiative.get("name").and_then(Value::as_str).unwrap_or("");
 
     if updates.is_empty() {
-        output::line(&format!(
-            "No status updates found for: {initiative_name}"
-        ));
+        output::line(&format!("No status updates found for: {initiative_name}"));
         return Ok(());
     }
 
@@ -119,7 +117,10 @@ pub fn run(args: InitiativeUpdateListArgs) -> Result<()> {
     let space_width = 4usize;
     let fixed = id_width + health_width + date_width + author_width + space_width;
     let padding = 1usize;
-    let available_width = columns.saturating_sub(padding).saturating_sub(fixed).max(10);
+    let available_width = columns
+        .saturating_sub(padding)
+        .saturating_sub(fixed)
+        .max(10);
 
     // --- header ------------------------------------------------------------
     let header = [
@@ -153,7 +154,10 @@ pub fn run(args: InitiativeUpdateListArgs) -> Result<()> {
             "{} {} {} {}",
             display::pad_display(short_id, id_width),
             health_cell,
-            colors::color_hex(DEFAULT_HEALTH_COLOR, &display::pad_display(&date, date_width)),
+            colors::color_hex(
+                DEFAULT_HEALTH_COLOR,
+                &display::pad_display(&date, date_width)
+            ),
             display::pad_display(&author, author_width),
         ));
 

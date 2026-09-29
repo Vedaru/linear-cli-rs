@@ -16,9 +16,8 @@ pub struct CompletionsArgs {
 
 pub fn run(args: CompletionsArgs) -> Result<()> {
     let Some(shell_name) = args.shell else {
-        return Err(CliError::validation("No shell provided").suggestion(
-            "Pass a shell: linear completions <bash|zsh|fish|powershell>",
-        ));
+        return Err(CliError::validation("No shell provided")
+            .suggestion("Pass a shell: linear completions <bash|zsh|fish|powershell>"));
     };
 
     let shell = match shell_name.to_ascii_lowercase().as_str() {
@@ -27,10 +26,10 @@ pub fn run(args: CompletionsArgs) -> Result<()> {
         "fish" => clap_complete::Shell::Fish,
         "powershell" => clap_complete::Shell::PowerShell,
         _ => {
-            return Err(CliError::validation(format!(
-                "Unsupported shell: {shell_name}"
-            ))
-            .suggestion("Supported shells: bash, zsh, fish, powershell"));
+            return Err(
+                CliError::validation(format!("Unsupported shell: {shell_name}"))
+                    .suggestion("Supported shells: bash, zsh, fish, powershell"),
+            );
         }
     };
 

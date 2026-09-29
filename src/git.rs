@@ -36,15 +36,18 @@ pub fn get_current_branch() -> Result<Option<String>> {
     }
 
     let branch = output.stdout_trimmed();
-    Ok(if branch.is_empty() { None } else { Some(branch) })
+    Ok(if branch.is_empty() {
+        None
+    } else {
+        Some(branch)
+    })
 }
 
 /// The base name of the repository's top-level directory (`path.basename` of
 /// `git rev-parse --show-toplevel`).
 pub fn get_repo_dir() -> Result<String> {
-    let output = git(&["rev-parse", "--show-toplevel"]).ok_or_else(|| {
-        CliError::cli("Failed to get repository directory: git is not available")
-    })?;
+    let output = git(&["rev-parse", "--show-toplevel"])
+        .ok_or_else(|| CliError::cli("Failed to get repository directory: git is not available"))?;
 
     if !output.success {
         let error_msg = output.stderr_string().trim().to_string();

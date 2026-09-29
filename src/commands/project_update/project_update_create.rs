@@ -67,7 +67,8 @@ pub fn run(args: ProjectUpdateCreateArgs) -> Result<()> {
     // headless run can never block waiting for a prompt.
     let mut use_interactive = args.interactive && prompt::is_interactive();
 
-    let no_flags_provided = args.body.is_none() && args.body_file.is_none() && args.health.is_none();
+    let no_flags_provided =
+        args.body.is_none() && args.body_file.is_none() && args.health.is_none();
     if no_flags_provided && prompt::is_interactive() {
         use_interactive = true;
     }
@@ -118,13 +119,11 @@ pub fn run(args: ProjectUpdateCreateArgs) -> Result<()> {
     let validated_health = match &args.health {
         Some(health) => {
             if !VALID_HEALTH_VALUES.contains(&health.as_str()) {
-                return Err(CliError::validation(format!(
-                    "Invalid health value: {health}"
-                ))
-                .suggestion(format!(
-                    "Must be one of: {}",
-                    VALID_HEALTH_VALUES.join(", ")
-                )));
+                return Err(
+                    CliError::validation(format!("Invalid health value: {health}")).suggestion(
+                        format!("Must be one of: {}", VALID_HEALTH_VALUES.join(", ")),
+                    ),
+                );
             }
             Some(health.clone())
         }
@@ -172,7 +171,10 @@ fn create_project_update(input: Value) -> Result<()> {
             output::line(&format!("Health: {health}"));
         }
     }
-    let url = project_update.get("url").and_then(Value::as_str).unwrap_or("");
+    let url = project_update
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     output::line(url);
     Ok(())
 }
@@ -203,19 +205,17 @@ fn read_content_from_stdin() -> Option<String> {
             Some(content)
         });
     });
-    receiver.recv_timeout(Duration::from_millis(100)).ok().flatten()
+    receiver
+        .recv_timeout(Duration::from_millis(100))
+        .ok()
+        .flatten()
 }
 
 fn prompt_interactive_create() -> Result<(Option<String>, Option<String>)> {
-    let health_labels = [
-        "On Track",
-        "At Risk",
-        "Off Track",
-        "No change",
-    ]
-    .iter()
-    .map(|value| value.to_string())
-    .collect::<Vec<_>>();
+    let health_labels = ["On Track", "At Risk", "Off Track", "No change"]
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
     let health_index = prompt_select("Project health status", &health_labels, 3)?;
     let health = match health_index {
         0 => Some("onTrack".to_string()),
@@ -230,10 +230,7 @@ fn prompt_interactive_create() -> Result<(Option<String>, Option<String>)> {
         .and_then(|value| value.rsplit('/').next())
         .map(str::to_string);
 
-    let mut method_labels = vec![
-        "Skip (no content)".to_string(),
-        "Enter inline".to_string(),
-    ];
+    let mut method_labels = vec!["Skip (no content)".to_string(), "Enter inline".to_string()];
     if let Some(name) = &editor_display_name {
         method_labels.push(format!("Open {name}"));
     }

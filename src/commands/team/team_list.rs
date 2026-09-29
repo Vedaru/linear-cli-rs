@@ -66,7 +66,11 @@ pub fn run(args: ListArgs) -> Result<()> {
             consts::LINEAR_WEB_BASE_URL,
             workspace
         );
-        let destination = if args.app { "Linear.app" } else { "web browser" };
+        let destination = if args.app {
+            "Linear.app"
+        } else {
+            "web browser"
+        };
         output::line(&format!("Opening {url} in {destination}"));
         crate::actions::open_url(&url, args.app)?;
         return Ok(());
@@ -126,11 +130,7 @@ pub fn run(args: ListArgs) -> Result<()> {
     // Filter out archived teams and sort alphabetically by name.
     let mut teams: Vec<Value> = all_teams
         .into_iter()
-        .filter(|team| {
-            team.get("archivedAt")
-                .map(Value::is_null)
-                .unwrap_or(true)
-        })
+        .filter(|team| team.get("archivedAt").map(Value::is_null).unwrap_or(true))
         .collect();
     teams.sort_by_key(|team| {
         team.get("name")

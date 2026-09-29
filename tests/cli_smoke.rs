@@ -59,7 +59,11 @@ fn auth_whoami_without_key_explains_how_to_configure() {
         "stderr: {}",
         out.stderr
     );
-    assert!(out.stderr.contains("LINEAR_API_KEY"), "stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("LINEAR_API_KEY"),
+        "stderr: {}",
+        out.stderr
+    );
 }
 
 fn members_response(nodes: Value) -> Value {
@@ -97,7 +101,10 @@ fn member(id: &str, name: &str, active: bool) -> Value {
 fn user_list_json_returns_members() {
     let server = MockLinearServer::start(vec![MockResponse::new(
         "GetOrganizationMembers",
-        members_response(json!([member("u1", "Ada", true), member("u2", "Grace", true)])),
+        members_response(json!([
+            member("u1", "Ada", true),
+            member("u2", "Grace", true)
+        ])),
     )]);
 
     let out = run_cli(&["user", "list", "--json"], &common::mock_env(&server));
@@ -114,7 +121,10 @@ fn user_list_json_returns_members() {
 fn user_list_filters_inactive_members_without_all() {
     let server = MockLinearServer::start(vec![MockResponse::new(
         "GetOrganizationMembers",
-        members_response(json!([member("u1", "Ada", true), member("u2", "Grace", false)])),
+        members_response(json!([
+            member("u1", "Ada", true),
+            member("u2", "Grace", false)
+        ])),
     )]);
 
     let out = run_cli(&["user", "list"], &common::mock_env(&server));
@@ -128,7 +138,10 @@ fn user_list_filters_inactive_members_without_all() {
 fn user_list_all_includes_inactive_members() {
     let server = MockLinearServer::start(vec![MockResponse::new(
         "GetOrganizationMembers",
-        members_response(json!([member("u1", "Ada", true), member("u2", "Grace", false)])),
+        members_response(json!([
+            member("u1", "Ada", true),
+            member("u2", "Grace", false)
+        ])),
     )]);
 
     let out = run_cli(&["user", "list", "--all"], &common::mock_env(&server));
@@ -302,7 +315,10 @@ fn label_list_all_json_sorts_by_name() {
         } } }),
     )]);
 
-    let out = run_cli(&["label", "list", "--all", "--json"], &common::mock_env(&server));
+    let out = run_cli(
+        &["label", "list", "--all", "--json"],
+        &common::mock_env(&server),
+    );
     assert!(out.success(), "stderr: {}", out.stderr);
 
     let parsed: Value = serde_json::from_str(out.stdout.trim()).expect("json output");
@@ -338,7 +354,14 @@ fn issue_relation_add_reports_created_relation_in_user_order() {
     ]);
 
     let out = run_cli(
-        &["issue", "relation", "add", "ENG-123", "blocked-by", "ENG-456"],
+        &[
+            "issue",
+            "relation",
+            "add",
+            "ENG-123",
+            "blocked-by",
+            "ENG-456",
+        ],
         &common::mock_env(&server),
     );
     assert!(out.success(), "stderr: {}", out.stderr);
@@ -380,7 +403,11 @@ fn label_list_team_applies_or_filter_with_workspace_labels() {
     );
     assert!(out.success(), "stderr: {}", out.stderr);
     assert!(out.stdout.contains("Bug"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("1 labels found."), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("1 labels found."),
+        "stdout: {}",
+        out.stdout
+    );
 }
 
 /// A single `FetchIssues` issue node, shaped like the fields the port reads.
@@ -470,7 +497,13 @@ fn issue_query_include_archived_reaches_the_filter_path() {
     ]);
 
     let archived = run_cli(
-        &["issue", "query", "--all-teams", "--include-archived", "--json"],
+        &[
+            "issue",
+            "query",
+            "--all-teams",
+            "--include-archived",
+            "--json",
+        ],
         &common::mock_env(&server),
     );
     assert!(archived.success(), "stderr: {}", archived.stderr);
@@ -517,7 +550,11 @@ fn issue_query_empty_prints_notice() {
 fn issue_query_renders_table_with_identifier_and_title() {
     let server = MockLinearServer::start(vec![MockResponse::new(
         "FetchIssues",
-        issues_response(vec![issue_node("ENG-7", "Ship the port", Some("Grace Hopper"))]),
+        issues_response(vec![issue_node(
+            "ENG-7",
+            "Ship the port",
+            Some("Grace Hopper"),
+        )]),
     )]);
 
     let out = run_cli(
@@ -526,7 +563,11 @@ fn issue_query_renders_table_with_identifier_and_title() {
     );
     assert!(out.success(), "stderr: {}", out.stderr);
     assert!(out.stdout.contains("ENG-7"), "stdout: {}", out.stdout);
-    assert!(out.stdout.contains("Ship the port"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Ship the port"),
+        "stdout: {}",
+        out.stdout
+    );
     assert!(out.stdout.contains("UPDATED"), "stdout: {}", out.stdout);
 }
 
@@ -534,7 +575,13 @@ fn issue_query_renders_table_with_identifier_and_title() {
 fn issue_query_rejects_team_with_all_teams() {
     let server = MockLinearServer::start(vec![]);
     let out = run_cli(
-        &["issue", "query", "--team", common::ENG_TEAM_KEY, "--all-teams"],
+        &[
+            "issue",
+            "query",
+            "--team",
+            common::ENG_TEAM_KEY,
+            "--all-teams",
+        ],
         &common::mock_env(&server),
     );
     assert!(!out.success());
@@ -574,12 +621,20 @@ fn issue_mine_resolves_team_and_renders_assigned_issues() {
 fn issue_mine_rejects_removed_assignee_flag() {
     let server = MockLinearServer::start(vec![]);
     let out = run_cli(
-        &["issue", "mine", "--team", common::ENG_TEAM_KEY, "--assignee", "Ada"],
+        &[
+            "issue",
+            "mine",
+            "--team",
+            common::ENG_TEAM_KEY,
+            "--assignee",
+            "Ada",
+        ],
         &common::mock_env(&server),
     );
     assert!(!out.success());
     assert!(
-        out.stderr.contains("--assignee has been removed from 'issue mine'"),
+        out.stderr
+            .contains("--assignee has been removed from 'issue mine'"),
         "stderr: {}",
         out.stderr
     );

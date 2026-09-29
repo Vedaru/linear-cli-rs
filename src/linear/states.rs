@@ -61,7 +61,11 @@ impl WorkflowState {
 
 pub(crate) fn compare_workflow_state_types(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    let rank = |t: &str| WORKFLOW_STATE_TYPE_ORDER.iter().position(|known| *known == t);
+    let rank = |t: &str| {
+        WORKFLOW_STATE_TYPE_ORDER
+            .iter()
+            .position(|known| *known == t)
+    };
     match (rank(a), rank(b)) {
         (Some(a_rank), Some(b_rank)) => a_rank.cmp(&b_rank),
         // An unrecognised status sorts after every known one, grouped by its
@@ -79,8 +83,11 @@ pub(crate) fn compare_workflow_state_types(a: &str, b: &str) -> std::cmp::Orderi
 /// app, which is what a listing is trying to reproduce. Do not "correct" it to
 /// ascending on the strength of the comment alone.
 pub fn compare_workflow_states(a: &WorkflowState, b: &WorkflowState) -> std::cmp::Ordering {
-    compare_workflow_state_types(&a.state_type, &b.state_type)
-        .then_with(|| b.position.partial_cmp(&a.position).unwrap_or(std::cmp::Ordering::Equal))
+    compare_workflow_state_types(&a.state_type, &b.state_type).then_with(|| {
+        b.position
+            .partial_cmp(&a.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
 }
 
 /// The state a bare type name refers to: the earliest one of that type in the
@@ -230,9 +237,7 @@ pub fn get_workflow_states_in_scope(scope: &StateScope) -> Result<Vec<ScopedWork
     let client = graphql::client()?;
     let filter_value = match scope {
         StateScope::AllTeams => None,
-        StateScope::TeamKeys(keys) => {
-            Some(json!({ "team": { "key": { "in": keys } } }))
-        }
+        StateScope::TeamKeys(keys) => Some(json!({ "team": { "key": { "in": keys } } })),
     };
 
     let mut states = Vec::new();
@@ -289,10 +294,7 @@ pub fn get_workflow_states_in_scope(scope: &StateScope) -> Result<Vec<ScopedWork
 ///
 /// Each non-type value is matched case-insensitively against the scoped state
 /// names; an unknown value errors with the states that *are* available.
-pub fn resolve_state_selection(
-    values: &[String],
-    scope: &StateScope,
-) -> Result<StateSelection> {
+pub fn resolve_state_selection(values: &[String], scope: &StateScope) -> Result<StateSelection> {
     let mut selection = StateSelection::default();
     if values.is_empty() {
         return Ok(selection);
@@ -348,7 +350,10 @@ pub fn state_not_found_in_scope_error(
                 .map(|key| format!("\"{key}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("team{s} {separated}", s = if keys.len() == 1 { "" } else { "s" })
+            format!(
+                "team{s} {separated}",
+                s = if keys.len() == 1 { "" } else { "s" }
+            )
         }
     };
 
@@ -357,9 +362,7 @@ pub fn state_not_found_in_scope_error(
         a.team_key
             .to_lowercase()
             .cmp(&b.team_key.to_lowercase())
-            .then_with(|| {
-                compare_workflow_state_types(&a.state_type, &b.state_type)
-            })
+            .then_with(|| compare_workflow_state_types(&a.state_type, &b.state_type))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
@@ -413,4 +416,3 @@ pub fn workflow_state_filter(selection: &StateSelection) -> Result<Option<Value>
 pub fn update_issue_state(team_key: &str) -> Result<WorkflowState> {
     get_started_state(team_key)
 }
-

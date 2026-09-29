@@ -291,9 +291,10 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
     let body = client.request_raw(INTROSPECTION_QUERY, json!({}))?;
     let response: IntrospectionResponse<'_> = serde_json::from_slice(&body)?;
 
-    let schema = response.data.schema.as_ref().ok_or_else(|| {
-        CliError::cli("Introspection response did not contain a __schema field")
-    })?;
+    let schema =
+        response.data.schema.as_ref().ok_or_else(|| {
+            CliError::cli("Introspection response did not contain a __schema field")
+        })?;
 
     match &args.output {
         Some(path) => {
@@ -795,12 +796,7 @@ fn print_block_string(value: &str, minimize: bool) -> String {
 
     let force_leading_new_line = lines.len() > 1
         && lines[1..].iter().all(|line| {
-            line.is_empty()
-                || line
-                    .chars()
-                    .next()
-                    .map(is_whitespace_char)
-                    .unwrap_or(false)
+            line.is_empty() || line.chars().next().map(is_whitespace_char).unwrap_or(false)
         });
 
     let has_trailing_triple_quotes = escaped.ends_with("\\\"\"\"");

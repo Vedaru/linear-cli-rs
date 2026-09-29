@@ -135,10 +135,12 @@ pub fn run(args: IssueRelationArgs) -> Result<()> {
     };
 
     match command {
-        RelationCommand::Add(a) => add_relation(a)
-            .map_err(|error| error.with_context("Failed to create relation")),
-        RelationCommand::Delete(a) => delete_relation(a)
-            .map_err(|error| error.with_context("Failed to delete relation")),
+        RelationCommand::Add(a) => {
+            add_relation(a).map_err(|error| error.with_context("Failed to create relation"))
+        }
+        RelationCommand::Delete(a) => {
+            delete_relation(a).map_err(|error| error.with_context("Failed to delete relation"))
+        }
         RelationCommand::List(a) => {
             list_relations(a).map_err(|error| error.with_context("Failed to list relations"))
         }
@@ -152,8 +154,10 @@ pub fn run(args: IssueRelationArgs) -> Result<()> {
 fn validate_relation_type(arg: &str) -> Result<String> {
     let relation_type = arg.to_lowercase();
     if !RELATION_TYPES.contains(&relation_type.as_str()) {
-        return Err(CliError::validation(format!("Invalid relation type: {arg}"))
-            .suggestion("Must be one of: blocks, blocked-by, related, duplicate"));
+        return Err(
+            CliError::validation(format!("Invalid relation type: {arg}"))
+                .suggestion("Must be one of: blocks, blocked-by, related, duplicate"),
+        );
     }
     Ok(relation_type)
 }
@@ -295,7 +299,8 @@ fn delete_relation(args: RelationDeleteArgs) -> Result<()> {
         ));
     };
 
-    let delete_data = client.request(DELETE_ISSUE_RELATION_MUTATION, json!({ "id": relation_id }))?;
+    let delete_data =
+        client.request(DELETE_ISSUE_RELATION_MUTATION, json!({ "id": relation_id }))?;
     let deleted = delete_data
         .get("issueRelationDelete")
         .and_then(|value| value.get("success"))
@@ -335,7 +340,10 @@ fn list_relations(args: RelationListArgs) -> Result<()> {
         return Err(CliError::not_found("Issue", &identifier_input));
     };
 
-    let identifier = issue.get("identifier").and_then(Value::as_str).unwrap_or("");
+    let identifier = issue
+        .get("identifier")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
 
     let outgoing: Vec<Value> = issue

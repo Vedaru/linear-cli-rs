@@ -11,9 +11,11 @@ pub struct IssueIdArgs {}
 pub fn run(_args: IssueIdArgs) -> Result<()> {
     let result = (|| -> Result<()> {
         let Some(resolved_id) = linear::get_issue_identifier(None)? else {
-            return Err(CliError::validation("Could not determine issue ID").suggestion(
-                "Please provide an issue ID or run from a branch with an issue identifier.",
-            ));
+            return Err(
+                CliError::validation("Could not determine issue ID").suggestion(
+                    "Please provide an issue ID or run from a branch with an issue identifier.",
+                ),
+            );
         };
         output::line(&resolved_id);
         Ok(())

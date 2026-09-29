@@ -210,9 +210,7 @@ pub fn run(args: LabelCreateArgs) -> Result<()> {
 
 fn is_valid_hex(value: &str) -> bool {
     let bytes = value.as_bytes();
-    bytes.len() == 7
-        && bytes[0] == b'#'
-        && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Read one line from the terminal. Only called after
@@ -274,7 +272,11 @@ fn prompt_select(message: &str, labels: &[String], default_index: usize) -> Resu
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("Enter a number (1-{}) [{}]: ", labels.len(), default_index + 1);
+        eprint!(
+            "Enter a number (1-{}) [{}]: ",
+            labels.len(),
+            default_index + 1
+        );
         let _ = std::io::stderr().flush();
 
         let mut line = String::new();

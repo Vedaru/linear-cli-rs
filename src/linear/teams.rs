@@ -183,4 +183,3 @@ pub fn get_all_teams() -> Result<Vec<ResolvedTeam>> {
 fn format_team_option(team: &ResolvedTeam) -> String {
     format!("{} ({})", team.key, team.name)
 }
-
