@@ -118,6 +118,7 @@ jobs:
           name: dist-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish rolling release
@@ -154,6 +155,17 @@ jobs:
           # uploadable, and passing them made the upload step fail.
           mapfile -t assets < <(find dist -maxdepth 1 -type f | sort)
           printf '  uploading: %s\n' "${assets[@]}"
+          # Assets are named after the commit, so --clobber cannot replace an
+          # older commit's set: drop anything not in this build first, otherwise
+          # every push leaves another ten assets behind.
+          mapfile -t keep < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
+          while read -r stale; do
+            [ -z "$stale" ] && continue
+            if ! printf '%s\n' "${keep[@]}" | grep -qx -- "$stale"; then
+              echo "  pruning stale asset: $stale"
+              gh release delete-asset rolling "$stale" --repo "$GITHUB_REPOSITORY" --yes || true
+            fi
+          done < <(gh release view rolling --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)
           gh release upload rolling "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           echo "--- published:"
           gh release view rolling --repo "$GITHUB_REPOSITORY" --json tagName,url,assets \
