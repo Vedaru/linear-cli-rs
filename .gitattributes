@@ -1,0 +1,14 @@
+# Keep the three-OS matrix (ubuntu / macos / windows) byte-stable.
+#
+# Windows' default `core.autocrlf` rewrites LF to CRLF on checkout, which made
+# the byte-exact golden comparisons in tests/schema.rs fail there while Linux and
+# macOS passed: the CLI emits LF; the checked-out fixture came back CRLF.
+#
+# Default: normalise to LF everywhere.
+* text=auto eol=lf
+
+# Golden fixtures and generated GraphQL documents are compared byte-for-byte,
+# so they must never be line-ending translated.
+tests/fixtures/** -text
+*.sdl -text
+*.graphql -text
