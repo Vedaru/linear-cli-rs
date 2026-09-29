@@ -57,13 +57,34 @@ mutation UpdateInitiative($id: String!, $input: InitiativeUpdateInput!) {
 }
 "#;
 
-/// Initiative status options as (API value, label).
-const INITIATIVE_STATUSES: [(&str, &str); 4] = [
-    ("planned", "Planned"),
-    ("active", "Active"),
-    ("completed", "Completed"),
-    ("paused", "Paused"),
+/// Linear's `InitiativeStatus` enum values as (API value, label), in the order
+/// the wizard offers them. The enum is case-sensitive and, as the live API's
+/// introspection reports, is `Proposed | Planned | Active | Completed |
+/// Canceled` — there is no `paused` initiative status.
+const INITIATIVE_STATUSES: [(&str, &str); 5] = [
+    ("Proposed", "Proposed"),
+    ("Planned", "Planned"),
+    ("Active", "Active"),
+    ("Completed", "Completed"),
+    ("Canceled", "Canceled"),
 ];
+
+/// Canonicalise a status the user typed (or the wizard picked) to the enum
+/// spelling the API expects, so any casing is accepted rather than forwarded.
+///
+/// Deliberate deviation: upstream lower-cases the value on the way out
+/// (`input.status = status.toLowerCase()`), which sends `active` for
+/// `--status Active` and makes every update fail, and the wizard's own
+/// lowercase values fail the same way. An unrecognised value is forwarded
+/// unchanged so the API's own error surfaces. See AGENTS.md.
+fn canonical_status(status: &str) -> String {
+    let wanted = status.to_lowercase();
+    INITIATIVE_STATUSES
+        .iter()
+        .find(|(value, _)| value.to_lowercase() == wanted)
+        .map(|(value, _)| (*value).to_string())
+        .unwrap_or_else(|| status.to_string())
+}
 
 #[derive(Args, Debug)]
 pub struct InitiativeUpdateArgs {
@@ -76,7 +97,7 @@ pub struct InitiativeUpdateArgs {
     /// New description
     #[arg(short = 'd', long, value_name = "description")]
     pub description: Option<String>,
-    /// New status (planned, active, completed, paused)
+    /// New status (proposed, planned, active, completed, canceled)
     #[arg(long, value_name = "status")]
     pub status: Option<String>,
     /// New owner (username, email, or @me)
@@ -162,10 +183,10 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
             .collect();
         let default_index = options
             .iter()
-            .position(|(value, _)| *value == current_status)
+            .position(|(value, _)| value.to_lowercase() == current_status)
             .unwrap_or(0);
         let new_status = prompt_select("Status", &options, default_index)?;
-        if new_status != current_status {
+        if new_status.to_lowercase() != current_status {
             status = Some(new_status);
         }
 
@@ -193,8 +214,9 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
     }
 
     // Build the update input. Unlike create, upstream tests each option for
-    // `undefined`, so an explicitly blank value is forwarded, and the status is
-    // lowercased on the way out.
+    // `undefined`, so an explicitly blank value is forwarded; the status is
+    // canonicalised (`--status Active` and `--status active` both send `Active`)
+    // instead of lower-cased.
     let mut input = Map::new();
     if let Some(name) = &name {
         input.insert("name".to_string(), json!(name));
@@ -203,7 +225,7 @@ pub fn run(args: InitiativeUpdateArgs) -> Result<()> {
         input.insert("description".to_string(), json!(description));
     }
     if let Some(status) = &status {
-        input.insert("status".to_string(), json!(status.to_lowercase()));
+        input.insert("status".to_string(), json!(canonical_status(status)));
     }
     if let Some(target_date) = &target_date {
         input.insert("targetDate".to_string(), json!(target_date));

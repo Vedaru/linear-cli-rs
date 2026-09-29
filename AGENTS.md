@@ -78,3 +78,10 @@ See `tests/mock_server.rs` (harness self-tests) and `tests/cli_smoke.rs`
 - `api`'s schema printer reimplements SDL from introspection JSON; it matches
   `graphql-js` on the fixtures exercised but has not been checked against every
   exotic introspection feature.
+- `label delete <name>` surfaces a failed lookup request as that error instead of
+  reporting the label missing: upstream's `catch` turns any failure — including
+  Linear's own rejection of the operation — into "Label not found", which hides
+  the cause.
+- `initiative update --status` accepts any casing and sends the canonical enum
+  value (`Active`, not `active`); upstream lower-cases it, so every status update
+  it sends is rejected by the API.

@@ -18,8 +18,13 @@ mutation DeleteIssueLabel($id: String!) {
 }
 "#;
 
+// The document declares exactly one variable. Linear validates an operation
+// before running it and rejects one that declares a variable it never uses
+// ("Variable \"$teamKey\" is never used in operation \"GetLabelByName\""), so
+// the unused `$teamKey` upstream's codegen left behind must not be declared:
+// the team filter below is applied client-side, exactly as upstream applies it.
 const GET_LABEL_BY_NAME_QUERY: &str = r#"
-query GetLabelByName($name: String!, $teamKey: String) {
+query GetLabelByName($name: String!) {
   issueLabels(
     filter: {
       name: { eqIgnoreCase: $name }
@@ -143,11 +148,12 @@ fn resolve_label_id(
         // Fall through to name lookup.
     }
 
-    // Try as name.
-    let Ok(result) = client.request(GET_LABEL_BY_NAME_QUERY, json!({ "name": name_or_id })) else {
-        // Query failed, label not found.
-        return Ok(None);
-    };
+    // Try as name. A request that fails is surfaced as itself: Linear's
+    // validation errors and transport failures are not "not found", and
+    // reporting them as a missing label hides the real cause. (Deliberate
+    // deviation — upstream's `catch` turns any failure into "not found"; see
+    // AGENTS.md.)
+    let result = client.request(GET_LABEL_BY_NAME_QUERY, json!({ "name": name_or_id }))?;
     let labels: Vec<Value> = result
         .get("issueLabels")
         .and_then(|connection| connection.get("nodes"))

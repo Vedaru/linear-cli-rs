@@ -268,8 +268,8 @@ query FetchParentIssueData($id: String!) {
 "#;
 
 pub(crate) const FETCH_ISSUES_QUERY: &str = r#"
-query FetchIssues($filter: IssueFilter, $sort: [IssueSortInput!], $first: Int, $after: String) {
-  issues(filter: $filter, sort: $sort, first: $first, after: $after) {
+query FetchIssues($filter: IssueFilter, $sort: [IssueSortInput!], $first: Int, $after: String, $includeArchived: Boolean) {
+  issues(filter: $filter, sort: $sort, first: $first, after: $after, includeArchived: $includeArchived) {
     nodes {
       id
       identifier
@@ -581,7 +581,13 @@ query GetProjectsForTeam($teamId: String!) {
 
 pub(crate) const GET_ISSUE_LABEL_BY_NAME_QUERY: &str = r#"
 query GetIssueLabelByName($name: String!, $teamKey: String!) {
-  issueLabels(filter: { name: { eqIgnoreCase: $name }, team: { key: { eq: $teamKey } } }) {
+  issueLabels(filter: {
+    name: { eqIgnoreCase: $name }
+    or: [
+      { team: { key: { eq: $teamKey } } }
+      { team: { null: true } }
+    ]
+  }) {
     nodes {
       id
       name
@@ -592,7 +598,13 @@ query GetIssueLabelByName($name: String!, $teamKey: String!) {
 
 pub(crate) const GET_ISSUE_LABELS_BY_NAME_QUERY: &str = r#"
 query GetIssueLabelsByName($name: String!, $teamKey: String!) {
-  issueLabels(filter: { name: { containsIgnoreCase: $name }, team: { key: { eq: $teamKey } } }) {
+  issueLabels(filter: {
+    name: { containsIgnoreCase: $name }
+    or: [
+      { team: { key: { eq: $teamKey } } }
+      { team: { null: true } }
+    ]
+  }) {
     nodes {
       id
       name

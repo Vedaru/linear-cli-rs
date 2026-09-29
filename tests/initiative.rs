@@ -662,3 +662,80 @@ fn initiative_comment_list_no_comments() {
     assert!(out.success(), "stderr: {}", out.stderr);
     assert_eq!(out.stdout.trim(), "No comments found for this initiative");
 }
+
+/// The initiative the status tests read back before updating.
+fn initiative_for_update(status: &str) -> serde_json::Value {
+    json!({ "data": { "initiative": {
+        "id": INITIATIVE_ID,
+        "slugId": "platform",
+        "name": "Platform",
+        "description": null,
+        "status": status,
+        "targetDate": null,
+        "color": null,
+        "icon": null,
+        "owner": null
+    } } })
+}
+
+fn updated_initiative_response() -> serde_json::Value {
+    json!({ "data": { "initiativeUpdate": {
+        "success": true,
+        "initiative": {
+            "id": INITIATIVE_ID,
+            "slugId": "platform",
+            "name": "Platform",
+            "url": "https://linear.app/example/initiative/platform"
+        }
+    } } })
+}
+
+/// `--status` must send the enum spelling the API declares, not a lower-cased
+/// one. `InitiativeStatus` is case-sensitive (`Planned | Active | Completed |
+/// ...`), so sending `active` — what upstream's `status.toLowerCase()` does for
+/// every input — is rejected. Gating the mutation on `status: "Active"` is how
+/// the harness pins the payload; the reply refuses to match while the input
+/// carries anything else.
+#[test]
+fn initiative_update_status_is_sent_in_the_enum_case() {
+    let server = MockLinearServer::start(vec![
+        MockResponse::new("GetInitiativeForUpdate", initiative_for_update("Planned"))
+            .with_variables(json!({ "id": INITIATIVE_ID })),
+        MockResponse::new("UpdateInitiative", updated_initiative_response()).with_variables(
+            json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } }),
+        ),
+    ]);
+
+    let out = run_cli(
+        &["initiative", "update", INITIATIVE_ID, "--status", "Active"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("✓ Updated initiative: Platform"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+/// A lower-cased `--status` is accepted and canonicalised, rather than sent
+/// verbatim as a value the enum rejects — the same spelling a real terminal
+/// wizard answers with.
+#[test]
+fn initiative_update_status_accepts_any_casing() {
+    let server = MockLinearServer::start(vec![
+        MockResponse::new("GetInitiativeForUpdate", initiative_for_update("Planned"))
+            .with_variables(json!({ "id": INITIATIVE_ID })),
+        MockResponse::new("UpdateInitiative", updated_initiative_response()).with_variables(
+            json!({ "id": INITIATIVE_ID, "input": { "status": "Active" } }),
+        ),
+    ]);
+
+    let out = run_cli(
+        &["initiative", "update", INITIATIVE_ID, "--status", "active"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+}

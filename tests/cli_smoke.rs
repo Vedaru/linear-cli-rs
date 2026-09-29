@@ -443,6 +443,61 @@ fn issue_query_all_teams_json_returns_fetched_issues() {
     assert_eq!(nodes[1]["assignee"], Value::Null);
 }
 
+/// `--include-archived` has to reach the API on the filter path too.
+///
+/// The `FetchIssues` document used to declare no `$includeArchived` variable and
+/// never pass one to `issues(...)`, while the request sent `includeArchived`
+/// anyway: Linear ignores a variable the operation does not declare, so archived
+/// issues stayed hidden unless `--search` (whose document did declare it) was
+/// also given. Gating each reply on the document carrying the variable and the
+/// argument is how the harness pins it — while the argument is missing, neither
+/// reply matches and the run fails.
+#[test]
+fn issue_query_include_archived_reaches_the_filter_path() {
+    let server = MockLinearServer::start(vec![
+        MockResponse::new(
+            "FetchIssues",
+            issues_response(vec![issue_node("ENG-9", "Archived issue", None)]),
+        )
+        .with_query_includes("includeArchived: $includeArchived")
+        .with_variables(json!({ "includeArchived": true })),
+        MockResponse::new(
+            "FetchIssues",
+            issues_response(vec![issue_node("ENG-1", "Live issue", None)]),
+        )
+        .with_query_includes("includeArchived: $includeArchived")
+        .with_variables(json!({ "includeArchived": false })),
+    ]);
+
+    let archived = run_cli(
+        &["issue", "query", "--all-teams", "--include-archived", "--json"],
+        &common::mock_env(&server),
+    );
+    assert!(archived.success(), "stderr: {}", archived.stderr);
+    let parsed: Value = serde_json::from_str(archived.stdout.trim()).expect("json output");
+    let identifiers: Vec<&str> = parsed["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["identifier"].as_str().unwrap())
+        .collect();
+    assert_eq!(identifiers, ["ENG-9"], "stdout: {}", archived.stdout);
+
+    let live = run_cli(
+        &["issue", "query", "--all-teams", "--json"],
+        &common::mock_env(&server),
+    );
+    assert!(live.success(), "stderr: {}", live.stderr);
+    let parsed: Value = serde_json::from_str(live.stdout.trim()).expect("json output");
+    let identifiers: Vec<&str> = parsed["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["identifier"].as_str().unwrap())
+        .collect();
+    assert_eq!(identifiers, ["ENG-1"], "stdout: {}", live.stdout);
+}
+
 #[test]
 fn issue_query_empty_prints_notice() {
     let server = MockLinearServer::start(vec![MockResponse::new(
