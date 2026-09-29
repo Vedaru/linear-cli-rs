@@ -41,8 +41,22 @@ pub fn to_pretty(value: &Value) -> String {
 }
 
 /// Print a JSON value with two-space indentation.
+///
+/// Streamed to stdout rather than through [`to_pretty`] + [`line`]: a `--json`
+/// payload can be megabytes (a listing, or the whole introspection document) and
+/// materialising it as a `String` first doubles the peak for a copy nothing reads.
 pub fn print_json(value: &Value) {
-    line(&to_pretty(value));
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if write_json(&mut lock, value).is_err() {
+        return;
+    }
+    let _ = writeln!(lock);
+}
+
+/// Write a JSON value with two-space indentation to any writer.
+pub fn write_json<W: Write>(writer: &mut W, value: &Value) -> std::io::Result<()> {
+    serde_json::to_writer_pretty(writer, value).map_err(std::io::Error::other)
 }
 
 /// Print raw JSON text already formatted upstream (used by `linear api`).

@@ -12,6 +12,7 @@
 //! writes either form to a file, appending exactly one newline.
 
 use std::cmp::Ordering;
+use std::io::Write;
 
 use serde_json::{json, Value};
 
@@ -131,20 +132,31 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
         CliError::cli("Introspection response did not contain a __schema field")
     })?;
 
-    let content = if args.json {
-        output::to_pretty(&data)
-    } else {
-        print_schema(schema)
-    };
-
     match &args.output {
         Some(path) => {
-            std::fs::write(path, format!("{content}\n")).map_err(|error| {
-                CliError::cli(format!("Failed to write {path}")).cause(error)
-            })?;
+            // Written straight into the file: the introspection JSON is several MB
+            // and the SDL about 1 MB, so rendering the whole document into a
+            // String first is a copy of the output that nothing reads.
+            let mut file = std::fs::File::create(path)
+                .map_err(|error| CliError::cli(format!("Failed to write {path}")).cause(error))?;
+            let written = if args.json {
+                output::write_json(&mut file, &data)
+            } else {
+                file.write_all(print_schema(schema).as_bytes())
+            };
+            written
+                .and_then(|()| file.write_all(b"\n"))
+                .map_err(|error| CliError::cli(format!("Failed to write {path}")).cause(error))?;
             output::line(&format!("Schema written to {path}"));
         }
-        None => output::line(&content),
+        None => {
+            if args.json {
+                // Streamed by `print_json` rather than built as a String first.
+                output::print_json(&data);
+            } else {
+                output::line(&print_schema(schema));
+            }
+        }
     }
     Ok(())
 }

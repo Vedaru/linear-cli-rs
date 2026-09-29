@@ -161,11 +161,19 @@ impl Client {
             );
         }
 
-        match parsed.get("data") {
+        // Move `data` out of the parsed response instead of cloning it. The
+        // response can be large - Linear's introspection document is ~5 MB and
+        // expands into tens of MB of tree - and a deep clone of the payload
+        // doubled that peak for a copy that was dropped immediately after.
+        let data = match parsed {
+            Value::Object(mut root) => root.remove("data"),
+            _ => None,
+        };
+        match data {
             Some(Value::Null) | None => Err(CliError::cli(
                 "Linear API returned an empty response with no data and no errors.",
             )),
-            Some(data) => Ok(data.clone()),
+            Some(data) => Ok(data),
         }
     }
 
