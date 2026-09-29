@@ -1,0 +1,91 @@
+use super::prelude::*;
+use super::*;
+
+// ---------------------------------------------------------------------------
+// Issue identifiers
+// ---------------------------------------------------------------------------
+
+/// Normalise an identifier, or upper-case the input when it cannot be parsed.
+/// Mirrors `formatIssueIdentifier`.
+pub fn format_issue_identifier(provided_id: &str) -> String {
+    normalize_issue_identifier(provided_id).unwrap_or_else(|| provided_id.to_uppercase())
+}
+
+/// The configured team key and where it came from.
+pub fn get_team_key_with_source() -> Option<Resolved<String>> {
+    let resolved = config::team_id_resolved(None)?;
+    if resolved.value.is_empty() {
+        return None;
+    }
+    Some(Resolved {
+        value: resolved.value.to_uppercase(),
+        source: resolved.source,
+    })
+}
+
+/// The configured team key, upper-cased.
+pub fn get_team_key() -> Option<String> {
+    get_team_key_with_source().map(|resolved| resolved.value)
+}
+
+/// Turn loose input into a canonical issue identifier like `ABC-123`.
+///
+/// Accepts a pasted issue URL, a `TEAMKEY-NUMBER` identifier, or a bare
+/// integer when a team is configured. When `provided_id` is `None` the current
+/// issue is read from VCS state — not yet ported, so this returns `None`.
+pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>> {
+    if let Some(provided) = provided_id {
+        // A pasted URL carries the identifier in its path; reading it here
+        // covers every command and flag that funnels through this function.
+        if let Some(LinearUrlRef::Issue { identifier, .. }) =
+            expect_linear_url_kind(provided, "issue", "an issue URL or an identifier like ENG-123")?
+        {
+            return Ok(Some(identifier));
+        }
+
+        if let Some(normalized) = normalize_issue_identifier(provided) {
+            return Ok(Some(normalized));
+        }
+
+        if is_bare_integer(provided) {
+            let Some(team_key) = get_team_key() else {
+                return Err(CliError::validation(
+                    "an integer id was provided, but no team is set",
+                )
+                .suggestion("Run `linear config` to set a team."));
+            };
+            return Ok(normalize_issue_identifier(&format!("{team_key}-{provided}")));
+        }
+    }
+
+    // TODO(#13): read the current issue from git/jj branch state.
+    Ok(None)
+}
+
+/// `true` for a positive integer with no leading zero, matching upstream's
+/// `/^[1-9][0-9]*$/`.
+pub(crate) fn is_bare_integer(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('0')
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// `true` for a `+N`/`-N` cycle offset token.
+pub(crate) fn is_signed_integer(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    matches!(bytes.first(), Some(b'+') | Some(b'-'))
+        && bytes.len() > 1
+        && bytes[1..].iter().all(u8::is_ascii_digit)
+}
+
+/// The issue's UUID for an identifier, or `None` when it does not exist.
+pub fn get_issue_id(identifier: &str) -> Result<Option<String>> {
+    let client = graphql::client()?;
+    let data = client.request(GET_ISSUE_ID_QUERY, json!({ "id": identifier }))?;
+    Ok(data
+        .get("issue")
+        .and_then(|issue| issue.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+

@@ -1,0 +1,45 @@
+[package]
+name = "linear"
+version = "2.6.0"
+edition = "2021"
+description = "Unofficial Linear CLI (Rust port) built for headless agent use"
+license = "MIT"
+repository = "https://github.com/schpet/linear-cli"
+rust-version = "1.80"
+
+[[bin]]
+name = "linear"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "wrap_help", "env"] }
+clap_complete = "4.5.67"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = { version = "0.9", features = ["preserve_order"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "json"] }
+anyhow = "1"
+thiserror = "2"
+dirs = "6"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+unicode-width = "0.2"
+rpassword = "7"
+url = "2"
+sha2 = "0.10"
+terminal_size = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+] }
+
+[dev-dependencies]
+insta = { version = "1", features = ["json"] }
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

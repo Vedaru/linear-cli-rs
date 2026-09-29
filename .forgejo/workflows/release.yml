@@ -1,0 +1,164 @@
+# Rolling release for linear-cli-rs.
+#
+# A push to main builds the release binary on the instance's own runner and
+# republishes it as the `rolling` release here, moving the tag to the commit
+# that just built. The tag is a pointer, not a version: every green push
+# replaces it, and the release body records which commit and which toolchain
+# produced the artefact that is currently attached.
+#
+# runs-on: glibc is a LABEL and the label names an image: the instance's runner
+# maps it to a throwaway ubuntu:26.04 container, and that runner sets
+# `container.network: host`, which is why the loopback URLs below resolve. A
+# per-job `container:` block does NOT work on this runner - it ignores it and
+# the job dies at container setup - so the image comes from the label and the
+# workflow only asks for the label.
+#
+# Everything talks to the instance over loopback (127.0.0.1:3000), never
+# https://git.vedaru.cn. The public name resolves through Cloudflare, which
+# completes TCP on its IPv6 addresses and then drops the TLS ClientHello, and
+# which has answered 502/524 on large uploads. Same host: the loopback hop is
+# shorter and never leaves the machine.
+#
+# There is deliberately no actions/checkout. The default action source is
+# github.com - the one host this setup exists to avoid - so the checkout is a
+# plain `git clone` over loopback, authenticating with the repo's
+# FORGEJO_TOKEN secret through an inline credential helper rather than writing
+# a credential file into the job container.
+#
+# Nothing from the host is mounted. The job container is a bare ubuntu:26.04,
+# so the toolchain is installed inside it by the first step. The Rust version is
+# pinned rather than tracking `stable`: 1.93.1 is the toolchain that produced
+# the green `cargo build` / `cargo test` / `cargo clippy -D warnings` run this
+# port was accepted on, so a toolchain bump stays a deliberate act with a green
+# run behind it. (The repo's `rust-version = "1.80"` is not a usable floor: the
+# locked dependency `time-core 0.1.9` declares the `edition2024` Cargo feature,
+# which needs Cargo >= 1.85 to even parse.)
+#
+# `cargo fmt --check` is deliberately NOT part of the gate. It is not part of
+# this repo's gate (build + test + clippy), and parts of the tree predate the
+# formatting the current rustfmt produces, so it would fail on files this
+# workflow never touches. `cargo clippy --all-targets -- -D warnings` is the
+# strong signal here and it is enforced.
+#
+# Only these workflow expressions are used, all of them verified present on this
+# instance: `forge.repository`, `forge.sha`, `secrets.FORGEJO_TOKEN` and
+# `runner.temp`.
+name: Rolling release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: glibc
+    steps:
+      - name: Install the build toolchain
+        # The job container is a bare ubuntu:26.04: nothing may be assumed from
+        # the host, including the linker the -sys crates need.
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          apt-get install -y --no-install-recommends \
+              build-essential ca-certificates curl git pkg-config python3
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+              --default-toolchain 1.93.1 --no-modify-path \
+              -c clippy
+          "$HOME/.cargo/bin/cargo" --version
+          "$HOME/.cargo/bin/rustc" --version
+
+      - name: Check out this repository
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/linear-cli-rs"
+          rm -rf "$src"
+          helper='!f() { echo "username=x"; printf "password=%s\n" "$FORGEJO_TOKEN"; }; f'
+          git -c credential.helper= -c "credential.helper=$helper" \
+              clone --quiet --depth 1 \
+              http://127.0.0.1:3000/${{ forge.repository }}.git "$src"
+          echo "checked out $(git -C "$src" rev-parse HEAD)"
+
+      - name: Gate - build, test, clippy
+        # Nothing is published unless this passes. --locked keeps Cargo.lock as
+        # the source of truth so a published binary is reproducible from it.
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd "$RUNNER_TEMP/linear-cli-rs"
+          cargo build --locked
+          cargo test --locked
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo build --release --locked
+
+      - name: Package the release binary
+        env:
+          SHA: ${{ forge.sha }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/linear-cli-rs"
+          out="$RUNNER_TEMP/dist"
+          rm -rf "$out" "$RUNNER_TEMP/stage"
+          short=$(printf '%s' "$SHA" | cut -c1-12)
+          want="linear-cli-rs-${short}-x86_64-unknown-linux-gnu"
+          stage="$RUNNER_TEMP/stage/$want"
+          mkdir -p "$stage" "$out"
+          # The archive holds the binary at the top level plus the documents a
+          # release reader needs; AGENTS.md is here for the same reason the
+          # repository ships it - this port is written to be driven by agents.
+          install -m 0755 "$src/target/release/linear" "$stage/linear"
+          cp "$src/README.md" "$stage/README.md"
+          cp "$src/AGENTS.md" "$stage/AGENTS.md"
+          tar czf "$out/$want.tar.gz" -C "$RUNNER_TEMP/stage" "$want"
+          (cd "$out" && sha256sum "$want.tar.gz" > "$want.tar.gz.sha256")
+          ls -l "$out"
+
+      - name: Publish the rolling release
+        # The previous release and tag are removed first: `rolling` must name the
+        # commit that just built, not the first commit that ever did. The release
+        # is marked prerelease because the tag moves underneath it.
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          FORGEJO_URL: http://127.0.0.1:3000
+          SHA: ${{ forge.sha }}
+        run: |
+          set -euo pipefail
+          api="$FORGEJO_URL/api/v1/repos/${{ forge.repository }}"
+          auth=(-H "Authorization: token $FORGEJO_TOKEN")
+          out="$RUNNER_TEMP/dist"
+          asset=$(ls "$out"/*.tar.gz)
+          short=$(printf '%s' "$SHA" | cut -c1-12)
+
+          # Drop whatever `rolling` pointed at before: release first, then tag.
+          rel=$(curl -sS "${auth[@]}" "$api/releases/tags/rolling" || true)
+          rid_old=$(printf '%s' "$rel" | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -1)
+          if [ -n "${rid_old:-}" ]; then
+            echo "deleting previous rolling release id=$rid_old"
+            curl -sS -X DELETE "${auth[@]}" "$api/releases/$rid_old" >/dev/null
+          fi
+          curl -sS -X DELETE "${auth[@]}" "$api/tags/rolling" >/dev/null || true
+
+          body=$(printf 'Rolling build of `%s` - the last commit on main that built, gated and published.\n\n- commit: `%s`\n- toolchain: %s\n- sha256: `%s`\n\nAssets are rebuilt and replaced on every push to main.\n' \
+                  "$short" "$SHA" \
+                  "$("$HOME/.cargo/bin/rustc" --version)" \
+                  "$(cut -d' ' -f1 "$asset.sha256")")
+          payload=$(BODY="$body" SHA="$SHA" python3 -c \
+              'import json,os;print(json.dumps({"tag_name":"rolling","target_commitish":os.environ["SHA"],"name":"Rolling build","body":os.environ["BODY"],"draft":False,"prerelease":True}))')
+          created=$(curl -sS -X POST "${auth[@]}" -H "Content-Type: application/json" \
+              --data-binary "$payload" "$api/releases")
+          rid=$(printf '%s' "$created" | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -1)
+          [ -n "${rid:-}" ] || { echo "release creation failed: $created" >&2; exit 1; }
+          echo "created rolling release id=$rid"
+
+          for f in "$asset" "$asset.sha256"; do
+            name=$(basename "$f")
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${auth[@]}" \
+                -F "attachment=@$f" "$api/releases/$rid/assets?name=$name")
+            echo "uploaded $name -> HTTP $code"
+            [ "$code" = 201 ] || { echo "asset upload for $name failed" >&2; exit 1; }
+          done
+
+          echo "rolling release now points at $SHA"
