@@ -70,47 +70,47 @@ pub struct IssueArgs {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum IssueCommand {
-    /// Print the issue id for the current branch
+    /// Print the issue based on the current git branch
     Id(issue_id::IssueIdArgs),
-    /// List issues assigned to you
+    /// List your issues
     #[command(alias = "list", alias = "l")]
     Mine(issue_mine::IssueMineArgs),
-    /// Search issues with a query
+    /// Query issues with structured filters
     #[command(alias = "q")]
     Query(issue_query::IssueQueryArgs),
-    /// Print the issue title for the current branch
+    /// Print the issue title
     Title(issue_title::IssueTitleArgs),
-    /// Move an issue to a started state
+    /// Start working on an issue
     Start(issue_start::IssueStartArgs),
     /// View issue details (default) or open in browser/app
     #[command(alias = "v")]
     View(issue_view::IssueViewArgs),
-    /// Print the issue URL for the current branch
+    /// Print the issue URL
     Url(issue_url::IssueUrlArgs),
-    /// Print a context/description payload for an issue
+    /// Print the issue title and Linear-issue trailer
     Describe(issue_describe::IssueDescribeArgs),
-    /// List commits linked to an issue
+    /// Show all commits for a Linear issue (jj only)
     Commits(issue_commits::IssueCommitsArgs),
-    /// Show the pull request linked to an issue
+    /// Create a GitHub pull request with issue details
     #[command(name = "pull-request", alias = "pr")]
     PullRequest(issue_pull_request::IssuePullRequestArgs),
     /// Archive an issue
     Archive(issue_archive::IssueArchiveArgs),
     /// Delete an issue
     Delete(issue_delete::IssueDeleteArgs),
-    /// Create a new issue
+    /// Create a linear issue
     Create(issue_create::IssueCreateArgs),
-    /// Update an issue
+    /// Update a linear issue
     Update(issue_update::IssueUpdateArgs),
     /// Manage issue comments
     Comment(issue_comment::IssueCommentArgs),
-    /// Attach a file to an issue
+    /// Create a sidebar link attachment on an issue (images do not render inline)
     Attach(issue_attach::IssueAttachArgs),
-    /// Manage issue links
+    /// Link a URL to an issue
     Link(issue_link::IssueLinkArgs),
-    /// Manage issue relations
+    /// Manage issue relations (dependencies)
     Relation(issue_relation::IssueRelationArgs),
-    /// View agent sessions for an issue
+    /// Manage agent sessions for an issue
     #[command(name = "agent-session")]
     AgentSession(issue_agent_session::IssueAgentSessionArgs),
 }
