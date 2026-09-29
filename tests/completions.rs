@@ -12,7 +12,11 @@
 
 mod common;
 
+// Unix-only: the closed-reader test below is the only user of these, and an
+// unconditional import makes Windows builds fail under -D warnings.
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Read};
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 
 use common::run_cli;
