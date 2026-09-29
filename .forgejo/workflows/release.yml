@@ -83,16 +83,35 @@ jobs:
           echo "checked out $(git -C "$src" rev-parse HEAD)"
 
       - name: Gate - build, test, clippy
-        # Nothing is published unless this passes. --locked keeps Cargo.lock as
-        # the source of truth so a published binary is reproducible from it.
+        # Every check runs and the step fails once at the end with a summary, so
+        # a red run names everything that is wrong rather than only the first
+        # thing: one push then fixes all of it instead of one problem per run.
+        # --locked keeps Cargo.lock as the source of truth, so a published
+        # binary is reproducible from it. Nothing is published unless this
+        # step's exit status is zero.
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
           cd "$RUNNER_TEMP/linear-cli-rs"
-          cargo build --locked
-          cargo test --locked
-          cargo clippy --all-targets --locked -- -D warnings
-          cargo build --release --locked
+          rc=0
+          check() {
+            local name="$1"; shift
+            echo "=== $name ==="
+            if "$@"; then
+              echo "PASS: $name"
+            else
+              local status=$?
+              echo "FAIL: $name (exit $status)"
+              rc=1
+            fi
+          }
+          check "cargo build --locked" cargo build --locked
+          check "cargo test --locked" cargo test --locked
+          check "cargo clippy --all-targets --locked -- -D warnings" \
+                cargo clippy --all-targets --locked -- -D warnings
+          check "cargo build --release --locked" cargo build --release --locked
+          if [ "$rc" -eq 0 ]; then echo "gate: PASS"; else echo "gate: FAIL"; fi
+          exit "$rc"
 
       - name: Package the release binary
         env:
@@ -132,9 +151,17 @@ jobs:
           asset=$(ls "$out"/*.tar.gz)
           short=$(printf '%s' "$SHA" | cut -c1-12)
 
+          # Parse the release id out of the API's JSON with a real parser. A
+          # greedy `sed 's/.*"id":\([0-9]*\).*/\1/'` looks like it works and
+          # does not: the release object carries `{"id":<release>,...,"author":
+          # {"id":<user>}}`, so the greedy match captures the AUTHOR's id, the
+          # asset POST then targets a release that does not exist, and the run
+          # goes red after publishing a release with no assets.
+          id_of() { python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))'; }
+
           # Drop whatever `rolling` pointed at before: release first, then tag.
           rel=$(curl -sS "${auth[@]}" "$api/releases/tags/rolling" || true)
-          rid_old=$(printf '%s' "$rel" | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -1)
+          rid_old=$(printf '%s' "$rel" | id_of)
           if [ -n "${rid_old:-}" ]; then
             echo "deleting previous rolling release id=$rid_old"
             curl -sS -X DELETE "${auth[@]}" "$api/releases/$rid_old" >/dev/null
@@ -149,7 +176,7 @@ jobs:
               'import json,os;print(json.dumps({"tag_name":"rolling","target_commitish":os.environ["SHA"],"name":"Rolling build","body":os.environ["BODY"],"draft":False,"prerelease":True}))')
           created=$(curl -sS -X POST "${auth[@]}" -H "Content-Type: application/json" \
               --data-binary "$payload" "$api/releases")
-          rid=$(printf '%s' "$created" | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -1)
+          rid=$(printf '%s' "$created" | id_of)
           [ -n "${rid:-}" ] || { echo "release creation failed: $created" >&2; exit 1; }
           echo "created rolling release id=$rid"
 
@@ -159,6 +186,20 @@ jobs:
                 -F "attachment=@$f" "$api/releases/$rid/assets?name=$name")
             echo "uploaded $name -> HTTP $code"
             [ "$code" = 201 ] || { echo "asset upload for $name failed" >&2; exit 1; }
+          done
+
+          # Read the release back and require the assets to be attached: a 201
+          # that attached nothing would otherwise look exactly like success.
+          final=$(curl -sS "${auth[@]}" "$api/releases/$rid")
+          attached=$(printf '%s' "$final" | python3 -c \
+              'import json,sys;print(" ".join(a.get("name","") for a in (json.load(sys.stdin).get("assets") or [])))')
+          echo "assets attached: $attached"
+          for f in "$asset" "$asset.sha256"; do
+            base=$(basename "$f")
+            case " $attached " in
+              *" $base "*) ;;
+              *) echo "asset $base is NOT attached to release $rid" >&2; exit 1;;
+            esac
           done
 
           echo "rolling release now points at $SHA"
