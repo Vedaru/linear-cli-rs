@@ -132,12 +132,16 @@ jobs:
             # Move the tag to this commit, then replace every asset.
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/rolling" \
               -f sha="$GITHUB_SHA" -F force=true >/dev/null
-            gh release upload rolling dist/* --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create rolling dist/* --repo "$GITHUB_REPOSITORY" \
+            gh release create rolling --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "Rolling build" --prerelease \
               --notes "$notes"
           fi
+          # Only regular files are assets: the staging directories are not
+          # uploadable, and passing them made the upload step fail.
+          mapfile -t assets < <(find dist -maxdepth 1 -type f | sort)
+          printf '  uploading: %s\n' "${assets[@]}"
+          gh release upload rolling "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           echo "--- published:"
           gh release view rolling --repo "$GITHUB_REPOSITORY" --json tagName,url,assets \
             --jq '.tagName, .url, (.assets[] | "  \(.name)  \(.size) bytes")'
