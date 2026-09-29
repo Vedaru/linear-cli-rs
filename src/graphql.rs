@@ -177,6 +177,91 @@ impl Client {
         }
     }
 
+    /// Execute `query` with `variables` and return the **raw** response body
+    /// bytes, after applying exactly the checks [`Client::request`] applies.
+    ///
+    /// This exists for callers that want a borrowed view of a large response -
+    /// `linear schema` borrows typed structs out of Linear's ~2.7 MB
+    /// introspection document - and therefore cannot afford [`Client::request`],
+    /// which expands the body into a [`Value`] tree costing tens of MB.
+    ///
+    /// The checks are the same ones `request` makes: HTTP status, a non-empty
+    /// GraphQL `errors` array (reported through [`Client::graphql_error`], so the
+    /// existing messages are unchanged), and a missing or null `data`. They run
+    /// against a minimal envelope that **skips** `data` instead of decoding it,
+    /// and only expands `errors` - a handful of small objects - when the key is
+    /// actually there, so a successful introspection response is never turned
+    /// into a generic tree.
+    pub fn request_raw(&self, query: &str, variables: Value) -> Result<Vec<u8>> {
+        let variables_json = serde_json::to_string_pretty(&variables).ok();
+        let payload = json!({ "query": query, "variables": variables });
+
+        let mut response = self
+            .agent
+            .post(&self.endpoint)
+            .header("Authorization", &self.api_key)
+            .header("User-Agent", USER_AGENT)
+            .header("Content-Type", "application/json")
+            .send_json(&payload)
+            .map_err(|error| CliError::cli(format!("Failed to reach Linear API: {error}")))?;
+
+        let status = response.status().as_u16();
+        let body = response.body_mut().read_to_vec().map_err(|error| {
+            CliError::cli(format!("Failed to read Linear API response: {error}"))
+        })?;
+
+        // The `data` member is only checked for presence: it is skipped rather
+        // than decoded, so Linear's ~2.7 MB introspection document never becomes
+        // a `Value` tree. `errors` is a handful of small objects and is expanded
+        // only when the key is actually present - and a non-array `errors` is
+        // ignored here exactly as `request`'s `as_array()` lookup ignored it.
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            #[serde(default)]
+            errors: Option<Value>,
+            #[serde(default)]
+            data: Option<serde::de::IgnoredAny>,
+        }
+
+        let envelope: Envelope = serde_json::from_slice(&body).map_err(|_| {
+            let text = String::from_utf8_lossy(&body);
+            if status >= 400 {
+                CliError::cli(format!("HTTP {status}: {}", text.trim())).with_http_status(status)
+            } else {
+                CliError::cli(format!(
+                    "Invalid JSON from Linear API (HTTP {status}): {}",
+                    text.trim()
+                ))
+            }
+        })?;
+
+        if let Some(errors) = envelope.errors.as_ref().and_then(Value::as_array) {
+            if !errors.is_empty() {
+                let error = self.graphql_error(errors, query, variables_json);
+                return Err(if status >= 400 {
+                    error.with_http_status(status)
+                } else {
+                    error
+                });
+            }
+        }
+
+        if status >= 400 {
+            let text = String::from_utf8_lossy(&body);
+            return Err(
+                CliError::cli(format!("HTTP {status}: {}", text.trim())).with_http_status(status)
+            );
+        }
+
+        if envelope.data.is_some() {
+            Ok(body)
+        } else {
+            Err(CliError::cli(
+                "Linear API returned an empty response with no data and no errors.",
+            ))
+        }
+    }
+
     fn graphql_error(
         &self,
         errors: &[Value],

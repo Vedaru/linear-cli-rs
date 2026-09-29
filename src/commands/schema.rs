@@ -3,18 +3,30 @@
 //! Port of `src/commands/schema.ts`. Upstream fetches `getIntrospectionQuery()`
 //! and then runs `buildClientSchema` → `lexicographicSortSchema` → `printSchema`
 //! from graphql-js to emit SDL. This port fetches the same introspection
-//! document and reproduces those three transformations over the raw JSON, so
-//! the SDL matches graphql-js byte for byte: types/fields/args/enum values are
-//! natural-sorted, specified scalars and `__*` introspection types are
-//! omitted, and descriptions are printed as GraphQL block strings.
+//! document and reproduces those three transformations, so the SDL matches
+//! graphql-js byte for byte: types/fields/args/enum values are natural-sorted,
+//! specified scalars and `__*` introspection types are omitted, and
+//! descriptions are printed as GraphQL block strings.
+//!
+//! The document is parsed into **borrowed** structs - every string is a
+//! `Cow<'a, str>` that borrows out of the response body (which stays alive for
+//! the whole command) and only allocates for the escapable strings serde_json
+//! cannot hand out as a slice - instead of a `serde_json::Value` tree. Linear's introspection
+//! response is ~2.7 MB of JSON and a generic tree for it costs ~25 MB of heap,
+//! which dominated this command's peak. The structs below cover exactly the
+//! fields [`INTROSPECTION_QUERY`] selects and declare them in the order the API
+//! returns them, so `--json` is re-serialised from the same model and comes out
+//! byte for byte identical.
 //!
 //! `--json` bypasses SDL and pretty-prints the introspection result; `-o/--output`
 //! writes either form to a file, appending exactly one newline.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write;
 
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::errors::{CliError, Result};
 use crate::graphql;
@@ -120,15 +132,166 @@ fragment TypeRef on __Type {
   }
 }"#;
 
+// --- Introspection response model ---
+//
+// Exactly the fields `INTROSPECTION_QUERY` selects, in the order the API returns
+// them (which is the query's selection order), because `--json` re-serialises
+// this model with `to_writer_pretty` and serde emits struct fields in
+// declaration order. Nothing is skipped when serialising, so a `null` in the
+// response stays a `null` in the output.
+//
+// `Option` mirrors the introspection schema's nullability rather than a missing
+// key: the API always returns every selected field, with `null` where there is
+// nothing to report.
+
+/// The whole response document: only `data` is needed, but `errors` is not
+/// selected here because [`graphql::Client::request_raw`] has already rejected
+/// any response carrying one.
+#[derive(Deserialize)]
+struct IntrospectionResponse<'a> {
+    #[serde(borrow)]
+    data: ResponseData<'a>,
+}
+
+#[derive(Deserialize)]
+struct ResponseData<'a> {
+    #[serde(borrow, rename = "__schema")]
+    schema: Option<Schema<'a>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Schema<'a> {
+    #[serde(borrow, rename = "queryType")]
+    query_type: Option<RootType<'a>>,
+    #[serde(borrow, rename = "mutationType")]
+    mutation_type: Option<RootType<'a>>,
+    #[serde(borrow, rename = "subscriptionType")]
+    subscription_type: Option<RootType<'a>>,
+    #[serde(borrow)]
+    types: Vec<TypeDef<'a>>,
+    #[serde(borrow)]
+    directives: Vec<Directive<'a>>,
+}
+
+/// `{ name kind }` for a root operation type.
+#[derive(Deserialize, Serialize)]
+struct RootType<'a> {
+    #[serde(borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    kind: Cow<'a, str>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct TypeDef<'a> {
+    #[serde(borrow)]
+    kind: Cow<'a, str>,
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    fields: Option<Vec<Field<'a>>>,
+    #[serde(borrow, default, rename = "inputFields")]
+    input_fields: Option<Vec<InputValue<'a>>>,
+    #[serde(borrow, default)]
+    interfaces: Option<Vec<TypeRef<'a>>>,
+    #[serde(borrow, default, rename = "enumValues")]
+    enum_values: Option<Vec<EnumValue<'a>>>,
+    #[serde(borrow, default, rename = "possibleTypes")]
+    possible_types: Option<Vec<TypeRef<'a>>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Field<'a> {
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    args: Vec<InputValue<'a>>,
+    #[serde(borrow, rename = "type")]
+    type_: TypeRef<'a>,
+    #[serde(rename = "isDeprecated")]
+    is_deprecated: bool,
+    #[serde(borrow, rename = "deprecationReason")]
+    deprecation_reason: Option<Cow<'a, str>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct InputValue<'a> {
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(borrow, rename = "type")]
+    type_: TypeRef<'a>,
+    #[serde(borrow, default, rename = "defaultValue")]
+    default_value: Option<Cow<'a, str>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct EnumValue<'a> {
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(rename = "isDeprecated")]
+    is_deprecated: bool,
+    #[serde(borrow, rename = "deprecationReason")]
+    deprecation_reason: Option<Cow<'a, str>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Directive<'a> {
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow)]
+    description: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    locations: Vec<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    args: Vec<InputValue<'a>>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct TypeRef<'a> {
+    #[serde(borrow)]
+    kind: Cow<'a, str>,
+    #[serde(borrow)]
+    name: Option<Cow<'a, str>>,
+    #[serde(borrow, default, rename = "ofType")]
+    of_type: Option<Box<TypeRef<'a>>>,
+}
+
+/// `--json` prints the whole `data` object, whose only member is `__schema`.
+#[derive(Serialize)]
+struct SchemaJson<'a> {
+    #[serde(rename = "__schema")]
+    schema: &'a Schema<'a>,
+}
+
+/// Stand-in used when a wrapper type's `ofType` is missing. graphql-js never
+/// emits that, but the pre-refactor printer rendered such a ref as an empty
+/// name, and this keeps that behaviour rather than unwrapping.
+static EMPTY_TYPE_REF: TypeRef<'static> = TypeRef {
+    kind: Cow::Borrowed(""),
+    name: None,
+    of_type: None,
+};
+
 pub fn run(args: SchemaArgs) -> Result<()> {
     run_inner(args).map_err(|error| error.with_context("Failed to fetch schema"))
 }
 
 fn run_inner(args: SchemaArgs) -> Result<()> {
     let client = graphql::client()?;
-    let data = client.request(INTROSPECTION_QUERY, json!({}))?;
+    // `body` is kept alive for the whole command: every string in the model
+    // below borrows out of it, so nothing is copied per type/field/arg.
+    let body = client.request_raw(INTROSPECTION_QUERY, json!({}))?;
+    let response: IntrospectionResponse<'_> = serde_json::from_slice(&body)?;
 
-    let schema = data.get("__schema").ok_or_else(|| {
+    let schema = response.data.schema.as_ref().ok_or_else(|| {
         CliError::cli("Introspection response did not contain a __schema field")
     })?;
 
@@ -140,7 +303,7 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
             let mut file = std::fs::File::create(path)
                 .map_err(|error| CliError::cli(format!("Failed to write {path}")).cause(error))?;
             let written = if args.json {
-                output::write_json(&mut file, &data)
+                write_json_schema(&mut file, schema)
             } else {
                 file.write_all(print_schema(schema).as_bytes())
             };
@@ -151,8 +314,8 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
         }
         None => {
             if args.json {
-                // Streamed by `print_json` rather than built as a String first.
-                output::print_json(&data);
+                // Streamed rather than built as a String first.
+                print_json_schema(schema);
             } else {
                 output::line(&print_schema(schema));
             }
@@ -161,33 +324,84 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
     Ok(())
 }
 
-// --- SDL printing (ports graphql-js buildClientSchema + lexicographicSortSchema
-// --- + printSchema, operating on introspection JSON directly) ---
-
-fn name_of(value: &Value) -> String {
-    value
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
+/// Serialise the introspection result the way `output::print_json` does, but
+/// from the borrowed model instead of a `Value` tree. Write errors are ignored,
+/// as they are everywhere else on the stdout path.
+fn print_json_schema(schema: &Schema<'_>) {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if write_json_schema(&mut lock, schema).is_err() {
+        return;
+    }
+    let _ = writeln!(lock);
 }
 
-fn sorted_by_name(items: &[Value]) -> Vec<&Value> {
-    let mut sorted: Vec<&Value> = items.iter().collect();
-    sorted.sort_by(|a, b| natural_compare(&name_of(a), &name_of(b)));
+/// Write the introspection result with two-space indentation to any writer.
+fn write_json_schema<W: Write>(writer: &mut W, schema: &Schema<'_>) -> std::io::Result<()> {
+    serde_json::to_writer_pretty(writer, &SchemaJson { schema }).map_err(std::io::Error::other)
+}
+
+// --- SDL printing (ports graphql-js buildClientSchema + lexicographicSortSchema
+// --- + printSchema, operating on the borrowed introspection model) ---
+
+/// Anything the SDL sorts by name. `TypeRef` has a nullable name, matching
+/// graphql-js's `name ?? ''` treatment.
+trait Named {
+    fn name(&self) -> &str;
+}
+
+impl<'a> Named for TypeDef<'a> {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+impl<'a> Named for Field<'a> {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+impl<'a> Named for InputValue<'a> {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+impl<'a> Named for EnumValue<'a> {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+impl<'a> Named for Directive<'a> {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+impl<'a> Named for TypeRef<'a> {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or("")
+    }
+}
+
+fn sorted_by_name<T: Named>(items: &[T]) -> Vec<&T> {
+    let mut sorted: Vec<&T> = items.iter().collect();
+    sorted.sort_by(|a, b| natural_compare(a.name(), b.name()));
     sorted
 }
 
-fn print_schema(schema: &Value) -> String {
-    let query_name = schema
-        .pointer("/queryType/name")
-        .and_then(Value::as_str);
+fn print_schema(schema: &Schema<'_>) -> String {
+    let query_name = schema.query_type.as_ref().and_then(|ty| ty.name.as_deref());
     let mutation_name = schema
-        .pointer("/mutationType/name")
-        .and_then(Value::as_str);
+        .mutation_type
+        .as_ref()
+        .and_then(|ty| ty.name.as_deref());
     let subscription_name = schema
-        .pointer("/subscriptionType/name")
-        .and_then(Value::as_str);
+        .subscription_type
+        .as_ref()
+        .and_then(|ty| ty.name.as_deref());
 
     // `schemaDescription` is not requested, so only a non-conventional root
     // naming forces an explicit `schema { ... }` block.
@@ -211,31 +425,28 @@ fn print_schema(schema: &Value) -> String {
         parts.push(format!("schema {{\n{}\n}}", operation_types.join("\n")));
     }
 
-    if let Some(directives) = schema.get("directives").and_then(Value::as_array) {
-        let custom: Vec<&Value> = directives
-            .iter()
-            .filter(|directive| !is_specified_directive(&name_of(directive)))
-            .collect();
-        for directive in sorted_by_name_refs(&custom) {
-            parts.push(print_directive(directive));
-        }
+    let mut custom: Vec<&Directive<'_>> = schema
+        .directives
+        .iter()
+        .filter(|directive| !is_specified_directive(directive.name.as_ref()))
+        .collect();
+    custom.sort_by(|a, b| natural_compare(a.name.as_ref(), b.name.as_ref()));
+    for directive in &custom {
+        parts.push(print_directive(directive));
     }
 
-    if let Some(types) = schema.get("types").and_then(Value::as_array) {
-        let defined: Vec<&Value> = types.iter().filter(|ty| is_defined_type(ty)).collect();
-        for ty in sorted_by_name_refs(&defined) {
-            parts.push(print_type(ty));
-        }
+    let mut defined: Vec<&TypeDef<'_>> = schema
+        .types
+        .iter()
+        .filter(|ty| is_defined_type(ty))
+        .collect();
+    defined.sort_by(|a, b| natural_compare(a.name.as_ref(), b.name.as_ref()));
+    for ty in &defined {
+        parts.push(print_type(ty));
     }
 
     parts.retain(|part| !part.is_empty());
     parts.join("\n\n")
-}
-
-fn sorted_by_name_refs<'a>(items: &[&'a Value]) -> Vec<&'a Value> {
-    let mut sorted: Vec<&Value> = items.to_vec();
-    sorted.sort_by(|a, b| natural_compare(&name_of(a), &name_of(b)));
-    sorted
 }
 
 fn is_specified_directive(name: &str) -> bool {
@@ -245,21 +456,25 @@ fn is_specified_directive(name: &str) -> bool {
     )
 }
 
-fn is_defined_type(ty: &Value) -> bool {
-    let name = name_of(ty);
-    if name.starts_with("__") {
+fn is_defined_type(ty: &TypeDef<'_>) -> bool {
+    if ty.name.starts_with("__") {
         return false;
     }
-    if ty.get("kind").and_then(Value::as_str) == Some("SCALAR")
-        && matches!(name.as_str(), "Int" | "Float" | "String" | "Boolean" | "ID")
+    if ty.kind == "SCALAR"
+        && matches!(
+            ty.name.as_ref(),
+            "Int" | "Float" | "String" | "Boolean" | "ID"
+        )
     {
         return false;
     }
     true
 }
 
-fn print_type(ty: &Value) -> String {
-    match ty.get("kind").and_then(Value::as_str).unwrap_or("") {
+fn print_type(ty: &TypeDef<'_>) -> String {
+    // `kind` is a GraphQL identifier, but it is a `Cow` like every other string
+    // so a response can never fail to parse over escaped-vs-borrowable text.
+    match ty.kind.as_ref() {
         "SCALAR" => print_scalar(ty),
         "OBJECT" => print_object(ty),
         "INTERFACE" => print_interface(ty),
@@ -270,54 +485,58 @@ fn print_type(ty: &Value) -> String {
     }
 }
 
-fn print_scalar(ty: &Value) -> String {
-    format!("{}scalar {}", print_description(ty, "", true), name_of(ty))
+fn print_scalar(ty: &TypeDef<'_>) -> String {
+    format!(
+        "{}scalar {}",
+        print_description(ty.description.as_deref(), "", true),
+        ty.name
+    )
 }
 
-fn print_object(ty: &Value) -> String {
+fn print_object(ty: &TypeDef<'_>) -> String {
     format!(
         "{}type {}{}{}",
-        print_description(ty, "", true),
-        name_of(ty),
+        print_description(ty.description.as_deref(), "", true),
+        ty.name,
         print_implemented_interfaces(ty),
         print_fields(ty)
     )
 }
 
-fn print_interface(ty: &Value) -> String {
+fn print_interface(ty: &TypeDef<'_>) -> String {
     format!(
         "{}interface {}{}{}",
-        print_description(ty, "", true),
-        name_of(ty),
+        print_description(ty.description.as_deref(), "", true),
+        ty.name,
         print_implemented_interfaces(ty),
         print_fields(ty)
     )
 }
 
-fn print_union(ty: &Value) -> String {
+fn print_union(ty: &TypeDef<'_>) -> String {
     let possible = ty
-        .get("possibleTypes")
-        .and_then(Value::as_array)
+        .possible_types
+        .as_deref()
         .map(|types| sorted_by_name(types))
         .unwrap_or_default();
     let suffix = if possible.is_empty() {
         String::new()
     } else {
-        let names: Vec<String> = possible.iter().map(|t| name_of(t)).collect();
+        let names: Vec<&str> = possible.iter().map(|t| t.name()).collect();
         format!(" = {}", names.join(" | "))
     };
     format!(
         "{}union {}{}",
-        print_description(ty, "", true),
-        name_of(ty),
+        print_description(ty.description.as_deref(), "", true),
+        ty.name,
         suffix
     )
 }
 
-fn print_enum(ty: &Value) -> String {
+fn print_enum(ty: &TypeDef<'_>) -> String {
     let values = ty
-        .get("enumValues")
-        .and_then(Value::as_array)
+        .enum_values
+        .as_deref()
         .map(|values| sorted_by_name(values))
         .unwrap_or_default();
     let items: Vec<String> = values
@@ -326,29 +545,25 @@ fn print_enum(ty: &Value) -> String {
         .map(|(index, value)| {
             format!(
                 "{}{}{}{}",
-                print_description(value, "  ", index == 0),
+                print_description(value.description.as_deref(), "  ", index == 0),
                 "  ",
-                name_of(value),
-                print_deprecated(
-                    value
-                        .get("deprecationReason")
-                        .and_then(Value::as_str)
-                )
+                value.name,
+                print_deprecated(value.deprecation_reason.as_deref())
             )
         })
         .collect();
     format!(
         "{}enum {}{}",
-        print_description(ty, "", true),
-        name_of(ty),
+        print_description(ty.description.as_deref(), "", true),
+        ty.name,
         print_block(&items)
     )
 }
 
-fn print_input_object(ty: &Value) -> String {
+fn print_input_object(ty: &TypeDef<'_>) -> String {
     let fields = ty
-        .get("inputFields")
-        .and_then(Value::as_array)
+        .input_fields
+        .as_deref()
         .map(|fields| sorted_by_name(fields))
         .unwrap_or_default();
     let items: Vec<String> = fields
@@ -357,7 +572,7 @@ fn print_input_object(ty: &Value) -> String {
         .map(|(index, field)| {
             format!(
                 "{}{}{}",
-                print_description(field, "  ", index == 0),
+                print_description(field.description.as_deref(), "  ", index == 0),
                 "  ",
                 print_input_value(field)
             )
@@ -365,24 +580,26 @@ fn print_input_object(ty: &Value) -> String {
         .collect();
     format!(
         "{}input {}{}",
-        print_description(ty, "", true),
-        name_of(ty),
+        print_description(ty.description.as_deref(), "", true),
+        ty.name,
         print_block(&items)
     )
 }
 
-fn print_implemented_interfaces(ty: &Value) -> String {
-    let interfaces = match ty.get("interfaces").and_then(Value::as_array) {
+fn print_implemented_interfaces(ty: &TypeDef<'_>) -> String {
+    let interfaces = match ty.interfaces.as_deref() {
         Some(interfaces) if !interfaces.is_empty() => interfaces,
         _ => return String::new(),
     };
-    let names: Vec<String> = sorted_by_name(interfaces).iter().map(|i| name_of(i)).collect();
+    let names: Vec<&str> = sorted_by_name(interfaces)
+        .iter()
+        .map(|i| i.name())
+        .collect();
     format!(" implements {}", names.join(" & "))
 }
 
-fn print_fields(ty: &Value) -> String {
-    let fields = ty.get("fields").and_then(Value::as_array);
-    let Some(fields) = fields else {
+fn print_fields(ty: &TypeDef<'_>) -> String {
+    let Some(fields) = ty.fields.as_deref() else {
         return print_block(&[]);
     };
     let sorted = sorted_by_name(fields);
@@ -392,37 +609,29 @@ fn print_fields(ty: &Value) -> String {
         .map(|(index, field)| {
             format!(
                 "{}{}{}{}: {}{}",
-                print_description(field, "  ", index == 0),
+                print_description(field.description.as_deref(), "  ", index == 0),
                 "  ",
-                name_of(field),
-                print_args(
-                    field
-                        .get("args")
-                        .and_then(Value::as_array)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default(),
-                    "  "
-                ),
-                type_ref_string(field.get("type").unwrap_or(&Value::Null)),
-                print_deprecated(
-                    field
-                        .get("deprecationReason")
-                        .and_then(Value::as_str)
-                )
+                field.name,
+                print_args(&field.args, "  "),
+                type_ref_string(&field.type_),
+                print_deprecated(field.deprecation_reason.as_deref())
             )
         })
         .collect();
     print_block(&items)
 }
 
-fn print_args(args: &[Value], indentation: &str) -> String {
+fn print_args(args: &[InputValue<'_>], indentation: &str) -> String {
     if args.is_empty() {
         return String::new();
     }
     let sorted = sorted_by_name(args);
 
     // Every arg lacking a description: print them inline.
-    if sorted.iter().all(|arg| !has_description(arg)) {
+    if sorted
+        .iter()
+        .all(|arg| !has_description(arg.description.as_deref()))
+    {
         let parts: Vec<String> = sorted.iter().map(|arg| print_input_value(arg)).collect();
         return format!("({})", parts.join(", "));
     }
@@ -433,7 +642,11 @@ fn print_args(args: &[Value], indentation: &str) -> String {
         .map(|(index, arg)| {
             format!(
                 "{}{}{}{}",
-                print_description(arg, &format!("  {indentation}"), index == 0),
+                print_description(
+                    arg.description.as_deref(),
+                    &format!("  {indentation}"),
+                    index == 0,
+                ),
                 "  ",
                 indentation,
                 print_input_value(arg)
@@ -443,55 +656,32 @@ fn print_args(args: &[Value], indentation: &str) -> String {
     format!("(\n{}\n{})", parts.join("\n"), indentation)
 }
 
-fn has_description(value: &Value) -> bool {
-    match value.get("description") {
-        None => false,
-        Some(Value::Null) => false,
-        Some(Value::String(text)) => !text.is_empty(),
-        _ => true,
-    }
+fn has_description(description: Option<&str>) -> bool {
+    description.is_some_and(|text| !text.is_empty())
 }
 
-fn print_input_value(arg: &Value) -> String {
-    let mut declaration = format!(
-        "{}: {}",
-        name_of(arg),
-        type_ref_string(arg.get("type").unwrap_or(&Value::Null))
-    );
-    if let Some(default) = arg.get("defaultValue").and_then(Value::as_str) {
+/// An argument or input field. The `InputValue` fragment does not select
+/// `deprecationReason` (graphql-js's introspection query does not ask for input
+/// deprecation), so unlike fields and enum values these never carry
+/// `@deprecated` - matching what `buildClientSchema` can know here.
+fn print_input_value(arg: &InputValue<'_>) -> String {
+    let mut declaration = format!("{}: {}", arg.name, type_ref_string(&arg.type_));
+    if let Some(default) = arg.default_value.as_deref() {
         declaration.push_str(" = ");
         declaration.push_str(default);
     }
-    declaration.push_str(&print_deprecated(
-        arg.get("deprecationReason").and_then(Value::as_str),
-    ));
     declaration
 }
 
-fn print_directive(directive: &Value) -> String {
-    let args = directive
-        .get("args")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let locations: Vec<String> = directive
-        .get("locations")
-        .and_then(Value::as_array)
-        .map(|locations| {
-            let mut names: Vec<String> = locations
-                .iter()
-                .filter_map(|l| l.as_str().map(str::to_string))
-                .collect();
-            names.sort_by(|a, b| natural_compare(a, b));
-            names
-        })
-        .unwrap_or_default();
+fn print_directive(directive: &Directive<'_>) -> String {
+    let mut locations: Vec<&str> = directive.locations.iter().map(|l| l.as_ref()).collect();
+    locations.sort_by(|a, b| natural_compare(a, b));
 
     format!(
         "{}directive @{}{} on {}",
-        print_description(directive, "", true),
-        name_of(directive),
-        print_args(args, ""),
+        print_description(directive.description.as_deref(), "", true),
+        directive.name,
+        print_args(&directive.args, ""),
         locations.join(" | ")
     )
 }
@@ -507,22 +697,17 @@ fn print_deprecated(reason: Option<&str>) -> String {
     }
 }
 
-fn type_ref_string(ty: &Value) -> String {
-    match ty.get("kind").and_then(Value::as_str) {
-        Some("NON_NULL") => {
-            let inner = ty.get("ofType").unwrap_or(&Value::Null);
-            format!("{}!", type_ref_string(inner))
-        }
-        Some("LIST") => {
-            let inner = ty.get("ofType").unwrap_or(&Value::Null);
-            format!("[{}]", type_ref_string(inner))
-        }
-        _ => ty
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+fn type_ref_string(ty: &TypeRef<'_>) -> String {
+    match ty.kind.as_ref() {
+        "NON_NULL" => format!("{}!", type_ref_string(inner_ref(ty))),
+        "LIST" => format!("[{}]", type_ref_string(inner_ref(ty))),
+        _ => ty.name.as_deref().unwrap_or("").to_string(),
     }
+}
+
+/// The wrapped type of a list/non-null ref.
+fn inner_ref<'a, 'b>(ty: &'a TypeRef<'b>) -> &'a TypeRef<'b> {
+    ty.of_type.as_deref().unwrap_or(&EMPTY_TYPE_REF)
 }
 
 fn print_block(items: &[String]) -> String {
@@ -533,10 +718,9 @@ fn print_block(items: &[String]) -> String {
     }
 }
 
-fn print_description(def: &Value, indentation: &str, first_in_block: bool) -> String {
-    let description = match def.get("description").and_then(Value::as_str) {
-        Some(description) => description,
-        None => return String::new(),
+fn print_description(description: Option<&str>, indentation: &str, first_in_block: bool) -> String {
+    let Some(description) = description else {
+        return String::new();
     };
 
     let block_string = if is_printable_as_block_string(description) {

@@ -1,0 +1,118 @@
+schema {
+  query: Query
+  mutation: RootMutation
+}
+
+"""
+A directive.
+
+Defined by the test fixture.
+"""
+directive @custom(
+  """
+  Tag text.
+  
+  Second line.
+  """
+  tag: String
+  weight: Int = 1
+) on ARGUMENT_DEFINITION | FIELD | OBJECT
+
+"""
+A colour.
+
+Used by `widget10`.
+"""
+enum Color {
+  LEGACY @deprecated
+
+  """An old colour."""
+  OLD @deprecated(reason: "Use RED")
+
+  """Warm red."""
+  RED
+
+  """Green, the small one."""
+  green2
+  green10
+}
+
+"""An ISO-8601 encoded UTC date time string."""
+scalar DateTime
+
+"""A search filter."""
+input Filter {
+  """Colour to match."""
+  colour: Color
+  limit: Int = 10
+
+  """Lower bound."""
+  since: DateTime
+}
+
+"""Anything with a name."""
+interface Named {
+  name: String
+}
+
+"""Anything with an id."""
+interface Node {
+  id: ID!
+}
+
+"""
+Root query type.
+
+Second paragraph.
+"""
+type Query {
+  "A banner.\r\nSecond line with a CR."
+  banner: String
+
+  """Old field."""
+  legacy(
+    """How many."""
+    count: Int = 1
+    old: String
+  ): [String] @deprecated(reason: "Use `node` instead.")
+
+  """Fetch a node by id."""
+  node(id: ID!): Node
+
+  """
+  Search across nodes.
+  
+  Returned in natural order.
+  """
+  search(
+    """Filter to apply."""
+    filter: Filter
+  ): [SearchResult!]!
+
+  """The second widget."""
+  widget2: String
+
+  """The tenth widget."""
+  widget10: String
+}
+
+"""Root mutation type."""
+type RootMutation {
+  noop: Boolean
+}
+
+"""A search hit."""
+union SearchResult = Team | User
+
+"""A team."""
+type Team implements Node {
+  id: ID!
+}
+
+"""A user."""
+type User implements Named & Node {
+  """Preferred colour."""
+  colour: Color
+  id: ID!
+  name: String
+}
