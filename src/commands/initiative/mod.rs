@@ -10,7 +10,6 @@
 //! again. Everything else is wrapped with the same message upstream uses, so the
 //! subcommand modules must return errors unwrapped.
 
-mod bulk;
 mod initiative_add_project;
 mod initiative_archive;
 mod initiative_comment;

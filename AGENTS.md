@@ -85,3 +85,47 @@ See `tests/mock_server.rs` (harness self-tests) and `tests/cli_smoke.rs`
 - `initiative update --status` accepts any casing and sends the canonical enum
   value (`Active`, not `active`); upstream lower-cases it, so every status update
   it sends is rejected by the API.
+- `issue unarchive` is an **addition**, not a port: upstream has no way back from
+  `issue archive` / `issue delete`, and neither does Linear's own app or its MCP
+  server, but the API's `issueUnarchive` mutation restores both an archived issue
+  and one in the trash (Linear stores that as `archivedAt` + `trashed`).
+- `issueLabelRetire` / `issueLabelRestore` exist in the API but are **not**
+  wrapped: `issueLabelRetire` answers `success: true` and Linear records an
+  `issueLabelArchived` audit entry, yet nothing readable reflects it — the label
+  keeps `archivedAt: null` and is still returned by `issueLabels`, with or without
+  `includeArchived` — so a command could not report what it changed. Note that
+  `issueLabelDelete` is permanent (no restore for a deleted label; `issueLabelRestore`
+  only covers a retired one).
+
+## Additions beyond upstream
+
+Upstream's command tree is the reference, and these have no upstream equivalent:
+they wrap API operations the CLI (and Linear's own clients) never exposed. Each
+one is the missing half of a group that could only move one way.
+
+- `label update` — `issueLabelUpdate`. Upstream's label group is
+  create/list/delete, so a label could never be renamed, recoloured, or
+  redescribed once created.
+- `cycle update`, `cycle archive` — `cycleUpdate` / `cycleArchive`. Upstream's
+  cycle group only reads. The API has no `cycleUnarchive`, so archiving is
+  irreversible and `cycle archive` asks for confirmation.
+- `issue unarchive` — `issueUnarchive`, restoring an archived issue or one in the
+  trash (Linear stores both as `archivedAt` + `trashed`).
+- `issue subscribe`, `issue unsubscribe` — `issueSubscribe` / `issueUnsubscribe`,
+  adding or removing the authenticated API user as a watcher.
+- `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
+  `commentUnresolve`, which the app's resolve button covers but no CLI did.
+
+Deliberately **not** wrapped, with the reason:
+
+- `issueLabelRetire` / `issueLabelRestore`: retire answers `success: true` and
+  Linear logs an `issueLabelArchived` audit entry, but nothing readable changes
+  (the label keeps `archivedAt: null` and is still returned by `issueLabels` with
+  or without `includeArchived`), so a command could not report what it did.
+- `workflowStateCreate` / `Update` / `Archive`: a status created through the API
+  cannot be deleted, only archived, so a CLI-driven experiment would leave
+  permanent settings behind in the team's workflow.
+- The status-update lifecycle (`project-update` / `initiative-update`
+  archive/unarchive/delete), and the customer, release, webhook, notification,
+  custom-view, and integration subsystems: real API surface, but whole domains
+  rather than missing halves, and none of them has a CLI home yet.

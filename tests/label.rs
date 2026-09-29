@@ -176,3 +176,79 @@ fn issue_create_resolves_a_workspace_label_by_name() {
         out.stdout
     );
 }
+
+/// `label update` sends only the fields it was given, and reports the label's
+/// new state the way `label create` does — the API's `issueLabelUpdate`, which
+/// upstream has no command for at all.
+#[test]
+fn label_update_sends_the_new_colour() {
+    let server = MockLinearServer::start(vec![
+        MockResponse::new(
+            "GetLabelByName",
+            json!({ "data": { "issueLabels": {
+                "nodes": [workspace_label("label-bug", "Bug")]
+            } } }),
+        )
+        .with_variables(json!({ "name": "Bug" })),
+        MockResponse::new(
+            "UpdateIssueLabel",
+            json!({ "data": { "issueLabelUpdate": {
+                "success": true,
+                "issueLabel": {
+                    "id": "label-bug", "name": "Bug", "color": "#123456",
+                    "description": null, "team": null
+                }
+            } } }),
+        )
+        .with_variables(json!({ "id": "label-bug", "input": { "color": "#123456" } })),
+    ]);
+
+    let out = run_cli(
+        &["label", "update", "Bug", "--color", "#123456"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("✓ Updated label: Bug"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("#123456"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Scope: Workspace"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn label_update_without_changes_is_rejected() {
+    let server = MockLinearServer::start(vec![]);
+
+    let out = run_cli(&["label", "update", "Bug"], &common::mock_env(&server));
+
+    assert!(!out.success());
+    assert!(
+        out.stderr.contains("Nothing to update"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn label_update_rejects_an_invalid_colour() {
+    let server = MockLinearServer::start(vec![]);
+
+    let out = run_cli(
+        &["label", "update", "Bug", "--color", "red"],
+        &common::mock_env(&server),
+    );
+
+    assert!(!out.success());
+    assert!(
+        out.stderr.contains("Color must be a valid hex code"),
+        "stderr: {}",
+        out.stderr
+    );
+}

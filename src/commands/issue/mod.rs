@@ -19,7 +19,10 @@ pub mod issue_pull_request;
 pub mod issue_query;
 pub mod issue_relation;
 pub mod issue_start;
+pub mod issue_subscribe;
 pub mod issue_title;
+pub mod issue_unarchive;
+pub mod issue_unsubscribe;
 pub mod issue_update;
 pub mod issue_url;
 pub mod issue_view;
@@ -28,6 +31,20 @@ use crate::errors::{CliError, Result};
 use crate::linear;
 use crate::output;
 use crate::prompt;
+
+/// `ENG-9: Title` from an issue payload, falling back to the identifier the
+/// caller passed when the payload omits the fields.
+pub(crate) fn issue_label(issue: &serde_json::Value, fallback: &str) -> String {
+    let identifier = issue
+        .get("identifier")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback);
+    match issue.get("title").and_then(serde_json::Value::as_str) {
+        Some(title) if !title.is_empty() => format!("{identifier}: {title}"),
+        _ => identifier.to_string(),
+    }
+}
 
 /// Shared project resolution for `issue mine` / `issue query`.
 ///
@@ -98,6 +115,14 @@ pub enum IssueCommand {
     Archive(issue_archive::IssueArchiveArgs),
     /// Delete an issue
     Delete(issue_delete::IssueDeleteArgs),
+    /// Unarchive an issue: restore it from the archive or the trash (the API's
+    /// issueUnarchive; upstream has no issue unarchive)
+    Unarchive(issue_unarchive::IssueUnarchiveArgs),
+    /// Subscribe to an issue (the API's issueSubscribe; upstream cannot follow
+    /// an issue at all)
+    Subscribe(issue_subscribe::IssueSubscribeArgs),
+    /// Unsubscribe from an issue
+    Unsubscribe(issue_unsubscribe::IssueUnsubscribeArgs),
     /// Create a linear issue
     Create(issue_create::IssueCreateArgs),
     /// Update a linear issue
@@ -136,6 +161,9 @@ pub fn run(args: IssueArgs) -> Result<()> {
         IssueCommand::PullRequest(a) => issue_pull_request::run(a),
         IssueCommand::Archive(a) => issue_archive::run(a),
         IssueCommand::Delete(a) => issue_delete::run(a),
+        IssueCommand::Unarchive(a) => issue_unarchive::run(a),
+        IssueCommand::Subscribe(a) => issue_subscribe::run(a),
+        IssueCommand::Unsubscribe(a) => issue_unsubscribe::run(a),
         IssueCommand::Create(a) => issue_create::run(a),
         IssueCommand::Update(a) => issue_update::run(a),
         IssueCommand::Comment(a) => issue_comment::run(a),

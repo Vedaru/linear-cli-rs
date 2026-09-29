@@ -1,8 +1,13 @@
-//! Bulk-operation helpers for `initiative archive` / `initiative delete`.
+//! Bulk-operation helpers for every command whose flags are `--bulk`,
+//! `--bulk-file`, and `--bulk-stdin`: `issue archive` / `issue delete` /
+//! `issue unarchive`, `document delete`, and `initiative archive` /
+//! `initiative delete`.
 //!
-//! Upstream keeps these in `src/utils/bulk.ts`; this port has no shared module
-//! for them, so the same logic lives here (mirroring the copies inline in
-//! `src/commands/issue/issue_delete.rs` and `issue_archive.rs`).
+//! Upstream keeps this in `src/utils/bulk.ts`. The port had grown a copy per
+//! command group — and, inside `issue`, one per command — which had already
+//! drifted (three id collectors and three result constructors for one id
+//! syntax). The copies are gone: the flags, the parsing, the per-item failure
+//! handling, and the summary an agent reads are defined once here.
 
 use std::collections::HashSet;
 
@@ -45,6 +50,11 @@ pub(crate) struct BulkOperationSummary {
     pub results: Vec<BulkOperationResult>,
 }
 
+/// `true` when any of the three bulk flags was given.
+pub(crate) fn is_bulk_mode(ids: &[String], file: Option<&str>, stdin: bool) -> bool {
+    !ids.is_empty() || file.is_some() || stdin
+}
+
 /// Parse IDs from text input, splitting on newlines, commas, and whitespace.
 pub(crate) fn parse_ids(input: &str) -> Vec<String> {
     input
@@ -58,15 +68,13 @@ pub(crate) fn parse_ids(input: &str) -> Vec<String> {
 /// Gather IDs from `--bulk`, `--bulk-file`, and `--bulk-stdin`, de-duplicated
 /// while preserving first-seen order.
 pub(crate) fn collect_bulk_ids(
-    bulk: &[String],
-    bulk_file: Option<&str>,
-    bulk_stdin: bool,
+    ids: &[String],
+    file: Option<&str>,
+    stdin: bool,
 ) -> Result<Vec<String>> {
-    let mut all_ids: Vec<String> = Vec::new();
+    let mut all_ids: Vec<String> = ids.to_vec();
 
-    all_ids.extend(bulk.iter().cloned());
-
-    if let Some(path) = bulk_file {
+    if let Some(path) = file {
         match std::fs::read_to_string(path) {
             Ok(content) => all_ids.extend(parse_ids(&content)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -76,7 +84,7 @@ pub(crate) fn collect_bulk_ids(
         }
     }
 
-    if bulk_stdin {
+    if stdin {
         let mut buffer = String::new();
         use std::io::Read;
         std::io::stdin()
@@ -90,6 +98,9 @@ pub(crate) fn collect_bulk_ids(
     Ok(all_ids)
 }
 
+/// Run the operation for every ID, preserving input order. Errors thrown by the
+/// operation become failed results carrying the error message, matching
+/// `executeBulkOperations` upstream.
 pub(crate) fn execute_bulk_operations<F>(ids: &[String], operation: F) -> BulkOperationSummary
 where
     F: Fn(&str) -> Result<BulkOperationResult>,

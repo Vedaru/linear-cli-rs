@@ -12,6 +12,8 @@ use serde_json::{json, Map, Value};
 use crate::errors::{CliError, Result};
 use crate::{graphql, linear, output, prompt};
 
+use super::support::is_valid_hex;
+
 const CREATE_ISSUE_LABEL_MUTATION: &str = r#"
 mutation CreateIssueLabel($input: IssueLabelCreateInput!) {
   issueLabelCreate(input: $input) {
@@ -206,11 +208,6 @@ pub fn run(args: LabelCreateArgs) -> Result<()> {
     output::line(&format!("  Scope: {scope}"));
 
     Ok(())
-}
-
-fn is_valid_hex(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Read one line from the terminal. Only called after

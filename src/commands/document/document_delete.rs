@@ -8,13 +8,12 @@
 //! The group `mod.rs` supplies the `Failed to delete document` context, so this
 //! module returns bare errors.
 
-use std::collections::HashSet;
-
 use clap::Args;
 use serde_json::{json, Value};
 
-use crate::commands::issue::issue_delete::{
-    execute_bulk_operations, parse_ids, print_bulk_summary, BulkOperationResult,
+use crate::bulk::{
+    collect_bulk_ids, execute_bulk_operations, is_bulk_mode, print_bulk_summary,
+    BulkOperationResult,
 };
 use crate::errors::{CliError, Result};
 use crate::{graphql, linear, output, prompt};
@@ -77,7 +76,7 @@ mutation BulkDeleteDocument($id: String!) {
 pub fn run(args: DocumentDeleteArgs) -> Result<()> {
     let client = graphql::client()?;
 
-    if is_bulk_mode(&args) {
+    if is_bulk_mode(&args.bulk, args.bulk_file.as_deref(), args.bulk_stdin) {
         return handle_bulk_delete(&client, &args);
     }
 
@@ -88,41 +87,6 @@ pub fn run(args: DocumentDeleteArgs) -> Result<()> {
     };
 
     handle_single_delete(&client, document_id, args.yes)
-}
-
-fn is_bulk_mode(args: &DocumentDeleteArgs) -> bool {
-    !args.bulk.is_empty() || args.bulk_file.is_some() || args.bulk_stdin
-}
-
-fn collect_bulk_ids(args: &DocumentDeleteArgs) -> Result<Vec<String>> {
-    let mut all_ids: Vec<String> = Vec::new();
-
-    if !args.bulk.is_empty() {
-        all_ids.extend(args.bulk.iter().cloned());
-    }
-
-    if let Some(path) = &args.bulk_file {
-        match std::fs::read_to_string(path) {
-            Ok(content) => all_ids.extend(parse_ids(&content)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(CliError::not_found("File", path));
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    if args.bulk_stdin {
-        let mut buffer = String::new();
-        use std::io::Read;
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .map_err(CliError::from)?;
-        all_ids.extend(parse_ids(&buffer));
-    }
-
-    let mut seen = HashSet::new();
-    all_ids.retain(|id| seen.insert(id.clone()));
-    Ok(all_ids)
 }
 
 fn handle_single_delete(client: &graphql::Client, raw_document_id: &str, yes: bool) -> Result<()> {
@@ -168,7 +132,7 @@ fn handle_single_delete(client: &graphql::Client, raw_document_id: &str, yes: bo
 }
 
 fn handle_bulk_delete(client: &graphql::Client, args: &DocumentDeleteArgs) -> Result<()> {
-    let ids = collect_bulk_ids(args)?;
+    let ids = collect_bulk_ids(&args.bulk, args.bulk_file.as_deref(), args.bulk_stdin)?;
 
     if ids.is_empty() {
         return Err(CliError::validation(

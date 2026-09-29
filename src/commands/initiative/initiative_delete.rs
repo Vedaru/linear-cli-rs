@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use crate::errors::{CliError, ErrorKind, Result};
 use crate::{graphql, linear, output, prompt};
 
-use super::bulk::{
+use crate::bulk::{
     collect_bulk_ids, execute_bulk_operations, print_bulk_summary, BulkOperationResult,
 };
 

@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 mod actions;
+mod bulk;
 mod cli;
 mod colors;
 mod commands;

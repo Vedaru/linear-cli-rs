@@ -16,8 +16,9 @@
 use clap::Args;
 use serde_json::{json, Value};
 
-use super::bulk::{
-    collect_bulk_ids, execute_bulk_operations, print_bulk_summary, BulkOperationResult,
+use crate::bulk::{
+    collect_bulk_ids, execute_bulk_operations, is_bulk_mode, print_bulk_summary,
+    BulkOperationResult,
 };
 use crate::errors::{CliError, Result};
 use crate::{graphql, linear, output, prompt};
@@ -82,7 +83,7 @@ pub struct InitiativeArchiveArgs {
 pub fn run(args: InitiativeArchiveArgs) -> Result<()> {
     let client = graphql::client()?;
 
-    if is_bulk_mode(&args) {
+    if is_bulk_mode(&args.bulk, args.bulk_file.as_deref(), args.bulk_stdin) {
         return handle_bulk_archive(&client, &args);
     }
 
@@ -94,10 +95,6 @@ pub fn run(args: InitiativeArchiveArgs) -> Result<()> {
     };
 
     handle_single_archive(&client, initiative_id, args.force)
-}
-
-fn is_bulk_mode(args: &InitiativeArchiveArgs) -> bool {
-    !args.bulk.is_empty() || args.bulk_file.is_some() || args.bulk_stdin
 }
 
 fn handle_single_archive(client: &graphql::Client, initiative_id: &str, force: bool) -> Result<()> {

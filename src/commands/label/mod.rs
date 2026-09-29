@@ -14,6 +14,8 @@ use crate::output;
 mod label_create;
 mod label_delete;
 mod label_list;
+mod label_update;
+mod support;
 
 #[derive(Args, Debug)]
 pub struct LabelArgs {
@@ -29,6 +31,9 @@ pub enum LabelCommand {
     Create(label_create::LabelCreateArgs),
     /// Delete an issue label
     Delete(label_delete::LabelDeleteArgs),
+    /// Update an issue label (rename, recolour, redescribe — the API's
+    /// issueLabelUpdate; upstream cannot change a label once created)
+    Update(label_update::LabelUpdateArgs),
 }
 
 pub fn run(args: LabelArgs) -> Result<()> {
@@ -48,6 +53,9 @@ pub fn run(args: LabelArgs) -> Result<()> {
         }
         LabelCommand::Delete(args) => {
             label_delete::run(args).map_err(|error| error.with_context("Failed to delete label"))
+        }
+        LabelCommand::Update(args) => {
+            label_update::run(args).map_err(|error| error.with_context("Failed to update label"))
         }
     }
 }

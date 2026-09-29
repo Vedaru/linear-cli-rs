@@ -31,6 +31,11 @@ pub enum CommentCommand {
     Update(CommentUpdateArgs),
     /// List comments for an issue
     List(CommentListArgs),
+    /// Resolve a comment thread (the API's commentResolve; the app's resolve
+    /// button has no CLI equivalent upstream)
+    Resolve(CommentResolveArgs),
+    /// Unresolve a comment thread
+    Unresolve(CommentResolveArgs),
 }
 
 #[derive(Args, Debug)]
@@ -93,6 +98,14 @@ pub struct CommentListArgs {
     pub json: bool,
 }
 
+/// `resolve` and `unresolve` take the same single argument.
+#[derive(Args, Debug)]
+pub struct CommentResolveArgs {
+    /// Comment ID
+    #[arg(value_name = "commentId")]
+    pub comment_id: String,
+}
+
 pub fn run(args: IssueCommentArgs) -> Result<()> {
     let Some(command) = args.command else {
         let mut cmd = <IssueCommentArgs as clap::Args>::augment_args(clap::Command::new("comment"));
@@ -114,7 +127,59 @@ pub fn run(args: IssueCommentArgs) -> Result<()> {
         CommentCommand::List(a) => {
             list_comments(a).map_err(|error| error.with_context("Failed to list comments"))
         }
+        CommentCommand::Resolve(a) => set_comment_resolution(a, true)
+            .map_err(|error| error.with_context("Failed to resolve comment")),
+        CommentCommand::Unresolve(a) => set_comment_resolution(a, false)
+            .map_err(|error| error.with_context("Failed to unresolve comment")),
     }
+}
+
+// ---------------------------------------------------------------------------
+// resolve / unresolve
+// ---------------------------------------------------------------------------
+
+/// `commentResolve` and `commentUnresolve` are the same call one boolean apart,
+/// so they share this body: the payload shape and the failure handling cannot
+/// drift between them.
+fn set_comment_resolution(args: CommentResolveArgs, resolve: bool) -> Result<()> {
+    crate::linear_url::reject_comment_url(&args.comment_id)?;
+    crate::linear_url::reject_linear_url(&args.comment_id, "a comment UUID")?;
+
+    const RESOLVE_COMMENT_MUTATION: &str = r#"
+mutation ResolveComment($id: String!) {
+  commentResolve(id: $id) {
+    success
+  }
+}
+"#;
+    const UNRESOLVE_COMMENT_MUTATION: &str = r#"
+mutation UnresolveComment($id: String!) {
+  commentUnresolve(id: $id) {
+    success
+  }
+}
+"#;
+
+    let (query, field, verb) = if resolve {
+        (RESOLVE_COMMENT_MUTATION, "commentResolve", "resolved")
+    } else {
+        (UNRESOLVE_COMMENT_MUTATION, "commentUnresolve", "unresolved")
+    };
+
+    let client = graphql::client()?;
+    let data = client.request(query, json!({ "id": args.comment_id }))?;
+
+    let success = data
+        .get(field)
+        .and_then(|value| value.get("success"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !success {
+        return Err(CliError::cli(format!("Failed to {verb} comment")));
+    }
+
+    output::line(&format!("✓ Comment {verb}"));
+    Ok(())
 }
 
 /// Linear documents CommentCreateInput.id as "The identifier in UUID v4
