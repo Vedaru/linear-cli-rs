@@ -1,13 +1,36 @@
 name: CI
 
+# One workflow for the GitHub mirror: test, then build, then publish.
+#
+#   test    - the three-OS matrix (fmt and clippy on Linux, tests everywhere);
+#             runs on pull requests too, so nothing publishes from a PR.
+#   build   - release binaries for five targets, each staged with README,
+#             AGENTS.md and LICENSE and a .sha256 beside the archive.
+#   publish - one release tagged `rolling`, whose assets are replaced on every
+#             push to main, so a download URL always serves the newest green
+#             build. Mirrors what .forgejo/workflows/release.yml does for the
+#             primary remote (Forgejo ignores .github, so the two cannot share a
+#             file).
+#
+# GitHub runners are free for public repositories, which is why the build matrix
+# is wider than Forgejo's: it adds a static musl Linux build and both macOS
+# architectures.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   test:
@@ -21,15 +44,118 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Format
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all --check
       - name: Clippy
         if: matrix.os == 'ubuntu-latest'
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Build
-        run: cargo build --locked
+        run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --locked
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          name="linear-cli-rs-${sha}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          install -m 0755 "target/${{ matrix.target }}/release/linear" "dist/$name/linear"
+          cp README.md AGENTS.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
+          ls -l dist
+      - name: Stage (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sha = $env:GITHUB_SHA.Substring(0,12)
+          $name = "linear-cli-rs-$sha-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/linear.exe" "dist/$name/linear.exe"
+          Copy-Item README.md,AGENTS.md,LICENSE "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          $h = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$name.zip.sha256" -Value "$h  $name.zip"
+          Get-ChildItem dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish rolling release
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          notes="Rolling build of \`${sha}\` - the newest commit on main that passed the tests.
+
+          Assets are rebuilt and replaced on every push to main. A \`.sha256\` sits next to
+          each archive; the binary is also inside its own directory alongside README.md,
+          AGENTS.md and LICENSE."
+          if gh release view rolling --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Move the tag to this commit, then replace every asset.
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/rolling" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh release create rolling --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Rolling build" --prerelease \
+              --notes "$notes"
+          fi
+          # Only regular files are assets: the staging directories are not
+          # uploadable, and passing them made the upload step fail.
+          mapfile -t assets < <(find dist -maxdepth 1 -type f | sort)
+          printf '  uploading: %s\n' "${assets[@]}"
+          gh release upload rolling "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "--- published:"
+          gh release view rolling --repo "$GITHUB_REPOSITORY" --json tagName,url,assets \
+            --jq '.tagName, .url, (.assets[] | "  \(.name)  \(.size) bytes")'
