@@ -1,11 +1,14 @@
 //! End-to-end tests for `linear completions`.
 //!
-//! The registry of interest is the closed-reader case: `clap_complete`'s shell
-//! generators `.expect("failed to write completion file")` on any write error,
-//! so generating straight into stdout panicked (exit 101) whenever a reader
-//! stopped early - the exact pipeline a user types (`linear completions bash |
-//! head`). `output.rs` promises a closed stdout is a normal end of output; this
-//! suite holds the completions path to that promise.
+//! The case of interest is the closed reader: `linear completions bash | head`
+//! is a pipeline a user actually types. It used to exit 101 with a panic,
+//! because `clap_complete`'s shell generators `.expect("failed to write
+//! completion file")` on any write error and Rust's runtime turns a closed pipe
+//! into exactly that error. The fix belongs to the whole binary rather than to
+//! this command (`main` restores the default `SIGPIPE` disposition, so a closed
+//! reader ends the process the way it does for `ls | head`), and this suite
+//! checks the pipeline is quiet either way: the script comes out, and a reader
+//! that stops early produces neither a panic nor a complaint on stderr.
 
 mod common;
 
@@ -14,9 +17,14 @@ use std::process::{Command, Stdio};
 
 use common::run_cli;
 
-/// Generate into memory, so a closed reader cannot reach the generator.
+/// A closed reader must not produce a panic or stderr noise. Dying by
+/// `SIGPIPE` is the expected Unix outcome and is accepted here along with a
+/// clean exit: which one happens is a race with the writer, not a contract.
+#[cfg(unix)]
 #[test]
 fn completions_survive_a_closed_reader() {
+    use std::os::unix::process::ExitStatusExt;
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_linear"))
         .args(["completions", "bash"])
         .stdout(Stdio::piped())
@@ -25,9 +33,8 @@ fn completions_survive_a_closed_reader() {
         .expect("spawn linear completions bash");
 
     {
-        // Read a little, then drop the reader: with a script far larger than a
-        // pipe buffer the child is still writing, so closing the read end
-        // raises EPIPE inside it.
+        // Read a little, then drop the reader. The script is far larger than a
+        // pipe buffer, so the child is still writing when the read end closes.
         let stdout = child.stdout.take().expect("piped stdout");
         let mut reader = BufReader::new(stdout);
         let mut first = String::new();
@@ -43,13 +50,17 @@ fn completions_survive_a_closed_reader() {
     let out = child.wait_with_output().expect("wait for linear");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.status.success(),
-        "a closed reader must not fail the command: status={:?} stderr={stderr}",
-        out.status
-    );
-    assert!(
         !stderr.contains("panicked"),
         "a closed reader must not panic: {stderr}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "a closed reader must stay quiet: {stderr}"
+    );
+    assert!(
+        out.status.success() || out.status.signal() == Some(13),
+        "expected exit 0 or death by SIGPIPE, got {:?} (stderr: {stderr})",
+        out.status
     );
 }
 

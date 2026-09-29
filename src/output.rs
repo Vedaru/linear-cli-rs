@@ -2,10 +2,13 @@
 //!
 //! Two jobs beyond `println!`:
 //!
-//! 1. **Broken pipe tolerance.** `linear issue list | head` closes the pipe
-//!    early. Rust's `println!` panics on `EPIPE`; these helpers treat a closed
-//!    reader as a normal end of output, so a pipeline never sees a panic or a
-//!    spurious non-zero exit from `linear` itself.
+//! 1. **Write errors are not fatal.** A closed reader (`linear issue list |
+//!    head`) is handled once, centrally, by `main`'s `restore_default_sigpipe`:
+//!    restoring the default `SIGPIPE` disposition makes the kernel end the
+//!    process the way it does for any other Unix tool, so no write site has to
+//!    reason about a reader that stopped early. What is left for these helpers
+//!    is that a failure while writing output must not abort a command that has
+//!    already decided what to say.
 //! 2. **One JSON convention.** Every `--json` path emits `JSON.stringify(v,
 //!    null, 2)`-equivalent output with GraphQL field names preserved.
 
