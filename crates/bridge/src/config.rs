@@ -10,7 +10,18 @@
 //!
 //! [platform.forgejo]              # a built-in preset
 //! type = "forgejo"
-//! secret_env = "FORGEJO_WEBHOOK_SECRET"
+//! secret_env = "FORGEJO_WEBHOOK_SECRET"   # what it signs deliveries with
+//! token_env = "FORGEJO_TOKEN"             # what this bridge writes with
+//! closed_state = ["closed"]               # how this platform says "finished"
+//! open_state = "open"
+//!
+//! [platform.linear]
+//! type = "linear"
+//! secret_env = "LINEAR_WEBHOOK_SECRET"
+//! token_env = "LINEAR_API_KEY"
+//! closed_state = ["Done", "Canceled"]
+//! open_state = "In Progress"
+//! initial_state = "Todo"          # where a newly mirrored issue lands
 //!
 //! [platform.internal]             # ... or a platform described right here
 //! type = "generic"
@@ -29,6 +40,7 @@
 //! [[mapping]]
 //! source = "linear:VED"
 //! sink = "forgejo:Vedaru/linear-cli-rs"
+//! direction = "both"              # or `oneway` for source -> sink only
 //! ```
 //!
 //! `type = "generic"` plus a spec is not a fallback for the platforms this crate
@@ -50,6 +62,10 @@ use crate::connector::Source;
 use crate::domain::{parse_connector_ref, ConnectorId, Secret};
 use crate::error::{Error, Result};
 use crate::queue::WorkerConfig;
+use crate::reconcile::handler::{Endpoint, Mapping};
+use crate::reconcile::{Direction, Sides, StateNames};
+use crate::sink::spec::SinkSpec;
+use crate::sink::Sink;
 use crate::sources::declarative::{DeclarativeSource, SourceSpec};
 use crate::sources::presets;
 use crate::{DEFAULT_BODY_LIMIT, MIN_SECRET_LEN};
@@ -66,8 +82,48 @@ pub struct PlatformConfig {
     pub name: ConnectorId,
     /// The configured `type`, kept for logs and `--check` output.
     pub declared_type: String,
+    /// What the platform signs its deliveries with (inbound).
     pub secret: Secret,
+    /// What this bridge authenticates with when it reads or writes the platform's
+    /// API. Absent means the platform can only be a *source* of events: a
+    /// deployment that only receives webhooks has no reason to hold a token.
+    pub token: Option<Secret>,
+    /// The platform's own state vocabulary, so the reconciler can compare two
+    /// platforms that do not share one (see `reconcile::StateNames`).
+    pub states: StateNames,
+    /// Overrides the preset's API address (a self-hosted instance elsewhere).
+    pub api_url: Option<String>,
     pub spec: SourceSpec,
+}
+
+impl PlatformConfig {
+    /// The write half as this deployment configured it: the preset's spec, with
+    /// the deployment's API address substituted when it named one.
+    pub fn sink_spec(&self) -> Option<SinkSpec> {
+        let mut spec = self.spec.sink.clone()?;
+        if let Some(url) = &self.api_url {
+            spec.base_url = url.clone();
+        }
+        Some(spec)
+    }
+
+    /// Whether the reconciler could read or write this platform: it needs both a
+    /// write half in its spec and a credential to use it.
+    pub fn can_be_written(&self) -> bool {
+        self.sink_spec().is_some() && self.token.is_some()
+    }
+
+    /// The connector this platform can be written through, when it can be.
+    pub fn sink(&self) -> Option<crate::sink::declarative::DeclarativeSink> {
+        let spec = self.sink_spec()?;
+        let token = self.token.clone()?;
+        Some(crate::sink::declarative::DeclarativeSink::new(
+            self.name.clone(),
+            spec,
+            Some(token),
+            self.spec.capabilities.into(),
+        ))
+    }
 }
 
 /// A mapping between two connectors. Consumed by the reconciler from M3; parsed
@@ -79,9 +135,34 @@ pub struct MappingConfig {
     pub source: String,
     /// `connector:scope`, e.g. `forgejo:Vedaru/linear-cli-rs`.
     pub sink: String,
+    pub direction: Direction,
     pub sync_issues: bool,
     pub git_automation: bool,
     pub delete_sync: bool,
+}
+
+impl MappingConfig {
+    /// A name for logs and errors, when the deployment did not give one.
+    pub fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("{} -> {}", self.source, self.sink))
+    }
+
+    /// The policy the reconciler runs this mapping with.
+    pub fn policy(
+        &self,
+        source: &PlatformConfig,
+        sink: &PlatformConfig,
+    ) -> crate::reconcile::Policy {
+        crate::reconcile::Policy {
+            direction: self.direction,
+            sync_issues: self.sync_issues,
+            git_automation: self.git_automation,
+            delete_sync: self.delete_sync,
+            names: Sides::new(source.states.clone(), sink.states.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +242,54 @@ impl BridgeConfig {
             .collect())
     }
 
+    /// The write halves this deployment can use, one per platform that has an API
+    /// token. A platform without one stays a source of events - receiving webhooks
+    /// needs no credential, and a deployment that only wants to observe a platform
+    /// should not have to hold one.
+    pub fn sinks(&self) -> Vec<Arc<dyn Sink>> {
+        self.platforms
+            .iter()
+            .filter_map(|platform| platform.sink())
+            .map(|sink| Arc::new(sink) as Arc<dyn Sink>)
+            .collect()
+    }
+
+    /// The mappings, resolved into the terms the reconciler works in.
+    ///
+    /// This is the join between configuration and behaviour: the endpoints come from
+    /// the `connector:scope` references, and the state vocabulary from the two
+    /// platforms - so a mapping cannot be run with a vocabulary nobody declared,
+    /// which is the shape of bug that otherwise shows up as "state never synced".
+    pub fn reconcile_mappings(&self) -> Result<Vec<Mapping>> {
+        self.mappings
+            .iter()
+            .map(|mapping| {
+                let label = mapping.label();
+                let source = self.platform_for(&mapping.source, &label)?;
+                let sink = self.platform_for(&mapping.sink, &label)?;
+                Ok(Mapping {
+                    name: label,
+                    source: Endpoint::parse(&mapping.source)?,
+                    sink: Endpoint::parse(&mapping.sink)?,
+                    policy: mapping.policy(source, sink),
+                })
+            })
+            .collect()
+    }
+
+    fn platform_for<'a>(&'a self, reference: &str, mapping: &str) -> Result<&'a PlatformConfig> {
+        let (connector, _) = parse_connector_ref(reference)
+            .map_err(|error| Error::Config(format!("mapping `{mapping}`: {error}")))?;
+        self.platforms
+            .iter()
+            .find(|platform| platform.name == connector)
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "mapping `{mapping}` names platform `{connector}`, which is not declared"
+                ))
+            })
+    }
+
     /// Override the bind address (the CLI's `--bind`), so the same config can be
     /// run on a different port without editing it.
     pub fn with_bind(mut self, bind: SocketAddr) -> Self {
@@ -177,11 +306,20 @@ fn build_platforms(
         .into_iter()
         .map(|(name, section)| {
             let secret = resolve_secret(&name, &section, env)?;
+            let token = resolve_token(&name, &section, env)?;
             let spec = resolve_spec(&name, &section)?;
+            let states = StateNames {
+                closed: section.closed_state.clone(),
+                initial: section.initial_state.clone(),
+                open: section.open_state.clone(),
+            };
             Ok(PlatformConfig {
                 name: ConnectorId::new(name),
                 declared_type: section.kind,
                 secret,
+                token,
+                states,
+                api_url: section.api_url.clone(),
                 spec,
             })
         })
@@ -285,6 +423,47 @@ fn resolve_secret(
     Ok(secret)
 }
 
+/// The API credential for the write path, if this deployment configured one.
+///
+/// Optional on purpose: a platform this bridge only receives webhooks from does not
+/// need a token, and demanding one would make the read-only case impossible.
+fn resolve_token(
+    name: &str,
+    section: &PlatformSection,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<Secret>> {
+    let token = match (&section.token_env, &section.token) {
+        (Some(variable), None) => {
+            let value = env(variable).ok_or_else(|| {
+                Error::Config(format!(
+                    "[platform.{name}] needs the environment variable `{variable}` for its API token, which is not set (it is what this bridge reads and writes the platform's API with)"
+                ))
+            })?;
+            Secret::new(value)
+        }
+        (None, Some(value)) => {
+            log::warn!(
+                "[platform.{name}] has an inline API token; prefer `token_env` so the config stays commit-safe"
+            );
+            Secret::new(value.clone())
+        }
+        (Some(_), Some(_)) => {
+            return Err(Error::Config(format!(
+                "[platform.{name}] sets both `token` and `token_env`; keep one"
+            )))
+        }
+        (None, None) => return Ok(None),
+    };
+
+    if token.len() < MIN_SECRET_LEN {
+        return Err(Error::Config(format!(
+            "[platform.{name}] API token is {} characters; that is short enough to be a mistake rather than a credential",
+            token.len()
+        )));
+    }
+    Ok(Some(token))
+}
+
 fn build_mappings(
     sections: Vec<MappingSection>,
     platforms: &[PlatformConfig],
@@ -297,13 +476,37 @@ fn build_mappings(
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("{} -> {}", section.source, section.sink));
+            let direction = match section.direction.as_deref() {
+                None => Direction::Both,
+                Some(name) => Direction::parse(name).ok_or_else(|| {
+                    Error::Config(format!(
+                        "mapping `{label}` has direction `{name}` (expected `both`, `oneway` or `sink-to-source`)"
+                    ))
+                })?,
+            };
             for reference in [&section.source, &section.sink] {
                 let (connector, _) = parse_connector_ref(reference)
                     .map_err(|error| Error::Config(format!("mapping `{label}`: {error}")))?;
-                if !known.contains(&connector.as_str()) {
+                let platform = platforms
+                    .iter()
+                    .find(|platform| platform.name == connector)
+                    .ok_or_else(|| {
+                        Error::Config(format!(
+                            "mapping `{label}` names platform `{connector}`, which is not declared (declared: {})",
+                            known.join(", ")
+                        ))
+                    })?;
+                // A mapping reads *both* sides to decide anything, so both ends need
+                // a credential. Saying so here means an operator hears about it at
+                // startup rather than on the first delivery.
+                if platform.sink_spec().is_none() {
                     return Err(Error::Config(format!(
-                        "mapping `{label}` names platform `{connector}`, which is not declared (declared: {})",
-                        known.join(", ")
+                        "mapping `{label}` needs to read `{connector}`, but that platform has no API description to read it through: its preset has no `[sink]` section (or an inline spec needs one)"
+                    )));
+                }
+                if platform.token.is_none() {
+                    return Err(Error::Config(format!(
+                        "mapping `{label}` needs to read `{connector}`, but [platform.{connector}] has no API token: add `token_env` (that is what the bridge authenticates with - not `secret_env`, which is the webhook secret it verifies deliveries with)"
                     )));
                 }
             }
@@ -311,6 +514,7 @@ fn build_mappings(
                 name: section.name,
                 source: section.source,
                 sink: section.sink,
+                direction,
                 sync_issues: section.sync_issues,
                 git_automation: section.git_automation,
                 delete_sync: section.delete_sync,
@@ -388,6 +592,17 @@ struct PlatformSection {
     kind: String,
     secret: Option<String>,
     secret_env: Option<String>,
+    /// The API credential for the write path, inline or by environment variable.
+    token: Option<String>,
+    token_env: Option<String>,
+    /// Overrides the preset's API address.
+    api_url: Option<String>,
+    /// The names this platform uses. A list for `closed_state` because a workflow
+    /// usually has more than one way of being finished.
+    #[serde(default)]
+    closed_state: Vec<String>,
+    open_state: Option<String>,
+    initial_state: Option<String>,
     /// An inline spec, as a nested table. Kept as a raw value so the spec's own
     /// schema is the only thing that validates it.
     spec: Option<toml::Value>,
@@ -401,6 +616,7 @@ struct MappingSection {
     name: Option<String>,
     source: String,
     sink: String,
+    direction: Option<String>,
     #[serde(default = "default_true")]
     sync_issues: bool,
     #[serde(default = "default_true")]
@@ -430,10 +646,17 @@ store = "/tmp/bridge.db"
 [platform.forgejo]
 type = "forgejo"
 secret_env = "BRIDGE_TEST_SECRET"
+token_env = "BRIDGE_TEST_TOKEN"
+closed_state = ["closed"]
+open_state = "open"
 
 [platform.linear]
 type = "linear"
 secret = "0123456789abcdef"
+token_env = "BRIDGE_TEST_TOKEN"
+closed_state = ["Done", "Canceled"]
+open_state = "In Progress"
+initial_state = "Todo"
 
 [[mapping]]
 name = "linear-cli-rs"
@@ -442,6 +665,13 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 {extra}
 "#
         )
+    }
+
+    /// The document without the mapping, for the cases that publish their own.
+    fn document_without_mapping() -> String {
+        let text = document("");
+        let start = text.find("[[mapping]]").expect("the fixture has a mapping");
+        text[..start].to_string()
     }
 
     /// Parses with a deterministic environment.
@@ -454,7 +684,11 @@ sink = "forgejo:Vedaru/linear-cli-rs"
     }
 
     fn env(name: &str) -> Option<String> {
-        (name == "BRIDGE_TEST_SECRET").then(|| "0123456789abcdef".to_string())
+        match name {
+            "BRIDGE_TEST_SECRET" => Some("0123456789abcdef".to_string()),
+            "BRIDGE_TEST_TOKEN" => Some("gto_0123456789abcdef".to_string()),
+            _ => None,
+        }
     }
 
     #[test]
@@ -484,6 +718,131 @@ sink = "forgejo:Vedaru/linear-cli-rs"
             forgejo.spec.signature.headers,
             vec!["x-forgejo-signature", "x-gitea-signature"]
         );
+    }
+
+    #[test]
+    fn the_state_vocabulary_and_the_direction_come_from_the_config() {
+        let config = parse(&document("direction = \"oneway\"")).unwrap();
+
+        let linear = config
+            .platforms
+            .iter()
+            .find(|platform| platform.name.as_str() == "linear")
+            .unwrap();
+        assert_eq!(linear.states.closed, vec!["Done", "Canceled"]);
+        assert_eq!(linear.states.initial.as_deref(), Some("Todo"));
+        assert_eq!(linear.states.open.as_deref(), Some("In Progress"));
+
+        let forgejo = config
+            .platforms
+            .iter()
+            .find(|platform| platform.name.as_str() == "forgejo")
+            .unwrap();
+        assert_eq!(forgejo.states.closed, vec!["closed"]);
+        assert_eq!(forgejo.states.initial, None);
+
+        assert_eq!(config.mappings[0].direction, Direction::SourceToSink);
+        assert_eq!(
+            config.mappings[0].policy(linear, forgejo).direction,
+            Direction::SourceToSink
+        );
+    }
+
+    #[test]
+    fn a_direction_nobody_implements_is_refused_by_name() {
+        let error = parse(&document("direction = \"sideways\""))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("sideways"), "{error}");
+        assert!(error.contains("oneway"), "{error}");
+    }
+
+    #[test]
+    fn both_ends_of_a_mapping_need_a_credential() {
+        // The forgejo platform loses its token, and only its own line is touched:
+        // the mapping cannot read it, so it cannot be carried out.
+        let text = document("").replace(
+            "secret_env = \"BRIDGE_TEST_SECRET\"\ntoken_env = \"BRIDGE_TEST_TOKEN\"",
+            "secret_env = \"BRIDGE_TEST_SECRET\"",
+        );
+        let error = parse(&text).unwrap_err().to_string();
+        assert!(error.contains("forgejo"), "{error}");
+        assert!(error.contains("token_env"), "{error}");
+        assert!(
+            error.contains("webhook secret"),
+            "the message distinguishes the two credentials: {error}"
+        );
+    }
+
+    #[test]
+    fn a_platform_without_a_token_is_a_source_only() {
+        // Intake needs no credential, so a read-only platform is a valid deployment;
+        // it simply cannot take part in a mapping.
+        let config = parse(&document_without_mapping()).unwrap();
+        assert_eq!(
+            config.sources().unwrap().len(),
+            2,
+            "both still accept webhooks"
+        );
+        assert_eq!(config.sinks().len(), 2, "and both have a token here");
+
+        let text = document_without_mapping().replace(
+            "[platform.linear]\ntype = \"linear\"\nsecret = \"0123456789abcdef\"\ntoken_env = \"BRIDGE_TEST_TOKEN\"",
+            "[platform.linear]\ntype = \"linear\"\nsecret = \"0123456789abcdef\"",
+        );
+        let config = parse(&text).unwrap();
+        assert_eq!(config.sinks().len(), 1, "only the forge has a credential");
+    }
+
+    #[test]
+    fn an_unset_token_variable_is_a_startup_error_naming_it() {
+        let error = BridgeConfig::from_toml_with_env(&document(""), &|name| {
+            (name == "BRIDGE_TEST_SECRET").then(|| "0123456789abcdef".to_string())
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("BRIDGE_TEST_TOKEN"), "{error}");
+        assert!(error.contains("not set"), "{error}");
+    }
+
+    #[test]
+    fn a_platform_may_point_at_another_api_address() {
+        let text = document("").replace(
+            "[platform.forgejo]",
+            "[platform.forgejo]\napi_url = \"http://127.0.0.1:4000/api/v1\"",
+        );
+        let config = parse(&text).unwrap();
+        let forgejo = config
+            .platforms
+            .iter()
+            .find(|platform| platform.name.as_str() == "forgejo")
+            .unwrap();
+        // The preset's own default is the real address; the deployment's override
+        // replaces it, and the rest of the write half is untouched.
+        assert_eq!(
+            forgejo.sink_spec().unwrap().base_url,
+            "http://127.0.0.1:4000/api/v1"
+        );
+        assert!(forgejo.sink_spec().unwrap().issue.create.is_some());
+        assert!(forgejo.can_be_written());
+    }
+
+    #[test]
+    fn the_mappings_resolve_into_the_reconcilers_terms() {
+        let config = parse(&document("")).unwrap();
+        let mappings = config.reconcile_mappings().unwrap();
+
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].source.describe(), "linear:VED");
+        assert_eq!(mappings[0].sink.describe(), "forgejo:Vedaru/linear-cli-rs");
+        // The policy carries the two vocabularies, which is what lets the reconciler
+        // compare `Done` with `closed` without either platform knowing the other.
+        assert_eq!(
+            mappings[0].policy.names.source.closed,
+            vec!["Done", "Canceled"]
+        );
+        assert_eq!(mappings[0].policy.names.sink.closed, vec!["closed"]);
+        assert_eq!(mappings[0].policy.names.sink.initial, None);
     }
 
     #[test]

@@ -43,23 +43,49 @@ store = "linear-bridge.db"
 
 [platform.forgejo]
 type = "forgejo"
-secret_env = "FORGEJO_WEBHOOK_SECRET"
+secret_env = "FORGEJO_WEBHOOK_SECRET"   # what it signs its deliveries with
+token_env = "FORGEJO_TOKEN"             # what this bridge reads and writes with
+api_url = "http://127.0.0.1:3000/api/v1"   # optional; defaults to the preset's
+closed_state = ["closed"]               # how this platform says "finished"
+open_state = "open"
 
 [platform.linear]
 type = "linear"
 secret_env = "LINEAR_WEBHOOK_SECRET"
+token_env = "LINEAR_API_KEY"
+closed_state = ["Done", "Canceled"]
+open_state = "In Progress"
+initial_state = "Todo"                  # where a newly mirrored issue lands
 
 [[mapping]]
 name = "linear-cli-rs"
 source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
+direction = "both"                      # or `oneway`
 ```
 
+Two credentials per platform, and they are not interchangeable: `secret_env` is what
+the platform signs *its* deliveries with (verified before anything is stored), and
+`token_env` is what this bridge authenticates *to* the platform with (what it reads
+and writes issues through). A platform with no token is still a valid connector - it
+just cannot take part in a mapping, and the config says so at startup rather than on
+the first webhook.
+
+The state names are a fact about a workspace, not about Linear: which state means
+"finished" differs per team, so it is configured per platform. A state list rather
+than a single name, because a workflow usually has more than one way of being closed.
+
 ```sh
-LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... linear webhook serve
+LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... \
+  LINEAR_API_KEY=... FORGEJO_TOKEN=... \
+  linear webhook serve
 linear webhook serve --check          # resolve the config, print it, do not bind
 linear webhook serve --bind 127.0.0.1:9000
 ```
+
+`--check` is worth running before a deployment: it builds the sinks, resolves every
+mapping with both platforms' vocabularies, and prints the result (secrets redacted) -
+so a mapping that could not run fails there instead of on the first delivery.
 
 Then point a webhook at `http://<host>:8787/webhooks/<platform>`: `linear` and
 `forgejo` for the two connectors above. `GET /healthz` reports store liveness and
@@ -72,6 +98,13 @@ Logging is `LINEAR_BRIDGE_LOG` (`error|warn|info|debug|trace|off`, default
 
 - **Intake never does the work.** Verify -> persist -> `202`. Real work happens
   off the request path, so a slow sync cannot make a provider time out and retry.
+- **A webhook is a notification, not the truth.** The reconciler reads both sides
+  before deciding anything: the payload is a snapshot from whenever the provider
+  queued it, and an API that was briefly unavailable has been sending stale
+  snapshots ever since.
+- **The link row is what makes an echo recognisable.** Every write records the
+  content key of what was written, so the webhook that write provokes is a no-op
+  rather than a loop.
 - **Idempotent by key.** `(connector, delivery id)` is unique; a provider retry
   is a no-op insert answering `202 {"duplicate":true}`. A push delivery fans out
   into several events under one key, which is why the row stores the raw body.
@@ -80,6 +113,10 @@ Logging is `LINEAR_BRIDGE_LOG` (`error|warn|info|debug|trace|off`, default
   exponential backoff and full jitter, then park as `dead` for an operator.
 - **Handlers must be idempotent.** The queue retries; a handler that assumes
   "called once per change" duplicates work on the far side.
+- **A misconfigured worker fails closed.** If a worker cannot be given a working
+  reconciler it refuses deliveries (they retry, then park as dead) rather than
+  acknowledging work it did not do - a silent "everything is fine" is the one
+  failure mode a mirror must not have.
 - **Bounded by construction.** Bodies are capped while reading (413 before the
   whole payload is in memory), a worker holds one delivery at a time, and both
   thread pools are fixed size.

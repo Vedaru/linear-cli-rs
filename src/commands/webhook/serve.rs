@@ -13,10 +13,14 @@ use std::sync::Arc;
 
 use clap::Args;
 use linear_bridge::config::BridgeConfig;
+use linear_bridge::connector::Source;
 use linear_bridge::http::intake::Intake;
 use linear_bridge::http::{Bridge, HandlerFactory, ServeDeps, StoreFactory};
 use linear_bridge::logging;
-use linear_bridge::queue::{Handler, LoggingHandler};
+use linear_bridge::queue::{FailingHandler, Handler, LoggingHandler};
+use linear_bridge::reconcile::handler::{Mapping, ReconcileHandler};
+use linear_bridge::reconcile::Direction;
+use linear_bridge::sink::Sink;
 use linear_bridge::store::sqlite::SqliteStore;
 use linear_bridge::store::Store;
 use serde_json::json;
@@ -63,13 +67,27 @@ pub fn run(args: ServeArgs) -> Result<()> {
         return print_resolved(&path, &service);
     }
 
-    let sources = service
-        .sources()
-        .map_err(|error| CliError::validation(error.to_string()))?;
-    let intake = Arc::new(
-        Intake::new(sources, service.body_limit)
+    // Shared, not moved: intake parses the request, and a worker re-parses the
+    // stored body (one delivery can carry several events), so both need the same
+    // connectors.
+    let sources: Arc<Vec<Arc<dyn Source>>> = Arc::new(
+        service
+            .sources()
             .map_err(|error| CliError::validation(error.to_string()))?,
     );
+    let intake = Arc::new(
+        Intake::new(sources.as_ref().clone(), service.body_limit)
+            .map_err(|error| CliError::validation(error.to_string()))?,
+    );
+
+    // The sync half, when the config has mappings. A deployment with none still
+    // accepts and logs deliveries - the service is useful as an intake alone.
+    let mappings: Arc<Vec<Mapping>> = Arc::new(
+        service
+            .reconcile_mappings()
+            .map_err(|error| CliError::validation(error.to_string()))?,
+    );
+    let sinks = Arc::new(service.sinks());
 
     let store_path = service.store_path.clone();
     let store: StoreFactory = {
@@ -78,7 +96,33 @@ pub fn run(args: ServeArgs) -> Result<()> {
             Ok(Box::new(SqliteStore::open(&store_path)?))
         })
     };
-    let handler: HandlerFactory = Arc::new(|| Box::new(LoggingHandler) as Box<dyn Handler>);
+
+    let handler: HandlerFactory = if mappings.is_empty() {
+        Arc::new(|| Box::new(LoggingHandler) as Box<dyn Handler>)
+    } else {
+        // Prove the reconciler can be built *before* binding: an operator should
+        // hear about a mapping that cannot run at startup, not on the first
+        // webhook, and not after the port is already accepting traffic.
+        reconcile_factory(&sources, &sinks, &mappings, &store_path).map_err(|error| {
+            CliError::validation(format!("the reconciler cannot start: {error}"))
+        })?;
+
+        let sources = Arc::clone(&sources);
+        let mappings = Arc::clone(&mappings);
+        let sinks = Arc::clone(&sinks);
+        let store_path = store_path.clone();
+        Arc::new(move || -> Box<dyn Handler> {
+            match reconcile_factory(&sources, &sinks, &mappings, &store_path) {
+                Ok(handler) => handler,
+                // Unreachable in practice, since the same construction succeeded
+                // above. It stays because the honest behaviour has to be here rather
+                // than assumed: a worker that cannot reconcile must not acknowledge
+                // deliveries it did not sync. Deliveries it refuses are retried and
+                // then parked as dead, where the queue's own logging shows them.
+                Err(error) => Box::new(FailingHandler::new(error)),
+            }
+        })
+    };
 
     let deps = ServeDeps {
         addr: service.bind,
@@ -104,6 +148,18 @@ pub fn run(args: ServeArgs) -> Result<()> {
             capabilities.join(", ")
         ));
     }
+    if mappings.is_empty() {
+        output::line("No [[mapping]] is configured: deliveries are logged, not mirrored.");
+    } else {
+        for mapping in mappings.iter() {
+            output::line(&format!(
+                "  syncing {} <-> {} ({})",
+                mapping.source.describe(),
+                mapping.sink.describe(),
+                describe_direction(mapping.policy.direction),
+            ));
+        }
+    }
     output::line("Press Ctrl-C to stop.");
 
     // The process is supervised: SIGINT/SIGTERM terminate it, and the queue is
@@ -113,6 +169,32 @@ pub fn run(args: ServeArgs) -> Result<()> {
     bridge
         .run(shutdown)
         .map_err(|error| CliError::cli(format!("The webhook service stopped: {error}")))
+}
+
+/// Build one reconciler, with its own store connection.
+///
+/// One per worker thread, and each with its own connection: the queue owns the
+/// connection it claims deliveries on, and a handler that shared it would couple
+/// its transactions to the queue's.
+fn reconcile_factory(
+    sources: &[Arc<dyn Source>],
+    sinks: &[Arc<dyn Sink>],
+    mappings: &[Mapping],
+    store_path: &str,
+) -> std::result::Result<Box<dyn Handler>, String> {
+    let store: Box<dyn Store> =
+        Box::new(SqliteStore::open(store_path).map_err(|error| error.to_string())?);
+    let handler = ReconcileHandler::new(sources.to_vec(), sinks.to_vec(), mappings.to_vec(), store)
+        .map_err(|error| error.to_string())?;
+    Ok(Box::new(handler) as Box<dyn Handler>)
+}
+
+fn describe_direction(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Both => "both ways",
+        Direction::SourceToSink => "one way, source to sink",
+        Direction::SinkToSource => "one way, sink to source",
+    }
 }
 
 /// Where the service config comes from: an explicit `--config`, else the same
@@ -142,6 +224,13 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
                 "name": platform.name.as_str(),
                 "type": platform.declared_type,
                 "secret": format!("{:?}", platform.secret),
+                "token": platform.token.as_ref().map(|_| "set").unwrap_or("none"),
+                "api_url": platform.sink_spec().map(|spec| spec.base_url),
+                "states": {
+                    "closed": platform.states.closed,
+                    "open": platform.states.open,
+                    "initial": platform.states.initial,
+                },
                 "spec": platform.spec.describe(),
                 "capabilities": linear_bridge::domain::Capabilities::from(platform.spec.capabilities).describe(),
             })
@@ -155,6 +244,7 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
                 "name": mapping.name,
                 "source": mapping.source,
                 "sink": mapping.sink,
+                "direction": describe_direction(mapping.direction),
                 "sync_issues": mapping.sync_issues,
                 "git_automation": mapping.git_automation,
                 "delete_sync": mapping.delete_sync,
@@ -162,8 +252,30 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
         })
         .collect();
 
+    // Resolving the mappings here is the point of `--check`: it proves the join
+    // between the config and the reconciler works, without binding a port.
+    let resolved: Vec<_> = service
+        .reconcile_mappings()
+        .map_err(|error| CliError::validation(error.to_string()))?
+        .iter()
+        .map(|mapping| {
+            json!({
+                "name": mapping.name,
+                "source": mapping.source.describe(),
+                "sink": mapping.sink.describe(),
+                "direction": describe_direction(mapping.policy.direction),
+                "states": {
+                    "source_closed": mapping.policy.names.source.closed,
+                    "sink_closed": mapping.policy.names.sink.closed,
+                    "initial_on_sink": mapping.policy.names.sink.initial,
+                },
+            })
+        })
+        .collect();
+
     output::print_json(&json!({
         "config": path.display().to_string(),
+        "writable": service.sinks().len(),
         "bind": service.bind.to_string(),
         "database": service.store_path,
         "body_limit": service.body_limit,
@@ -178,6 +290,7 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
         },
         "platforms": platforms,
         "mappings": mappings,
+        "resolved_mappings": resolved,
         "endpoints": service.platforms.iter()
             .map(|platform| format!("POST http://{}/webhooks/{}", service.bind, platform.name))
             .collect::<Vec<_>>(),

@@ -53,6 +53,33 @@ impl Handler for Box<dyn Handler> {
     }
 }
 
+/// A handler that refuses everything, for a worker that could not be given a
+/// working one (a store that will not open, a mapping that will not resolve).
+///
+/// It exists to make failing *closed* the only option. A deployment that has
+/// mappings must never quietly stop syncing: a delivery it cannot process is
+/// retried and then parked as dead, where the logs and `/healthz` show it. The
+/// alternative - falling back to a handler that acknowledges and forgets - turns
+/// a misconfiguration into silent data loss.
+#[derive(Debug)]
+pub struct FailingHandler {
+    reason: String,
+}
+
+impl FailingHandler {
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl Handler for FailingHandler {
+    fn handle(&mut self, _delivery: &Delivery) -> Result<()> {
+        Err(crate::error::Error::Handler(self.reason.clone()))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkerConfig {
     /// Attempts before a delivery is parked as dead.
