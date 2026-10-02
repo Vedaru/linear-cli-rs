@@ -22,9 +22,15 @@
 //! that - [`Openness`] - is what is compared and what the content key carries.
 
 pub mod handler;
+pub mod projection;
 
-use crate::domain::{markers, Actor, ConnectorId, EntityKind, Event, EventDetail, IssueFields};
+use crate::domain::{
+    markers, Actor, Capabilities, Change, ConnectorId, EntityKind, Event, EventDetail, IssueFields,
+    Patch,
+};
 use crate::store::Link;
+
+use self::projection::{Projected, Skipped};
 
 /// Which end of a mapping something happened on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,7 +210,14 @@ impl Snapshot {
 
 /// See [`Snapshot::key`].
 pub fn content_key(fields: &IssueFields, state: Option<&str>, names: &StateNames) -> String {
-    format!("{}|{}", fields.signature(), names.openness(state).tag())
+    content_key_with(fields, names.openness(state))
+}
+
+/// The same key, from an openness that has already been read out of one platform's
+/// vocabulary - which is how a projection is compared against the platform it is
+/// projected onto.
+pub fn content_key_with(fields: &IssueFields, openness: Openness) -> String {
+    format!("{}|{}", fields.signature(), openness.tag())
 }
 
 /// What a mapping allows, in the terms the decision needs.
@@ -256,12 +269,21 @@ pub enum Nothing {
 pub enum Step {
     Nothing(Nothing),
     Create {
+        /// The source's fields as the target will hold them.
         fields: IssueFields,
         state: Option<String>,
+        /// Fields the target could not be given, for the log.
+        skipped: Vec<Skipped>,
     },
     Update {
+        /// Only the fields that differ - what is actually sent.
+        patch: Patch,
+        /// What the target should hold once the patch lands, which is what the link
+        /// records as synced. The whole set, not the patch: the hash has to describe
+        /// the resulting revision, or the next delivery reads as a difference.
         fields: IssueFields,
         state: Option<String>,
+        skipped: Vec<Skipped>,
     },
     Comment {
         body: String,
@@ -310,6 +332,15 @@ pub struct Context<'a> {
     pub counterpart: &'a Snapshot,
     /// The connector the other side of the mapping names.
     pub counterpart_connector: &'a ConnectorId,
+    /// The source's fields as the *other* platform will hold them.
+    ///
+    /// Every field decision is made on this rather than on the raw source: a field
+    /// the target cannot hold is not a difference, it is a permanent one.
+    pub expected: &'a Projected,
+    /// What the other platform can hold. Needed for one encoding rule that is not a
+    /// fact about either platform: where the priority travels inside the label set,
+    /// changing it means rewriting that set.
+    pub target: &'a Capabilities,
 }
 
 /// The decision, and the whole of it.
@@ -345,16 +376,12 @@ fn plan_issue(context: &Context<'_>) -> Step {
                 // entity to copy. Creating again would be the classic duplicate.
                 return Step::Nothing(Nothing::Echo);
             }
-            let fields = context
-                .observed
-                .fields
-                .clone()
-                .expect("checked that the entity exists");
             Step::Create {
-                fields,
+                fields: context.expected.fields.clone(),
                 // The *other* platform's vocabulary, not ours: this is the state
                 // the new issue will have over there.
                 state: policy.names.of(context.side.other()).initial.clone(),
+                skipped: context.expected.skipped.clone(),
             }
         }
         crate::domain::Action::Other(_) => Step::Nothing(Nothing::NotOurKind),
@@ -374,11 +401,17 @@ fn plan_change(context: &Context<'_>) -> Step {
         return Step::Nothing(Nothing::Unpaired);
     }
 
-    let observed_key = match context.observed.key(policy.names.of(context.side)) {
-        Some(key) => key,
-        None => return Step::Nothing(Nothing::Empty),
-    };
-    if link.last_synced_hash.as_deref() == Some(observed_key.as_str()) {
+    // The key is taken through the projection, in the *target's* openness: what
+    // matters is not what the source says but what the target can be brought to
+    // say. Compared raw, a field the target cannot hold (an unmapped assignee, a
+    // due date on a platform without them) differs on every single delivery - the
+    // bridge rewriting the same content forever is what that looks like.
+    let ours = policy.names.of(context.side);
+    let expected_key = content_key_with(
+        &context.expected.fields,
+        ours.openness(context.observed.state.as_deref()),
+    );
+    if link.last_synced_hash.as_deref() == Some(expected_key.as_str()) {
         // What the source holds is exactly what we last wrote across this link:
         // this event is our own write coming back, or an edit that changed nothing
         // we mirror.
@@ -388,18 +421,37 @@ fn plan_change(context: &Context<'_>) -> Step {
     let counterpart_key = context
         .counterpart
         .key(policy.names.of(context.side.other()));
-    if counterpart_key.as_deref() == Some(observed_key.as_str()) {
+    if counterpart_key.as_deref() == Some(expected_key.as_str()) {
         // Both sides already read the same, through the vocabulary they share.
         return Step::Nothing(Nothing::AlreadyEqual);
     }
 
-    let fields = context
-        .observed
+    let counterpart_fields = context
+        .counterpart
         .fields
         .clone()
-        .expect("checked that the entity exists");
+        .expect("checked that the counterpart exists");
+    let mut patch = context.expected.fields.diff(&counterpart_fields);
+    if !context.target.priorities && !patch.priority.is_leave() {
+        // The priority lives in the label set on this platform, so a new priority is
+        // a new label set. Sending the patches separately would leave the labels
+        // alone and drop the priority label with them.
+        patch.labels = Change::Set(context.expected.fields.canonical_labels());
+    }
+    // The state is a separate question from the fields: a close with no text change
+    // has nothing to patch and still has to travel.
     let state = state_to_write(context);
-    Step::Update { fields, state }
+    if patch.is_empty() && state.is_none() {
+        // Nothing the target can hold differs, whatever the raw comparison said.
+        return Step::Nothing(Nothing::AlreadyEqual);
+    }
+
+    Step::Update {
+        patch,
+        fields: context.expected.fields.clone(),
+        state,
+        skipped: context.expected.skipped.clone(),
+    }
 }
 
 /// The state to write on the other side, or `None` to leave it alone.
@@ -648,6 +700,13 @@ mod tests {
         observed: Snapshot,
         counterpart: Snapshot,
         counterpart_connector: ConnectorId,
+        /// What the other platform can hold. The default is a forge: no priority
+        /// field of its own, so the priority travels in the label set.
+        target: Capabilities,
+        /// What the source's fields look like once projected onto the target. Tests
+        /// set this only when they are about the projection; otherwise the source's
+        /// own fields stand in, which is what the projection yields undeformed.
+        expected: Option<Projected>,
     }
 
     impl Default for Fixture {
@@ -660,12 +719,26 @@ mod tests {
                 observed: Snapshot::present(fields("One", &["bug"], 0), Some("In Progress".into())),
                 counterpart: Snapshot::present(fields("One", &["bug"], 0), Some("open".into())),
                 counterpart_connector: connector("forgejo"),
+                target: Capabilities {
+                    states: crate::domain::StateModel::OpenClosed,
+                    labels: true,
+                    due_dates: true,
+                    priorities: false,
+                    multiple_assignees: false,
+                    native_pull_requests: true,
+                    deletion: false,
+                },
+                expected: None,
             }
         }
     }
 
     impl Fixture {
         fn plan(&self, side: Side) -> Step {
+            let expected = self.expected.clone().unwrap_or_else(|| Projected {
+                fields: self.observed.fields.clone().unwrap_or_default(),
+                skipped: Vec::new(),
+            });
             plan(&Context {
                 event: &self.event,
                 side,
@@ -675,6 +748,8 @@ mod tests {
                 observed: &self.observed,
                 counterpart: &self.counterpart,
                 counterpart_connector: &self.counterpart_connector,
+                expected: &expected,
+                target: &self.target,
             })
         }
     }
@@ -699,7 +774,7 @@ mod tests {
         fixture.counterpart = Snapshot::gone();
 
         match fixture.plan(Side::Source) {
-            Step::Create { fields, state } => {
+            Step::Create { fields, state, .. } => {
                 assert_eq!(fields.title, "One");
                 // Forgejo's own state, not Linear's: the create is on the sink.
                 assert_eq!(state, None, "a forge has no configured initial state");
@@ -859,7 +934,7 @@ mod tests {
         ));
 
         match fixture.plan(Side::Source) {
-            Step::Update { fields, state } => {
+            Step::Update { fields, state, .. } => {
                 assert_eq!(fields.title, "Two");
                 // Linear's `Done` is the forge's `closed`.
                 assert_eq!(state.as_deref(), Some("closed"));

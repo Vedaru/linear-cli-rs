@@ -59,7 +59,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::connector::Source;
-use crate::domain::{parse_connector_ref, ConnectorId, Secret};
+use crate::domain::{parse_connector_ref, ConnectorId, Identity, Secret, UserMap};
 use crate::error::{Error, Result};
 use crate::queue::WorkerConfig;
 use crate::reconcile::handler::{Endpoint, Mapping};
@@ -139,9 +139,47 @@ pub struct MappingConfig {
     pub sync_issues: bool,
     pub git_automation: bool,
     pub delete_sync: bool,
+    /// `[[mapping.identity]]`: how one person is known on each platform, e.g.
+    ///
+    /// ```toml
+    /// [[mapping.identity]]
+    /// linear = "loner@example.com"
+    /// forgejo = "vedaru"
+    /// ```
+    ///
+    /// Absent means the deployment has not said, and then assignee sync is off
+    /// rather than guessed at - a login from one platform sent to another is worse
+    /// than a field that stays behind, and the log says which it was.
+    pub identity: Vec<BTreeMap<String, String>>,
 }
 
 impl MappingConfig {
+    /// The identity map, as the reconciler reads it.
+    ///
+    /// Each entry is a group of `platform = key` pairs. One entry naming a single
+    /// platform is a configuration error, not a half-known person: it would match
+    /// nothing and skip every assignee in silence.
+    pub fn users(&self) -> Result<UserMap> {
+        let mut groups = Vec::with_capacity(self.identity.len());
+        for (index, entry) in self.identity.iter().enumerate() {
+            if entry.len() < 2 {
+                return Err(Error::Config(format!(
+                    "mapping `{}`: identity {} names {} platform(s), and an identity needs at least two",
+                    self.label(),
+                    index + 1,
+                    entry.len()
+                )));
+            }
+            groups.push(
+                entry
+                    .iter()
+                    .map(|(connector, key)| Identity::new(connector.clone(), key.clone()))
+                    .collect(),
+            );
+        }
+        Ok(UserMap::from_groups(groups))
+    }
+
     /// A name for logs and errors, when the deployment did not give one.
     pub fn label(&self) -> String {
         self.name
@@ -267,11 +305,26 @@ impl BridgeConfig {
                 let label = mapping.label();
                 let source = self.platform_for(&mapping.source, &label)?;
                 let sink = self.platform_for(&mapping.sink, &label)?;
+                let users = mapping.users()?;
+                let named = |connector: &str| users.keys_for(&ConnectorId::new(connector)).len();
+                if !mapping.identity.is_empty()
+                    && named(source.name.as_str()) == 0
+                    && named(sink.name.as_str()) == 0
+                {
+                    // Every identity in this mapping names platforms it does not
+                    // connect. It is a typo, and the only symptom would be assignees
+                    // quietly staying behind.
+                    return Err(Error::Config(format!(
+                        "mapping `{label}`: no identity names `{}` or `{}`, so none of them can apply",
+                        source.name, sink.name
+                    )));
+                }
                 Ok(Mapping {
                     name: label,
                     source: Endpoint::parse(&mapping.source)?,
                     sink: Endpoint::parse(&mapping.sink)?,
                     policy: mapping.policy(source, sink),
+                    users,
                 })
             })
             .collect()
@@ -518,6 +571,7 @@ fn build_mappings(
                 sync_issues: section.sync_issues,
                 git_automation: section.git_automation,
                 delete_sync: section.delete_sync,
+                identity: section.identity,
             })
         })
         .collect()
@@ -617,6 +671,11 @@ struct MappingSection {
     source: String,
     sink: String,
     direction: Option<String>,
+    /// `[[mapping.identity]]`: one person, one key per platform. Each table is a
+    /// group, so a person known on three platforms is one entry rather than three
+    /// pairs that disagree about who is the counterpart.
+    #[serde(default)]
+    identity: Vec<BTreeMap<String, String>>,
     #[serde(default = "default_true")]
     sync_issues: bool,
     #[serde(default = "default_true")]
@@ -668,6 +727,57 @@ sink = "forgejo:Vedaru/linear-cli-rs"
     }
 
     /// The document without the mapping, for the cases that publish their own.
+    #[test]
+    fn an_identity_map_reaches_the_reconciler() {
+        let config = parse(&document(
+            "\n[[mapping.identity]]\nlinear = \"loner@example.com\"\nforgejo = \"vedaru\"\n",
+        ))
+        .expect("the config loads");
+
+        let mappings = config.reconcile_mappings().expect("the mapping resolves");
+        let users = &mappings[0].users;
+        assert_eq!(users.len(), 1);
+        let on_forge = users
+            .counterpart_for(
+                &Identity::new("linear", "loner@example.com"),
+                &ConnectorId::new("forgejo"),
+            )
+            .expect("known on the forge");
+        assert_eq!(on_forge.key, "vedaru");
+        assert_eq!(users.describe().len(), 1);
+    }
+
+    #[test]
+    fn an_identity_for_one_platform_only_is_refused() {
+        // It would match nothing and skip every assignee in silence, so it is a load
+        // error rather than a half-known person.
+        // The document loads; it is resolving the mapping that refuses, which is
+        // where every other mapping-shaped error is caught.
+        let config = parse(&document(
+            "\n[[mapping.identity]]\nlinear = \"loner@example.com\"\n",
+        ))
+        .expect("the document itself is valid");
+        let error = config
+            .reconcile_mappings()
+            .expect_err("a one-platform identity is not an identity");
+        let message = error.to_string();
+        assert!(message.contains("at least two"), "{message}");
+    }
+
+    #[test]
+    fn an_identity_naming_platforms_this_mapping_does_not_connect_is_refused() {
+        let config = parse(&document(
+            "\n[[mapping.identity]]\ngithub = \"vedaru\"\ngitlab = \"vedaru\"\n",
+        ))
+        .expect("the document itself is valid");
+        let error = config
+            .reconcile_mappings()
+            .expect_err("no identity names either end");
+        let message = error.to_string();
+        assert!(message.contains("no identity names"), "{message}");
+        assert!(message.contains("linear-cli-rs"), "{message}");
+    }
+
     fn document_without_mapping() -> String {
         let text = document("");
         let start = text.find("[[mapping]]").expect("the fixture has a mapping");

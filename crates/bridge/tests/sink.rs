@@ -13,7 +13,7 @@ mod support;
 
 use serde_json::{json, Value};
 
-use linear_bridge::domain::IssueFields;
+use linear_bridge::domain::{Change, IssueFields, Patch};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::presets;
 
@@ -111,21 +111,91 @@ fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
 }
 
 #[test]
-fn an_update_clears_a_field_but_never_clears_what_it_does_not_sync() {
+fn a_patch_sends_only_what_it_changes() {
     let fake = Fake::start(forgejo_routes);
     let sink = fake.sink("forgejo");
 
-    let mut cleared = fields();
-    cleared.due_date = None;
-    sink.update_issue("Vedaru/linear-cli-rs", "12", &cleared, Some("closed"))
+    // A patch that mentions the title and nothing else. The rest must not reach the
+    // request: restating a field is how a mirror overwrites something it did not look
+    // at, and the labels in particular are one field with the priority on a forge.
+    let patch = Patch {
+        title: Change::Set("Renamed".into()),
+        ..Patch::default()
+    };
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, None)
         .expect("update");
 
     let update = fake.only("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12");
-    // `$due_date!`: the date was cleared here, so it must be cleared there.
-    assert!(update.body.as_object().unwrap().contains_key("due_date"));
+    assert_eq!(update.body["title"], "Renamed");
+    for absent in ["body", "labels", "due_date", "assignees", "state"] {
+        assert!(
+            !update
+                .body
+                .as_object()
+                .expect("an object")
+                .contains_key(absent),
+            "`{absent}` was not changed, so it must not be sent: {}",
+            update.body
+        );
+    }
+    // No label write either: the spec declares a separate labels operation, and this
+    // patch says nothing about labels.
+    assert!(
+        fake.seen().iter().all(|record| record.method != "PUT"),
+        "a label write happened"
+    );
+}
+
+#[test]
+fn a_patch_clears_exactly_what_it_says_it_clears() {
+    let fake = Fake::start(forgejo_routes);
+    let sink = fake.sink("forgejo");
+
+    let patch = Patch {
+        due_date: Change::Clear,
+        assignee: Change::Clear,
+        ..Patch::default()
+    };
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, Some("closed"))
+        .expect("update");
+
+    let update = fake.only("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12");
+    // A present null is the instruction "clear it" - the one thing that must not be
+    // dropped from the request, or the two sides keep a value neither wants.
     assert_eq!(update.body["due_date"], Value::Null);
+    assert_eq!(update.body["assignees"], json!([]));
     assert_eq!(update.body["state"], "closed");
-    assert_eq!(update.body["title"], "Mirror the thing");
+    // Nothing else was touched.
+    assert!(!update.body.as_object().unwrap().contains_key("title"));
+    assert!(!update.body.as_object().unwrap().contains_key("body"));
+}
+
+#[test]
+fn a_priority_change_rewrites_the_label_set_it_travels_in() {
+    let fake = Fake::start(forgejo_routes);
+    let sink = fake.sink("forgejo");
+
+    // On a platform with no priority field the priority *is* a label, so the label
+    // set has to be restated whenever it changes - with the real labels kept.
+    let patch = Patch {
+        priority: Change::Set(2),
+        labels: Change::Set(vec!["bug".into()]),
+        ..Patch::default()
+    };
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, None)
+        .expect("update");
+
+    let labels = fake.only("PUT", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/labels");
+    // A forge takes label *ids*, so the names went through the same lookup the create
+    // path uses - and the set is the real label plus the priority, not one or the
+    // other.
+    let sent: Vec<i64> = labels.body["labels"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|value| value.as_i64().expect("an id"))
+        .collect();
+    assert_eq!(sent.len(), 2, "{sent:?}");
 }
 
 #[test]

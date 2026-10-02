@@ -9,9 +9,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::connector::Source;
-use crate::domain::{parse_connector_ref, ConnectorId, EntityKind, EntityRef, Event};
+use crate::domain::{parse_connector_ref, ConnectorId, EntityKind, EntityRef, Event, UserMap};
 use crate::error::{Error, Result};
 use crate::queue::Handler;
+use crate::reconcile::projection::{Projected, Projection, Skipped};
 use crate::reconcile::{
     content_key, plan, Context, Direction, Nothing, Openness, Policy, Side, Sides, Snapshot,
     StateNames, Step,
@@ -50,6 +51,9 @@ pub struct Mapping {
     pub source: Endpoint,
     pub sink: Endpoint,
     pub policy: Policy,
+    /// How a person is known on each platform. Empty is meaningful: it means the
+    /// deployment has not said, so assignee sync is off rather than guessed.
+    pub users: UserMap,
 }
 
 impl Mapping {
@@ -226,6 +230,17 @@ impl ReconcileHandler {
             None => Snapshot::gone(),
         };
 
+        // What the target can hold, and where an identity has no counterpart. Read
+        // from the target's own capabilities rather than assumed, and computed before
+        // the decision because it *is* the decision's input: the mirror compares what
+        // it can bring into agreement, not what the source happens to say.
+        let target = self.sink(&there.connector)?.capabilities();
+        let projection = Projection::new(&target, &mapping.users);
+        let expected = match &observed.fields {
+            Some(fields) => projection.of(fields, &here.connector, &there.connector),
+            None => Projected::default(),
+        };
+
         let step = plan(&Context {
             event,
             side,
@@ -235,6 +250,8 @@ impl ReconcileHandler {
             observed: &observed,
             counterpart: &counterpart,
             counterpart_connector: &there.connector,
+            expected: &expected,
+            target: &target,
         });
 
         if let Step::Nothing(reason) = &step {
@@ -262,7 +279,12 @@ impl ReconcileHandler {
 
         match step {
             Step::Nothing(_) => unreachable!("returned above"),
-            Step::Create { fields, state } => {
+            Step::Create {
+                fields,
+                state,
+                skipped,
+            } => {
+                self.report_skipped(&mapping.name, &skipped);
                 let sink = self.sink(&there.connector)?;
                 let created = sink.create_issue(&there.scope, &fields, state.as_deref())?;
                 let created_ref = EntityRef {
@@ -289,27 +311,33 @@ impl ReconcileHandler {
                     event.subject.native_id
                 );
             }
-            Step::Update { fields, state } => {
+            Step::Update {
+                patch,
+                fields,
+                state,
+                skipped,
+            } => {
                 let Some(reference) = counterpart_ref.clone() else {
                     return Ok(());
                 };
+                self.report_skipped(&mapping.name, &skipped);
+                let touched = patch.touched().join(", ");
                 let sink = self.sink(&there.connector)?;
-                sink.update_issue(
-                    &there.scope,
-                    &reference.native_id,
-                    &fields,
-                    state.as_deref(),
-                )?;
+                sink.update_issue(&there.scope, &reference.native_id, &patch, state.as_deref())?;
+                // The link records the revision the target now holds - the projected
+                // fields, not the raw ones. Recording the source's own truth is how a
+                // field the target cannot hold turns into a difference forever.
                 let effective = state.clone().or_else(|| counterpart.state.clone());
                 let hash = content_key(&fields, effective.as_deref(), names_there);
                 self.store
                     .upsert_link(&Link::new(subject.clone(), reference.clone()).with_hash(hash))?;
                 log::info!(
-                    "updated {} {} from {} {}",
+                    "updated {} {} from {} {} ({})",
                     there.connector,
                     reference.native_id,
                     event.connector,
-                    event.subject.native_id
+                    event.subject.native_id,
+                    touched
                 );
             }
             Step::Comment { body } => {
@@ -419,6 +447,16 @@ impl ReconcileHandler {
     }
 
     /// One end's current state, as the platform reports it.
+    /// Say what did not travel, once per delivery, at a level an operator sees.
+    ///
+    /// Not an error - the mapping is still doing what it can - but never silent
+    /// either: "the assignee did not come across" has to be findable in the log.
+    fn report_skipped(&self, mapping: &str, skipped: &[Skipped]) {
+        for skipped in skipped {
+            log::warn!("`{mapping}`: {skipped}");
+        }
+    }
+
     fn snapshot(&self, connector: &ConnectorId, scope: &str, id: &str) -> Result<Snapshot> {
         let sink = self.sink(connector)?;
         Ok(match sink.fetch_issue(scope, id)? {
@@ -531,6 +569,7 @@ mod tests {
             name: "linear-cli-rs".into(),
             source: endpoint("linear:VED"),
             sink: endpoint("forgejo:Vedaru/linear-cli-rs"),
+            users: UserMap::default(),
             policy: default_policy(Sides::new(
                 StateNames {
                     closed: vec!["Done".into(), "Canceled".into()],

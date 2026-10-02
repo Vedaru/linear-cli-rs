@@ -18,7 +18,7 @@ pub mod declarative;
 pub mod spec;
 pub mod template;
 
-use crate::domain::{Capabilities, ConnectorId, IssueFields};
+use crate::domain::{Capabilities, ConnectorId, IssueFields, Patch};
 use crate::error::Result;
 
 /// A pointer to an entity on the platform, as the platform identifies it.
@@ -58,14 +58,13 @@ pub trait Sink: Send + Sync {
         state: Option<&str>,
     ) -> Result<RemoteRef>;
 
-    /// Apply every synced field to an existing issue.
-    fn update_issue(
-        &self,
-        scope: &str,
-        id: &str,
-        fields: &IssueFields,
-        state: Option<&str>,
-    ) -> Result<()>;
+    /// Apply the fields that differ to an existing issue.
+    ///
+    /// A [`Patch`], not a field set: an update that restated every field would
+    /// overwrite whatever the other side holds for the ones it did not actually
+    /// change, and it is the difference the caller has already worked out.
+    fn update_issue(&self, scope: &str, id: &str, patch: &Patch, state: Option<&str>)
+        -> Result<()>;
 
     fn comment(&self, scope: &str, id: &str, body: &str) -> Result<RemoteRef>;
 

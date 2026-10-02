@@ -13,11 +13,11 @@ pub mod references;
 mod secret;
 
 pub use capability::{Capabilities, Field, StateModel};
-pub use entity::{Actor, EntityKind, EntityRef, Patch};
+pub use entity::{Actor, EntityKind, EntityRef};
 pub use event::{Action, DeliveryId, Event, EventDetail};
 pub use fields::{
-    canonical_labels, is_priority_label, labels_to_priority, normalise_due_date, priority_to_label,
-    Identity, IssueFields, UserMap,
+    canonical_labels, diff, is_priority_label, labels_to_priority, normalise_due_date,
+    priority_to_label, Change, Identity, IssueFields, Patch, UserMap,
 };
 pub use ids::ConnectorId;
 pub use markers::{OriginMarker, MARKER_PREFIX};

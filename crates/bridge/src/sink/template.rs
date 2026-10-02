@@ -14,7 +14,11 @@
 //!   alone";
 //! - a directive with no value and no `!` **drops its key** (or its element, in an
 //!   array): sending `"due_date": null` when there is no due date is how a mirror
-//!   accidentally clears a field the user never touched.
+//!   accidentally clears a field the user never touched;
+//! - a directive whose value is present but `null` is written as `null`. That is a
+//!   deliberate distinction, and the reason a partial update works: the engine puts
+//!   a `null` there only when it means "clear this", while a field it has nothing
+//!   to say about is left out of the values altogether.
 //!
 //! Objects and arrays recurse, so a template can build nested request bodies and
 //! GraphQL `variables` blocks with the same rules.
@@ -69,13 +73,11 @@ fn render_string(text: &str, values: &Value) -> Option<Value> {
         None => (name, false),
     };
     match values.get(name) {
-        Some(Value::Null) | None => {
-            if explicit_null {
-                Some(Value::Null)
-            } else {
-                None
-            }
-        }
+        // Present and null: the engine means "clear this field", so it is written.
+        Some(Value::Null) => Some(Value::Null),
+        // Absent: nothing to say. `!` still spells that out as an explicit null,
+        // which is what a *create* wants (there is no earlier value to leave alone).
+        None => explicit_null.then_some(Value::Null),
         Some(value) => Some(value.clone()),
     }
 }
@@ -197,11 +199,23 @@ mod tests {
     }
 
     #[test]
-    fn a_null_in_values_behaves_like_absence() {
-        let values = json!({ "body": null });
-        assert_eq!(render(&json!({ "body": "$body" }), &values), json!({}));
+    fn a_present_null_is_written_and_an_absent_value_is_dropped() {
+        // Present and null: the engine is saying "clear this". A partial update is
+        // built from these, so dropping it would make a cleared field unsyncable.
+        let present = json!({ "body": null });
         assert_eq!(
-            render(&json!({ "body": "$body!" }), &values),
+            render(&json!({ "body": "$body" }), &present),
+            json!({ "body": null })
+        );
+
+        // Absent: nothing to say about this field, so it is left out of the request
+        // entirely - which is what keeps a patch from restating what it did not
+        // change. `!` spells the same absence out as an explicit null, for the
+        // creates where there is no earlier value to leave alone.
+        let absent = json!({ "other": 1 });
+        assert_eq!(render(&json!({ "body": "$body" }), &absent), json!({}));
+        assert_eq!(
+            render(&json!({ "body": "$body!" }), &absent),
             json!({ "body": null })
         );
     }

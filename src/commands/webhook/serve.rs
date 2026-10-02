@@ -269,6 +269,9 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
                     "sink_closed": mapping.policy.names.sink.closed,
                     "initial_on_sink": mapping.policy.names.sink.initial,
                 },
+                // How a person is known on each side, so `--check` answers "will the
+                // assignee come across?" without a delivery.
+                "identities": mapping.users.describe(),
             })
         })
         .collect();

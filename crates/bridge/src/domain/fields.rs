@@ -43,6 +43,14 @@ impl IssueFields {
         canonical_labels(&self.labels)
     }
 
+    /// What to change on a target that currently holds `target`.
+    ///
+    /// `self` must already be the *projection* onto the target platform - otherwise
+    /// a field the target cannot represent reads as a permanent difference.
+    pub fn diff(&self, target: &IssueFields) -> Patch {
+        diff(self, target)
+    }
+
     /// The stable hash of every synced field.
     ///
     /// Both directions compute the same value when the two sides already agree,
@@ -63,6 +71,109 @@ impl IssueFields {
             assignee.as_str(),
         ];
         crate::domain::hash::sha256_hex(parts.join("\u{0}").as_bytes())
+    }
+}
+
+/// What a patch does to one field.
+///
+/// Three states, not two, because "leave it alone" and "clear it" are different
+/// requests: a partial update that omitted an unset due date would leave the old
+/// one in place, which is not what the source said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change<T> {
+    /// The source and the target agree; say nothing about it.
+    Leave,
+    /// The source holds this value and the target does not.
+    Set(T),
+    /// The source holds no value and the target does; say so explicitly.
+    Clear,
+}
+
+impl<T> Default for Change<T> {
+    /// Leaving a field alone is what a patch that does not mention it does.
+    fn default() -> Self {
+        Change::Leave
+    }
+}
+
+impl<T> Change<T> {
+    pub fn is_leave(&self) -> bool {
+        matches!(self, Change::Leave)
+    }
+
+    /// The value to write, if this change writes one.
+    pub fn value(&self) -> Option<&T> {
+        match self {
+            Change::Set(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+/// What to send to bring the target up to the source, field by field.
+///
+/// Built by [`IssueFields::diff`] and sent as-is: a field that has not changed is
+/// not mentioned, so an edit to a title does not restate (and cannot clobber) the
+/// labels, the due date or an assignee the target owns differently.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Patch {
+    pub title: Change<String>,
+    pub body: Change<String>,
+    pub labels: Change<Vec<String>>,
+    pub priority: Change<u8>,
+    pub due_date: Change<String>,
+    pub assignee: Change<String>,
+}
+
+impl Patch {
+    /// No field differs: there is nothing to send.
+    pub fn is_empty(&self) -> bool {
+        self == &Patch::default()
+    }
+
+    /// The fields this patch mentions, for a log line or a test.
+    pub fn touched(&self) -> Vec<&'static str> {
+        let named = [
+            ("title", !self.title.is_leave()),
+            ("body", !self.body.is_leave()),
+            ("labels", !self.labels.is_leave()),
+            ("priority", !self.priority.is_leave()),
+            ("due_date", !self.due_date.is_leave()),
+            ("assignee", !self.assignee.is_leave()),
+        ];
+        named
+            .into_iter()
+            .filter_map(|(name, touched)| touched.then_some(name))
+            .collect()
+    }
+}
+
+/// Compare two sides' fields and say what to change.
+///
+/// `self` is what the source *should* look like on the target (already projected),
+/// `target` is what the target actually holds.
+pub fn diff(source: &IssueFields, target: &IssueFields) -> Patch {
+    fn change<T: PartialEq + Clone>(source: Option<&T>, target: Option<&T>) -> Change<T> {
+        match (source, target) {
+            (Some(left), Some(right)) if left == right => Change::Leave,
+            (Some(value), _) => Change::Set(value.clone()),
+            (None, Some(_)) => Change::Clear,
+            (None, None) => Change::Leave,
+        }
+    }
+
+    let source_labels = source.canonical_labels();
+    let target_labels = target.canonical_labels();
+    Patch {
+        title: change(
+            Some(&source.title.trim().to_string()),
+            Some(&target.title.trim().to_string()),
+        ),
+        body: change(Some(&source.body), Some(&target.body)),
+        labels: change(Some(&source_labels), Some(&target_labels)),
+        priority: change(Some(&source.priority), Some(&target.priority)),
+        due_date: change(source.due_date.as_ref(), target.due_date.as_ref()),
+        assignee: change(source.assignee.as_ref(), target.assignee.as_ref()),
     }
 }
 
@@ -149,14 +260,26 @@ impl Identity {
 /// identities correspond, so assignee sync is *off* rather than guessed.
 #[derive(Clone, Debug, Default)]
 pub struct UserMap {
-    /// Canonical form of every configured identity, by connector.
-    entries: Vec<(Identity, Identity)>,
+    /// One group per person: the keys they are known by, one per connector.
+    entries: Vec<Vec<Identity>>,
 }
 
 impl UserMap {
+    /// Groups written as pairs - the common case, and the shape tests use.
     pub fn new(pairs: impl IntoIterator<Item = (Identity, Identity)>) -> Self {
         Self {
-            entries: pairs.into_iter().collect(),
+            entries: pairs
+                .into_iter()
+                .map(|(left, right)| vec![left, right])
+                .collect(),
+        }
+    }
+
+    /// Groups of any size: a person may be known on three platforms, and pairing
+    /// them up two at a time would silently pick one of the two.
+    pub fn from_groups(groups: impl IntoIterator<Item = Vec<Identity>>) -> Self {
+        Self {
+            entries: groups.into_iter().collect(),
         }
     }
 
@@ -170,23 +293,35 @@ impl UserMap {
 
     /// The counterpart of `identity`, if one is configured. Keys are compared
     /// case-insensitively, and any key configured for that connector matches.
+    /// The other key in this identity's group, whichever connector it belongs to.
     pub fn counterpart(&self, identity: &Identity) -> Option<&Identity> {
-        self.entries.iter().find_map(|(left, right)| {
-            if same(left, identity) {
-                Some(right)
-            } else if same(right, identity) {
-                Some(left)
-            } else {
-                None
-            }
-        })
+        self.other_in_group(identity, None)
+    }
+
+    /// The key this identity is known by on `onto`, if the user map says.
+    ///
+    /// The target matters: with three platforms configured, "the counterpart" is
+    /// ambiguous, and picking the first one would send a GitHub login to Forgejo.
+    pub fn counterpart_for(&self, identity: &Identity, onto: &ConnectorId) -> Option<&Identity> {
+        self.other_in_group(identity, Some(onto))
+    }
+
+    fn other_in_group(&self, identity: &Identity, onto: Option<&ConnectorId>) -> Option<&Identity> {
+        self.entries
+            .iter()
+            .find(|group| group.iter().any(|known| same(known, identity)))
+            .and_then(|group| {
+                group.iter().find(|known| {
+                    !same(known, identity) && onto.is_none_or(|onto| &known.connector == onto)
+                })
+            })
     }
 
     /// Every identity known for a connector, for validation and diagnostics.
     pub fn keys_for(&self, connector: &ConnectorId) -> Vec<&str> {
         self.entries
             .iter()
-            .flat_map(|(left, right)| [left, right])
+            .flat_map(|group| group.iter())
             .filter(|identity| &identity.connector == connector)
             .map(|identity| identity.key.as_str())
             .collect()
@@ -196,11 +331,14 @@ impl UserMap {
     pub fn describe(&self) -> BTreeMap<String, String> {
         self.entries
             .iter()
-            .map(|(left, right)| {
-                (
-                    format!("{}:{}", left.connector, left.key),
-                    format!("{}:{}", right.connector, right.key),
-                )
+            .enumerate()
+            .map(|(index, group)| {
+                let described = group
+                    .iter()
+                    .map(|identity| format!("{}:{}", identity.connector, identity.key))
+                    .collect::<Vec<_>>()
+                    .join(" <-> ");
+                (format!("{index}"), described)
             })
             .collect()
     }
@@ -350,6 +488,43 @@ mod tests {
         );
         assert_eq!(map.keys_for(&ConnectorId::new("forgejo")), vec!["vedaru"]);
         assert_eq!(map.describe().len(), 1);
+    }
+
+    #[test]
+    fn a_three_platform_identity_resolves_to_the_one_asked_for() {
+        let map = UserMap::from_groups([vec![
+            Identity::new("linear", "loner@example.com"),
+            Identity::new("forgejo", "vedaru"),
+            Identity::new("github", "vedaru-gh"),
+        ]]);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.keys_for(&ConnectorId::new("linear")).len(), 1);
+        assert_eq!(map.describe().len(), 1);
+
+        let on_forge = map
+            .counterpart_for(
+                &Identity::new("linear", "loner@example.com"),
+                &ConnectorId::new("forgejo"),
+            )
+            .expect("known on forgejo");
+        assert_eq!(on_forge.key, "vedaru");
+
+        let on_github = map
+            .counterpart_for(
+                &Identity::new("linear", "loner@example.com"),
+                &ConnectorId::new("github"),
+            )
+            .expect("known on github");
+        assert_eq!(on_github.key, "vedaru-gh");
+
+        // A connector this person is not known on must not borrow another's key.
+        assert_eq!(
+            map.counterpart_for(
+                &Identity::new("linear", "loner@example.com"),
+                &ConnectorId::new("gitlab"),
+            ),
+            None
+        );
     }
 
     #[test]

@@ -89,25 +89,3 @@ impl EntityRef {
             && self.native_id == other.native_id
     }
 }
-
-/// A change to apply to an entity, in platform-neutral terms.
-///
-/// Every field is optional because a patch is partial by nature; `None` means
-/// "leave it alone", which is different from "clear it".
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Patch {
-    pub title: Option<String>,
-    pub body: Option<String>,
-    pub labels: Option<Vec<String>>,
-    pub due_date: Option<String>,
-    pub priority: Option<u8>,
-    pub assignees: Option<Vec<String>>,
-    /// Name of the target state, as the destination platform names it.
-    pub state: Option<String>,
-}
-
-impl Patch {
-    pub fn is_empty(&self) -> bool {
-        self == &Patch::default()
-    }
-}

@@ -19,8 +19,8 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    canonical_labels, labels_to_priority, priority_to_label, Capabilities, ConnectorId,
-    IssueFields, Secret,
+    canonical_labels, labels_to_priority, priority_to_label, Capabilities, Change, ConnectorId,
+    IssueFields, Patch, Secret,
 };
 use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
@@ -117,13 +117,85 @@ impl DeclarativeSink {
     /// it is added back here: dropping it would quietly lose the priority of every
     /// issue the moment it crossed to a forge.
     fn outbound_labels(&self, fields: &IssueFields) -> Vec<String> {
-        let mut labels = fields.canonical_labels();
+        self.outbound_labels_for(&fields.canonical_labels(), Some(fields.priority))
+    }
+
+    /// The label set to send for a given priority.
+    ///
+    /// The priority is passed separately because on a forge the two are one field:
+    /// a write that names the labels and forgets the priority does not omit it, it
+    /// *clears* it.
+    fn outbound_labels_for(&self, names: &[String], priority: Option<u8>) -> Vec<String> {
+        let mut labels = canonical_labels(names);
         if !self.capabilities.priorities {
-            if let Some(label) = priority_to_label(fields.priority) {
+            if let Some(label) = priority.and_then(priority_to_label) {
                 labels.push(label.to_string());
             }
         }
         labels
+    }
+
+    /// Fill the directives a partial update mentions - and only those.
+    ///
+    /// A field the patch leaves alone must not reach the request at all. That is the
+    /// point of sending a patch: restating a field is what overwrites one the other
+    /// side changed on its own, and this bridge has no business rewriting what it
+    /// did not look at.
+    fn apply_patch(
+        &self,
+        values: &mut Value,
+        patch: &Patch,
+        call: &Call<'_>,
+        operation: &Operation,
+    ) -> Result<()> {
+        if let Change::Set(title) = &patch.title {
+            values["title"] = json!(title);
+        }
+        if let Change::Set(body) = &patch.body {
+            values["body"] = json!(body);
+        }
+        if let Change::Set(names) = &patch.labels {
+            let labels = self.outbound_labels_for(names, call.priority);
+            values["labels"] = json!(labels);
+            if uses(&operation.body, "$label_ids") {
+                let mut ids = Vec::with_capacity(labels.len());
+                for name in &labels {
+                    ids.push(self.resolve(LABEL, call.scope, name)?);
+                }
+                values["label_ids"] = json!(ids);
+            }
+        }
+        if let Change::Set(priority) = &patch.priority {
+            // 0 is "no priority" on the wire, which is how one is cleared.
+            values["priority"] = if *priority == 0 {
+                Value::Null
+            } else {
+                json!(priority)
+            };
+        }
+        match &patch.due_date {
+            Change::Set(date) => values["due_date"] = json!(date),
+            Change::Clear => values["due_date"] = Value::Null,
+            Change::Leave => {}
+        }
+        match &patch.assignee {
+            Change::Set(assignee) => {
+                values["assignee"] = json!(assignee);
+                values["assignees"] = json!([assignee]);
+                if uses(&operation.body, "$assignee_id") {
+                    values["assignee_id"] = json!(self.resolve(ASSIGNEE, call.scope, assignee)?);
+                }
+            }
+            Change::Clear => {
+                // Every shape "nobody" takes: the single value, the id a platform
+                // wants, and the list a forge wants.
+                values["assignee"] = Value::Null;
+                values["assignee_id"] = Value::Null;
+                values["assignees"] = json!([]);
+            }
+            Change::Leave => {}
+        }
+        Ok(())
     }
 
     /// The values a template may use, resolving only what the template asks for:
@@ -167,6 +239,10 @@ impl DeclarativeSink {
                 }
                 values["label_ids"] = json!(ids);
             }
+        }
+
+        if let Some(patch) = call.patch {
+            self.apply_patch(&mut values, patch, call, operation)?;
         }
 
         if let Some(state) = call.state {
@@ -488,20 +564,36 @@ impl Sink for DeclarativeSink {
         &self,
         scope: &str,
         id: &str,
-        fields: &IssueFields,
+        patch: &Patch,
         state: Option<&str>,
     ) -> Result<()> {
         let update = self.operation("update", self.spec.issue.update.as_ref())?;
-        let values = self.context(update, &Call::new(scope).id(id).fields(fields).state(state))?;
+        // The effective priority travels with the call: on a platform that carries
+        // the priority inside a label, writing the labels without it drops it.
+        let values = self.context(
+            update,
+            &Call::new(scope)
+                .id(id)
+                .patch(patch)
+                .priority(patch.priority.value().copied())
+                .state(state),
+        )?;
         self.execute(update, &values)?;
 
         // Labels are their own operation on most platforms (a forge replaces the
-        // whole set, Linear takes ids in the same mutation and would have rendered
-        // `$label_ids` above) - so only run it when the spec declares one.
+        // whole set; Linear takes ids in the same mutation and has rendered
+        // `$label_ids` above) - and it runs only when this patch touches them.
         if let Some(labels) = &self.spec.issue.labels {
-            let values =
-                self.context(labels, &Call::new(scope).id(id).fields(fields).state(state))?;
-            self.execute(labels, &values)?;
+            if !patch.labels.is_leave() {
+                let values = self.context(
+                    labels,
+                    &Call::new(scope)
+                        .id(id)
+                        .patch(patch)
+                        .priority(patch.priority.value().copied()),
+                )?;
+                self.execute(labels, &values)?;
+            }
         }
         Ok(())
     }
@@ -576,6 +668,9 @@ struct Call<'a> {
     scope: &'a str,
     id: Option<&'a str>,
     fields: Option<&'a IssueFields>,
+    patch: Option<&'a Patch>,
+    /// The priority the issue will end up with, whether or not this call sets it.
+    priority: Option<u8>,
     state: Option<&'a str>,
     comment: Option<&'a str>,
     title: Option<&'a str>,
@@ -597,6 +692,16 @@ impl<'a> Call<'a> {
 
     fn fields(mut self, fields: &'a IssueFields) -> Self {
         self.fields = Some(fields);
+        self
+    }
+
+    fn patch(mut self, patch: &'a Patch) -> Self {
+        self.patch = Some(patch);
+        self
+    }
+
+    fn priority(mut self, priority: Option<u8>) -> Self {
+        self.priority = priority;
         self
     }
 

@@ -134,9 +134,11 @@ body = "$body"
 # A forge carries the state on the issue itself, so a transition is an update
 # with a different `state`.
 state = "$state"
-# `!` is the opposite of the default: send null anyway. A due date that was
-# cleared on the other side has to be cleared here, or the two diverge silently.
-due_date = "$due_date!"
+# No `!` here: on an update, a field the patch does not mention must not appear in
+# the request at all, and `!` would turn "not mentioned" into "set it to null" -
+# silently clearing a due date nobody touched. A due date the other side really did
+# clear arrives as an explicit null and is written.
+due_date = "$due_date"
 assignees = "$assignees"
 
 [sink.issue.fetch]

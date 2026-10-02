@@ -123,7 +123,7 @@ path = ""
 id = "/data/issueUpdate/issue/id"
 [sink.issue.update.body]
 query = "mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id url } } }"
-variables = { id = "$id", input = { title = "$title", description = "$body", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date!", priority = "$priority!", assigneeId = "$assignee_id" } }
+variables = { id = "$id", input = { title = "$title", description = "$body", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
 
 [sink.issue.fetch]
 method = "POST"

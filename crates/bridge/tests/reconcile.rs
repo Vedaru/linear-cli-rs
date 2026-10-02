@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use linear_bridge::connector::Source;
-use linear_bridge::domain::{ConnectorId, EntityKind, EntityRef, Secret};
+use linear_bridge::domain::{ConnectorId, EntityKind, EntityRef, Secret, UserMap};
 use linear_bridge::queue::Handler;
 use linear_bridge::reconcile::handler::{default_policy, Endpoint, Mapping, ReconcileHandler};
 use linear_bridge::reconcile::{Direction, Sides, StateNames};
@@ -43,6 +43,9 @@ struct World {
     /// Comments posted on the forge, and every edit or deletion of one.
     forgejo_comments: Vec<Value>,
     forgejo_comment_calls: Vec<(String, Value)>,
+    /// Every write the forge was asked to make, so a test can tell "nothing to do"
+    /// from "did the same thing again".
+    forgejo_writes: usize,
     linear_comments: Vec<Value>,
     /// Edits and deletions of mirrored comments, as Linear received them.
     linear_comment_edits: Vec<Value>,
@@ -190,6 +193,7 @@ fn forgejo_routes(
                 None => (404, json!({ "message": "issue does not exist" })),
             },
             ("POST", false, false, false) => {
+                world.forgejo_writes += 1;
                 world.forgejo_next += 1;
                 let number = world.forgejo_next;
                 let issue = json!({
@@ -199,13 +203,21 @@ fn forgejo_routes(
                     "body": body["body"].as_str().unwrap_or_default(),
                     "state": "open",
                     "labels": [{ "id": 3, "name": "Bug" }],
+                    // Applied, not ignored: what the forge *holds* is what the next
+                    // delivery is compared against.
+                    "assignees": body.get("assignees").cloned().unwrap_or(json!([])),
+                    "due_date": body.get("due_date").cloned().unwrap_or(Value::Null),
                 });
                 world.forgejo = Some(issue.clone());
                 (201, issue)
             }
             ("PATCH", true, false, false) => {
+                world.forgejo_writes += 1;
                 let issue = world.forgejo.as_mut().expect("a patch needs an issue");
-                for key in ["title", "body", "state"] {
+                // A real patch: the keys that arrived are applied, and the ones that
+                // did not are left as they were - which is exactly what a partial
+                // update promises.
+                for key in ["title", "body", "state", "assignees", "due_date"] {
                     if let Some(value) = body.get(key) {
                         issue[key] = value.clone();
                     }
@@ -213,6 +225,7 @@ fn forgejo_routes(
                 (200, issue.clone())
             }
             ("PUT", true, false, true) => {
+                world.forgejo_writes += 1;
                 let issue = world
                     .forgejo
                     .as_mut()
@@ -311,6 +324,7 @@ impl Harness {
         policy.direction = direction;
         let mapping = Mapping {
             name: "linear-cli-rs".into(),
+            users: UserMap::default(),
             source: Endpoint::parse("linear:VED").unwrap(),
             sink: Endpoint::parse("forgejo:Vedaru/linear-cli-rs").unwrap(),
             policy,
@@ -365,6 +379,21 @@ impl Harness {
         self.handler
             .handle(&delivery)
             .expect("the delivery is handled");
+    }
+
+    /// How many writes the forge was asked to make.
+    fn forgejo_writes(&self) -> usize {
+        self.world.lock().unwrap().forgejo_writes
+    }
+
+    /// The forge issue as the fake holds it now.
+    fn forgejo(&self) -> Value {
+        self.world
+            .lock()
+            .unwrap()
+            .forgejo
+            .clone()
+            .expect("the forge has an issue")
     }
 
     /// Every link that has this entity at either end.
@@ -502,6 +531,13 @@ fn issue_ref() -> EntityRef {
 }
 
 /// The world's Linear issue, in the shape the API returns it.
+/// The Linear issue, with somebody assigned to it.
+fn linear_issue_assigned(title: &str, state: &str, email: &str) -> Value {
+    let mut issue = linear_issue_state(title, state);
+    issue["assignee"] = json!({ "email": email });
+    issue
+}
+
 fn linear_issue_state(title: &str, state: &str) -> Value {
     json!({
         "id": "issue-1",
@@ -735,6 +771,55 @@ fn a_comment_written_edited_and_deleted_on_the_forge_does_the_same_on_linear() {
         vec![json!("linear-comment-1")]
     );
     assert_eq!(harness.links_for(forgejo_comment_ref()).len(), 0);
+}
+
+#[test]
+fn an_assignee_with_no_identity_map_stays_behind_and_stops_being_a_difference() {
+    let mut harness = Harness::start();
+    // The person exists on Linear and nowhere else: the mapping has no identity map,
+    // so the mirror has not been told what this login is called on the forge.
+    harness.world.lock().unwrap().linear = Some(linear_issue_assigned(
+        "Mirror the thing",
+        "Todo",
+        "loner@example.com",
+    ));
+
+    harness.deliver("linear", "Issue", &linear_issue("create"));
+
+    assert_eq!(harness.forgejo_writes(), 1, "the issue is mirrored once");
+    assert_eq!(
+        harness.forgejo()["assignees"],
+        json!([]),
+        "an unconfigured identity is left behind, not sent as a Linear login"
+    );
+
+    // An edit that has nothing to do with the assignee. The mirror must write the
+    // title and nothing else - an assignee write here would be the same unwritable
+    // value going across on every single delivery.
+    harness.world.lock().unwrap().linear = Some(linear_issue_assigned(
+        "Mirror the thing (edited)",
+        "Todo",
+        "loner@example.com",
+    ));
+    harness.deliver("linear", "Issue", &linear_issue("update"));
+
+    assert_eq!(harness.forgejo_writes(), 2, "one create, one update");
+    assert_eq!(harness.forgejo()["title"], "Mirror the thing (edited)");
+    assert_eq!(
+        harness.forgejo()["assignees"],
+        json!([]),
+        "the edit was about the title, and the assignee is not writable here"
+    );
+
+    // And it must not keep coming back. A provider re-send of the same change has
+    // nothing left to do, because what the link records is what the *forge* holds -
+    // which never included the assignee.
+    harness.deliver("linear", "Issue", &linear_issue("update"));
+    assert_eq!(
+        harness.forgejo_writes(),
+        2,
+        "the same edit arrived twice and was written twice: the hash never converged"
+    );
 }
 
 #[test]
