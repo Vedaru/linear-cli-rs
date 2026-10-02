@@ -36,56 +36,6 @@ fn fields() -> IssueFields {
 // A forge: REST, ids for labels, the state on the issue itself.
 
 #[test]
-fn a_github_issue_is_created_commented_and_closed() {
-    // The third platform, and the first one whose write half arrived as *configuration*:
-    // its routes are in `presets/fixtures/github.toml`, its endpoints in
-    // `presets/github.toml`, and nothing in this file knows GitHub apart from the strings
-    // a test has to name. It is also the first shipped preset with no due-date field and
-    // no priority field, so both travel as labels - the emulation's first real user.
-    let fake = Fake::start_from("github");
-    let sink = fake.sink("github");
-
-    let reference = sink.create_issue("o/r", &fields(), None).expect("create");
-    assert_eq!(reference.id, "12");
-    assert_eq!(
-        reference.url.as_deref(),
-        Some("https://github.com/o/r/issues/12")
-    );
-
-    let create = fake.only("POST", "/repos/o/r/issues");
-    assert_eq!(create.body["title"], "Mirror the thing");
-    // Labels are names here, not ids: GitHub manages the repository's labels itself.
-    let labels: Vec<&str> = create.body["labels"]
-        .as_array()
-        .expect("a label array")
-        .iter()
-        .map(|label| label.as_str().expect("a name"))
-        .collect();
-    assert!(labels.contains(&"bug"), "{labels:?}");
-    assert!(labels.contains(&"urgent"), "{labels:?}");
-    // No priority field, so the priority rides along as the label it understands...
-    assert!(
-        labels.iter().any(|label| label.starts_with("priority:")),
-        "{labels:?}"
-    );
-    // ...and no due-date field, so the date does the same.
-    assert!(labels.contains(&"due:2026-10-09"), "{labels:?}");
-    // GitHub takes a list of assignees, which the neutral model's one assignee becomes.
-    assert_eq!(create.body["assignees"], json!(["vedaru"]));
-
-    // Closing is a state on the issue, not a separate endpoint.
-    sink.transition("o/r", "12", "closed").expect("close");
-    assert_eq!(
-        fake.only("PATCH", "/repos/o/r/issues/12").body["state"],
-        "closed"
-    );
-
-    let comment = sink.comment("o/r", "12", "looks good").expect("comment");
-    assert_eq!(comment.id, "77");
-    fake.only("POST", "/repos/o/r/issues/12/comments");
-}
-
-#[test]
 fn an_emulated_due_date_survives_a_labels_only_update() {
     // The bug this pins: a labels-only patch has nothing to say about the due date, so a
     // sink that read the value out of the patch would send the label set *without* the

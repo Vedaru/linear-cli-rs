@@ -33,9 +33,7 @@ fn source(name: &str) -> DeclarativeSource {
 fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
     // The capability follows the operation, so the two cannot disagree - and a sweep
     // asks "can I look?" rather than discovering it on the first run.
-    // GitHub gained its write half (VED-25), so it is sweepable too - and the fact that
-    // this list had to change is the derivation working: nothing declared it twice.
-    for name in ["linear", "forgejo", "github"] {
+    for name in ["linear", "forgejo"] {
         let preset = presets::preset(name).expect("the preset loads");
         let capabilities = preset.capabilities.resolve(preset.sink.as_ref());
         assert!(capabilities.list, "{name} declares a list operation");
@@ -45,11 +43,9 @@ fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
     // The intake-only presets cannot be enumerated, and they say so: their API half
     // is a separate piece of work, and a sweep running against one must refuse
     // rather than report an empty scope.
-    for name in ["gitlab"] {
+    for name in ["github", "gitlab"] {
         let preset = presets::preset(name).expect("the preset loads");
         assert!(preset.sink.is_none(), "{name} is intake-only today");
-        // Its API half is separate work; until then a sweep must refuse rather than
-        // report an empty scope.
         let capabilities = preset.capabilities.resolve(preset.sink.as_ref());
         assert!(!capabilities.list, "{name} cannot be swept");
     }
