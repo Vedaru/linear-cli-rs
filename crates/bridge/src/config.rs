@@ -41,6 +41,7 @@
 //! source = "linear:VED"
 //! sink = "forgejo:Vedaru/linear-cli-rs"
 //! direction = "both"              # or `oneway` for source -> sink only
+//! sync_projects = true            # mirror projects as well as their issues
 //! ```
 //!
 //! `type = "generic"` plus a spec is not a fallback for the platforms this crate
@@ -144,6 +145,10 @@ pub struct MappingConfig {
     pub sink: String,
     pub direction: Direction,
     pub sync_issues: bool,
+    /// Mirror *projects* as well as their issues. Off unless a deployment asks:
+    /// copying the containers when it was configured for their contents is a
+    /// surprise, so this is opt-in exactly as it is in the policy.
+    pub sync_projects: bool,
     pub git_automation: bool,
     pub delete_sync: bool,
     /// `[[mapping.identity]]`: how one person is known on each platform, e.g.
@@ -203,6 +208,7 @@ impl MappingConfig {
         crate::reconcile::Policy {
             direction: self.direction,
             sync_issues: self.sync_issues,
+            sync_projects: self.sync_projects,
             git_automation: self.git_automation,
             delete_sync: self.delete_sync,
             names: Sides::new(source.states.clone(), sink.states.clone()),
@@ -604,6 +610,7 @@ fn build_mappings(
                 sink: section.sink,
                 direction,
                 sync_issues: section.sync_issues,
+                sync_projects: section.sync_projects,
                 git_automation: section.git_automation,
                 delete_sync: section.delete_sync,
                 identity: section.identity,
@@ -713,6 +720,9 @@ struct MappingSection {
     identity: Vec<BTreeMap<String, String>>,
     #[serde(default = "default_true")]
     sync_issues: bool,
+    /// Projects are opt-in: absent means off.
+    #[serde(default)]
+    sync_projects: bool,
     #[serde(default = "default_true")]
     git_automation: bool,
     #[serde(default)]
@@ -1239,5 +1249,32 @@ id = "/id"
         );
         let config = parse(&text).unwrap();
         assert!(config.worker.lease > config.worker.backoff_max);
+    }
+
+    #[test]
+    fn project_mirroring_is_off_unless_a_mapping_asks_for_it() {
+        // The switch is opt-in: an existing config mirrors issues only, and a Project
+        // event stays inert exactly as it did before projects were modelled.
+        let config = parse(&document("")).expect("the document loads");
+        assert!(
+            !config.mappings[0].sync_projects,
+            "projects must be off by default"
+        );
+
+        let config = parse(&document("sync_projects = true")).expect("the document loads");
+        assert!(config.mappings[0].sync_projects);
+        let linear = config
+            .platforms
+            .iter()
+            .find(|platform| platform.name.as_str() == "linear")
+            .unwrap();
+        let forgejo = config
+            .platforms
+            .iter()
+            .find(|platform| platform.name.as_str() == "forgejo")
+            .unwrap();
+        // And it reaches the policy the reconciler runs with, the same way the issue
+        // switch does.
+        assert!(config.mappings[0].policy(linear, forgejo).sync_projects);
     }
 }

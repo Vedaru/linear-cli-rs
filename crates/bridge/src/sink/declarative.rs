@@ -790,6 +790,101 @@ impl Sink for DeclarativeSink {
         self.execute(attach, &values)?;
         Ok(())
     }
+
+    // --- projects ----------------------------------------------------------
+
+    fn fetch_project(&self, scope: &str, id: &str) -> Result<Option<RemoteIssue>> {
+        let project = self.declared("project", self.spec.project.as_ref())?;
+        let fetch = self.operation("project.fetch", project.fetch.as_ref())?;
+        let values = self.context(fetch, &Call::new(scope).id(id))?;
+        let request = self.spec.request(fetch, &values, self.secret.as_ref())?;
+        let response = self.client.send(&request)?;
+        if response.status == 404 {
+            return Ok(None);
+        }
+        if !response.is_success() {
+            return Err(Error::Upstream(format!(
+                "{} {} -> {} {}",
+                request.method.as_str(),
+                request.url,
+                response.status,
+                response.summary()
+            )));
+        }
+        let read = project.read.clone().unwrap_or_default();
+        Ok(Some(read_issue(&response.body, &read, id)))
+    }
+
+    fn list_projects(&self, scope: &str) -> Result<Vec<RemoteIssue>> {
+        let project = self.declared("project", self.spec.project.as_ref())?;
+        let list = self
+            .declared("project.list", project.list.as_ref())?
+            .clone();
+        let mut projects = Vec::new();
+        let mut page = 1usize;
+        let mut cursor: Option<String> = None;
+
+        let budget = list.paginate.as_ref().map_or(1, PaginateSpec::max_pages);
+        for _ in 0..budget {
+            let values = self.context(
+                &list.request,
+                &Call::new(scope).page(page).cursor(cursor.as_deref()),
+            )?;
+            let request = self
+                .spec
+                .request(&list.request, &values, self.secret.as_ref())?;
+            let response = self.send(&request)?;
+            let items: Vec<Value> = match &list.request.items {
+                Some(pointer) => resolve(&response.body, pointer).and_then(Value::as_array),
+                None => response.body.as_array(),
+            }
+            .cloned()
+            .unwrap_or_default();
+            for item in &items {
+                projects.push(read_issue(item, &list.read, ""));
+            }
+            match next_page(list.paginate.as_ref(), &response.body, items.len(), page) {
+                Some(Next::Page(next)) => page = next,
+                Some(Next::Cursor(next)) => cursor = Some(next),
+                None => break,
+            }
+        }
+        Ok(projects)
+    }
+
+    fn create_project(
+        &self,
+        scope: &str,
+        fields: &IssueFields,
+        state: Option<&str>,
+    ) -> Result<RemoteRef> {
+        let project = self.declared("project", self.spec.project.as_ref())?;
+        let create = self.operation("project.create", project.create.as_ref())?;
+        let values = self.context(create, &Call::new(scope).fields(fields).state(state))?;
+        let reference = self.execute(create, &values)?;
+        if reference.id.is_empty() {
+            return Err(Error::Upstream(format!(
+                "{} created a project but the response had no id at `{}`",
+                self.id,
+                create.id.as_deref().unwrap_or("-")
+            )));
+        }
+        Ok(reference)
+    }
+
+    fn update_project(
+        &self,
+        scope: &str,
+        id: &str,
+        patch: &Patch,
+        _effective: &IssueFields,
+    ) -> Result<()> {
+        let project = self.declared("project", self.spec.project.as_ref())?;
+        let update = self.operation("project.update", project.update.as_ref())?;
+        let values = self.context(update, &Call::new(scope).id(id).patch(patch))?;
+        self.execute(update, &values)?;
+        Ok(())
+    }
 }
 
 /// What one call knows. A struct rather than a list of `Option`s: the call sites
@@ -968,6 +1063,7 @@ mod tests {
                     headers: Default::default(),
                     error_pointer: None,
                     issue: Default::default(),
+                    project: None,
                 },
                 None,
                 capabilities.clone(),

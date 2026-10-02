@@ -366,6 +366,7 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                     "issue" => EntityKind::Issue,
                     "comment" => EntityKind::Comment,
                     "reference" => EntityKind::Reference,
+                    "project" => EntityKind::Project,
                     "other" => EntityKind::Other(
                         delivery
                             .other_name

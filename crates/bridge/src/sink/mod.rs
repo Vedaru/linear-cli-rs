@@ -19,7 +19,7 @@ pub mod spec;
 pub mod template;
 
 use crate::domain::{Capabilities, ConnectorId, IssueFields, Patch};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// A pointer to an entity on the platform, as the platform identifies it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,4 +102,51 @@ pub trait Sink: Send + Sync {
 
     /// Attach a link (a mirrored issue, a pull request, a commit) to an issue.
     fn attach(&self, scope: &str, id: &str, url: &str, title: &str) -> Result<()>;
+
+    // --- projects ----------------------------------------------------------
+    //
+    // A project is its own entity, not an issue: it has a title and a description
+    // and nothing else the platforms share. The operations below mirror the issue
+    // ones, and a sink that does not declare them refuses by name rather than
+    // silently doing nothing - the same rule every other operation follows.
+
+    /// Read a project's current state.
+    fn fetch_project(&self, _scope: &str, _id: &str) -> Result<Option<RemoteIssue>> {
+        Err(Error::Unsupported(
+            "project.fetch".into(),
+            self.id().clone(),
+        ))
+    }
+
+    /// Every project in a scope.
+    fn list_projects(&self, _scope: &str) -> Result<Vec<RemoteIssue>> {
+        Err(Error::Unsupported("project.list".into(), self.id().clone()))
+    }
+
+    /// Create a project. The description is where the pairing marker is embedded.
+    fn create_project(
+        &self,
+        _scope: &str,
+        _fields: &IssueFields,
+        _state: Option<&str>,
+    ) -> Result<RemoteRef> {
+        Err(Error::Unsupported(
+            "project.create".into(),
+            self.id().clone(),
+        ))
+    }
+
+    /// Apply the title/description difference to an existing project.
+    fn update_project(
+        &self,
+        _scope: &str,
+        _id: &str,
+        _patch: &Patch,
+        _effective: &IssueFields,
+    ) -> Result<()> {
+        Err(Error::Unsupported(
+            "project.update".into(),
+            self.id().clone(),
+        ))
+    }
 }

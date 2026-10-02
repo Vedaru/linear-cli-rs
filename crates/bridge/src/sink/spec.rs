@@ -44,6 +44,11 @@ pub struct SinkSpec {
     #[serde(default)]
     pub error_pointer: Option<String>,
     pub issue: IssueSpec,
+    /// The write half for *projects*, when this platform mirrors them. Absent means
+    /// the platform does not do projects through this bridge, and a mapping that
+    /// asks it to refuses by name.
+    #[serde(default)]
+    pub project: Option<IssueSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -397,6 +402,9 @@ impl SinkSpec {
                 validate_operation(&format!("lookup.{kind}.create"), create)?;
             }
         }
+        if let Some(project) = &self.project {
+            validate_project(project)?;
+        }
         Ok(())
     }
 
@@ -508,6 +516,41 @@ fn scalar(value: &Value) -> Option<String> {
         Value::Number(number) => Some(number.to_string()),
         _ => None,
     }
+}
+
+/// The project half of a spec: its own create/update/fetch/list.
+///
+/// A project spec may declare only some of these - a platform read but not written
+/// is served by the source half - but whatever it declares must be well-formed, and a
+/// declared list must be able to identify its items or a sweep cannot pair them.
+fn validate_project(project: &IssueSpec) -> std::result::Result<(), String> {
+    let operations = [
+        ("create", project.create.as_ref()),
+        ("update", project.update.as_ref()),
+        ("fetch", project.fetch.as_ref()),
+        ("delete", project.delete.as_ref()),
+        ("transition", project.transition.as_ref()),
+        ("attach", project.attach.as_ref()),
+        ("labels", project.labels.as_ref()),
+    ];
+    for (name, operation) in operations {
+        if let Some(operation) = operation {
+            validate_operation(&format!("project.{name}"), operation)?;
+        }
+    }
+    if let Some(comment) = &project.comment {
+        validate_operation("project.comment.create", &comment.create)?;
+    }
+    if let Some(list) = &project.list {
+        validate_operation("project.list", &list.request)?;
+        if list.read.id.is_none() {
+            return Err("project.list.read.id is required: a sweep pairs by id".into());
+        }
+        if let Some(paginate) = &list.paginate {
+            paginate.validate("project.list.paginate")?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_operation(name: &str, operation: &Operation) -> std::result::Result<(), String> {

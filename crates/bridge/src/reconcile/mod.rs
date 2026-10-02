@@ -229,6 +229,11 @@ pub fn content_key_with(fields: &IssueFields, openness: Openness) -> String {
 pub struct Policy {
     pub direction: Direction,
     pub sync_issues: bool,
+    /// Whether *projects* - the container of issues - are mirrored. Off unless a
+    /// deployment asks for it, the same way issue syncing is a switch: a mirror that
+    /// suddenly started copying containers when it was configured for their contents
+    /// is a surprise nobody wants.
+    pub sync_projects: bool,
     pub git_automation: bool,
     pub delete_sync: bool,
     pub names: Sides<StateNames>,
@@ -238,6 +243,11 @@ impl Policy {
     /// Issue-level syncing is on, both for issues and for their comments.
     fn issues(&self) -> bool {
         self.sync_issues
+    }
+
+    /// Project-level syncing, which is its own switch.
+    fn projects(&self) -> bool {
+        self.sync_projects
     }
 }
 
@@ -370,6 +380,7 @@ pub fn plan(context: &Context<'_>) -> Step {
         EntityKind::Issue => plan_issue(context),
         EntityKind::Comment => plan_comment(context),
         EntityKind::Reference => plan_reference(context),
+        EntityKind::Project => plan_project(context),
         EntityKind::Other(_) => Step::Nothing(Nothing::NotOurKind),
     }
 }
@@ -553,6 +564,103 @@ fn plan_delete(context: &Context<'_>) -> Step {
         return Step::Nothing(Nothing::AlreadyEqual);
     }
     Step::Delete
+}
+
+/// The decision for a *project*: title and description only.
+///
+/// A project is not an issue with fewer fields - it has no labels, priority, due
+/// date, assignee or workflow state that both platforms share - so it gets its own
+/// decision rather than a special case threaded through the issue one. What it does
+/// share is the shape: a create is mirrored from either side, an edit converges onto
+/// the other, and a pair is proven by the marker in the copy's description.
+fn plan_project(context: &Context<'_>) -> Step {
+    let policy = context.policy;
+    if !policy.projects() {
+        return Step::Nothing(Nothing::SwitchedOff);
+    }
+    if !policy.direction.allows(context.side) {
+        return Step::Nothing(Nothing::Direction);
+    }
+    if !context.observed.exists() {
+        // A project the platform no longer has. Deletion is not mirrored for
+        // projects: neither preset declares a delete operation, and inventing one
+        // from an empty read would be a destructive guess.
+        return Step::Nothing(Nothing::Unpaired);
+    }
+
+    match context.event.action {
+        crate::domain::Action::Created => {
+            if context.link.is_some() {
+                // Already paired: a replay, not a second project.
+                return Step::Nothing(Nothing::Echo);
+            }
+            Step::Create {
+                fields: context.expected.fields.clone(),
+                // Projects have no workflow state to land in.
+                state: None,
+                skipped: context.expected.skipped.clone(),
+            }
+        }
+        crate::domain::Action::Deleted => Step::Nothing(Nothing::Unsupported),
+        crate::domain::Action::Other(_) => Step::Nothing(Nothing::NotOurKind),
+        _ => plan_project_change(context),
+    }
+}
+
+/// A project change converges on the other side, title and description only.
+fn plan_project_change(context: &Context<'_>) -> Step {
+    let policy = context.policy;
+    let Some(link) = context.link else {
+        return Step::Nothing(Nothing::Unpaired);
+    };
+    if !context.counterpart.exists() {
+        // The pair is broken. Re-creating from an *edit* is how a mirror resurrects
+        // things, so it does not happen here; a sweep may, because making the two
+        // agree is what it was asked.
+        return Step::Nothing(Nothing::Unpaired);
+    }
+
+    // The same echo guard an issue change has: a recorded revision that matches what
+    // the source now holds means this delivery is our own write coming back.
+    let ours = policy.names.of(context.side);
+    let expected_key = content_key_with(
+        &context.expected.fields,
+        ours.openness(context.observed.state.as_deref()),
+    );
+    if link.last_synced_hash.as_deref() == Some(expected_key.as_str()) {
+        return Step::Nothing(Nothing::Echo);
+    }
+    let counterpart_key = context
+        .counterpart
+        .key(policy.names.of(context.side.other()));
+    if counterpart_key.as_deref() == Some(expected_key.as_str()) {
+        return Step::Nothing(Nothing::AlreadyEqual);
+    }
+
+    let counterpart_fields = context
+        .counterpart
+        .fields
+        .clone()
+        .expect("checked that the counterpart exists");
+    let mut patch = context.expected.fields.diff(&counterpart_fields);
+    // A project carries only its title and description. Any other neutral field is
+    // something neither platform models here, so it must not reach the request - a
+    // label or an assignee on a project would be a field the platform cannot hold.
+    patch.labels = Change::Leave;
+    patch.priority = Change::Leave;
+    patch.due_date = Change::Leave;
+    patch.assignee = Change::Leave;
+    if patch.is_empty() {
+        return Step::Nothing(Nothing::AlreadyEqual);
+    }
+
+    Step::Update {
+        patch,
+        fields: context.expected.fields.clone(),
+        // No workflow state travels with a project.
+        state: None,
+        skipped: context.expected.skipped.clone(),
+    }
 }
 
 fn plan_comment(context: &Context<'_>) -> Step {
@@ -765,6 +873,7 @@ mod tests {
         Policy {
             direction: Direction::Both,
             sync_issues: true,
+            sync_projects: false,
             git_automation: true,
             delete_sync: true,
             names: Sides::new(
@@ -1398,6 +1507,74 @@ mod tests {
             fixture.plan(Side::Source),
             Step::Nothing(Nothing::NotOurKind)
         );
+    }
+
+    /// A project pair: the entity is a project on both ends, with no state.
+    fn project_fixture() -> Fixture {
+        let mut fixture = Fixture::default();
+        fixture.event.kind = EntityKind::Project;
+        fixture.event.subject = EntityRef {
+            kind: EntityKind::Project,
+            native_id: "project-1".into(),
+            ..reference("linear", "project-1")
+        };
+        fixture.observed = Snapshot::present(fields("Mirror the widget", &[], 0), None);
+        fixture.counterpart = Snapshot::present(fields("Mirror the widget", &[], 0), None);
+        fixture
+    }
+
+    #[test]
+    fn project_mirroring_is_switched_off_until_a_deployment_asks_for_it() {
+        // The acceptance clause for the default: a Project event is inert unless
+        // `sync_projects` is on, exactly as it was before this build learned about
+        // projects at all.
+        let mut fixture = project_fixture();
+        fixture.event.action = Action::Created;
+        fixture.counterpart = Snapshot::gone();
+
+        assert_eq!(
+            fixture.plan(Side::Source),
+            Step::Nothing(Nothing::SwitchedOff),
+            "a project event must not mirror by default"
+        );
+    }
+
+    #[test]
+    fn a_project_event_is_a_create_once_project_syncing_is_on() {
+        // The other half of the default: with the switch on, the same event is no
+        // longer the inert catch-all - it becomes a real project to mirror.
+        let mut fixture = project_fixture();
+        fixture.policy.sync_projects = true;
+        fixture.event.action = Action::Created;
+        fixture.counterpart = Snapshot::gone();
+
+        match fixture.plan(Side::Source) {
+            Step::Create { fields, state, .. } => {
+                assert_eq!(fields.title, "Mirror the widget");
+                assert_eq!(state, None, "a project has no workflow state");
+            }
+            other => panic!("expected a create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_project_rename_converges_on_the_other_side() {
+        let mut fixture = project_fixture();
+        fixture.policy.sync_projects = true;
+        // The recorded revision is the original title; the source then moves.
+        paired_with(&mut fixture, Side::Source);
+        fixture.observed = Snapshot::present(fields("Mirror the widget, properly", &[], 0), None);
+
+        match fixture.plan(Side::Source) {
+            Step::Update { patch, state, .. } => {
+                assert_eq!(
+                    patch.title,
+                    Change::Set("Mirror the widget, properly".to_string())
+                );
+                assert!(state.is_none(), "no workflow state travels with a project");
+            }
+            other => panic!("expected an update, got {other:?}"),
+        }
     }
 
     #[test]

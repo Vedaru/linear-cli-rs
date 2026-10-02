@@ -454,6 +454,7 @@ fn kind_from_name(name: &str) -> EntityKind {
         "issue" => EntityKind::Issue,
         "comment" => EntityKind::Comment,
         "reference" => EntityKind::Reference,
+        "project" => EntityKind::Project,
         other => EntityKind::Other(other.to_owned()),
     }
 }

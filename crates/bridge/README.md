@@ -62,6 +62,7 @@ name = "linear-cli-rs"
 source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
 direction = "both"                      # or `oneway`
+sync_projects = true                    # mirror projects too (off by default)
 ```
 
 ### Without a service

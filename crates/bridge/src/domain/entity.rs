@@ -9,6 +9,10 @@ pub enum EntityKind {
     Comment,
     /// A pull request, merge request or bare commit reference.
     Reference,
+    /// A container of issues - Linear's project, a forge's project. Mirrored as its
+    /// own entity: it has a title and a description and nothing else the two
+    /// platforms share.
+    Project,
     /// A kind this build does not model. Kept rather than dropped so intake can
     /// acknowledge a delivery from a newer platform version instead of failing.
     Other(String),
@@ -20,6 +24,7 @@ impl EntityKind {
             EntityKind::Issue => "issue",
             EntityKind::Comment => "comment",
             EntityKind::Reference => "reference",
+            EntityKind::Project => "project",
             EntityKind::Other(name) => name,
         }
     }

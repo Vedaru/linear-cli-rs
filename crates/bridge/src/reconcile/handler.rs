@@ -257,11 +257,19 @@ impl ReconcileHandler {
             .and_then(|link| link.counterpart(&subject))
             .cloned();
 
-        let observed = self.snapshot(&here.connector, &here.scope, &event.subject.native_id)?;
+        let observed = self.snapshot(
+            &subject.kind,
+            &here.connector,
+            &here.scope,
+            &subject.native_id,
+        )?;
         let counterpart = match &counterpart_ref {
-            Some(reference) => {
-                self.snapshot(&there.connector, &there.scope, &reference.native_id)?
-            }
+            Some(reference) => self.snapshot(
+                &reference.kind,
+                &there.connector,
+                &there.scope,
+                &reference.native_id,
+            )?,
             None => Snapshot::gone(),
         };
 
@@ -344,10 +352,16 @@ impl ReconcileHandler {
                 let fields = stamped(fields, pair.subject);
                 self.report_skipped(pair.mapping, &skipped);
                 let sink = self.sink(&pair.there.connector)?;
-                let created = sink.create_issue(&pair.there.scope, &fields, state.as_deref())?;
+                let kind = pair.subject.kind.clone();
+                let created = match kind {
+                    EntityKind::Project => {
+                        sink.create_project(&pair.there.scope, &fields, state.as_deref())?
+                    }
+                    _ => sink.create_issue(&pair.there.scope, &fields, state.as_deref())?,
+                };
                 let created_ref = EntityRef {
                     connector: pair.there.connector.clone(),
-                    kind: EntityKind::Issue,
+                    kind,
                     scope: Some(pair.there.scope.clone()),
                     native_id: created.id.clone(),
                     url: created.url.clone(),
@@ -384,13 +398,21 @@ impl ReconcileHandler {
                 self.report_skipped(pair.mapping, &skipped);
                 let touched = patch.touched().join(", ");
                 let sink = self.sink(&pair.there.connector)?;
-                sink.update_issue(
-                    &pair.there.scope,
-                    &reference.native_id,
-                    &patch,
-                    &fields,
-                    state.as_deref(),
-                )?;
+                match pair.subject.kind {
+                    EntityKind::Project => sink.update_project(
+                        &pair.there.scope,
+                        &reference.native_id,
+                        &patch,
+                        &fields,
+                    )?,
+                    _ => sink.update_issue(
+                        &pair.there.scope,
+                        &reference.native_id,
+                        &patch,
+                        &fields,
+                        state.as_deref(),
+                    )?,
+                }
                 // The link records the revision the target now holds - the projected
                 // fields, not the raw ones. Recording the source's own truth is how a
                 // field the target cannot hold turns into a difference forever.
@@ -576,9 +598,31 @@ impl ReconcileHandler {
     /// trusting.
     pub fn survey(&mut self, index: usize) -> Result<Survey> {
         let mapping = self.mappings[index].clone();
-        let source = self.list_end(&mapping.source)?;
-        let sink = self.list_end(&mapping.sink)?;
-        let links = self.links_among(&source, &sink)?;
+        let issues_source = self.list_end(&mapping.source, &EntityKind::Issue)?;
+        let issues_sink = self.list_end(&mapping.sink, &EntityKind::Issue)?;
+
+        // Projects are a second collection behind their own switch. A deployment that
+        // never asked for them must not so much as list them, or a sweep would start
+        // proposing project writes it was never configured for.
+        let (projects_source, projects_sink) = if mapping.policy.sync_projects {
+            (
+                self.list_end(&mapping.source, &EntityKind::Project)?,
+                self.list_end(&mapping.sink, &EntityKind::Project)?,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        // Links are gathered from every entity either sweep will judge: an issue link
+        // and a project link live in the same table, keyed by identity, so the one
+        // lookup serves both.
+        let mut found: Vec<Found> = Vec::new();
+        found.extend(issues_source.iter().cloned());
+        found.extend(issues_sink.iter().cloned());
+        found.extend(projects_source.iter().cloned());
+        found.extend(projects_sink.iter().cloned());
+        let links = self.links_among(&found)?;
+
         let source_caps = self.sink(&mapping.source.connector)?.capabilities();
         let sink_caps = self.sink(&mapping.sink.connector)?.capabilities();
 
@@ -588,7 +632,22 @@ impl ReconcileHandler {
             sink: describe_end(&mapping.sink),
             entries: Vec::new(),
         };
-        for pairing in sweep::pair_up(&source, &sink, &mapping.sink.connector, &links) {
+        for pairing in sweep::pair_up(
+            &issues_source,
+            &issues_sink,
+            &mapping.sink.connector,
+            &links,
+        ) {
+            survey
+                .entries
+                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps));
+        }
+        for pairing in sweep::pair_up(
+            &projects_source,
+            &projects_sink,
+            &mapping.sink.connector,
+            &links,
+        ) {
             survey
                 .entries
                 .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps));
@@ -638,17 +697,20 @@ impl ReconcileHandler {
         Ok(written)
     }
 
-    /// Everything one end of a mapping holds.
-    fn list_end(&self, end: &Endpoint) -> Result<Vec<Found>> {
+    /// Everything one end of a mapping holds, of one kind.
+    fn list_end(&self, end: &Endpoint, kind: &EntityKind) -> Result<Vec<Found>> {
         let sink = self.sink(&end.connector)?;
-        Ok(sink
-            .list_issues(&end.scope)?
+        let remote = match kind {
+            EntityKind::Project => sink.list_projects(&end.scope)?,
+            _ => sink.list_issues(&end.scope)?,
+        };
+        Ok(remote
             .into_iter()
             .map(|issue| {
                 Found::new(
                     EntityRef {
                         connector: end.connector.clone(),
-                        kind: EntityKind::Issue,
+                        kind: kind.clone(),
                         scope: Some(end.scope.clone()),
                         native_id: issue.reference.id.clone(),
                         url: issue.reference.url.clone(),
@@ -661,9 +723,9 @@ impl ReconcileHandler {
     }
 
     /// Every pairing the store knows about among these entities.
-    fn links_among(&mut self, source: &[Found], sink: &[Found]) -> Result<Vec<Link>> {
+    fn links_among(&mut self, found: &[Found]) -> Result<Vec<Link>> {
         let mut links: Vec<Link> = Vec::new();
-        for found in source.iter().chain(sink.iter()) {
+        for found in found {
             for link in self.store.find_links(&found.reference)? {
                 let known = links
                     .iter()
@@ -812,9 +874,23 @@ impl ReconcileHandler {
     }
 
     /// One end's current state, as the platform reports it.
-    fn snapshot(&self, connector: &ConnectorId, scope: &str, id: &str) -> Result<Snapshot> {
+    ///
+    /// The kind decides which read reaches the platform: a project is not an issue
+    /// and has its own `fetch`, so a Project delivery must not be fetched as an
+    /// issue (which would look, wrongly, like a deleted issue).
+    fn snapshot(
+        &self,
+        kind: &EntityKind,
+        connector: &ConnectorId,
+        scope: &str,
+        id: &str,
+    ) -> Result<Snapshot> {
         let sink = self.sink(connector)?;
-        Ok(match sink.fetch_issue(scope, id)? {
+        let fetched = match kind {
+            EntityKind::Project => sink.fetch_project(scope, id)?,
+            _ => sink.fetch_issue(scope, id)?,
+        };
+        Ok(match fetched {
             Some(RemoteIssue { fields, state, .. }) => Snapshot::present(fields, state),
             // The platform says it is gone. That is an answer, not a failure, and
             // the decision layer treats it as the deletion it is.
@@ -939,6 +1015,7 @@ pub fn default_policy(names: Sides<StateNames>) -> Policy {
     Policy {
         direction: Direction::Both,
         sync_issues: true,
+        sync_projects: false,
         git_automation: true,
         delete_sync: false,
         names,

@@ -338,6 +338,43 @@ mod tests {
     }
 
     #[test]
+    fn a_project_pairs_by_the_marker_embedded_in_its_description() {
+        // A forge project has no body field of its own, so the copy's *description*
+        // carries the marker - which is the marker a forge project read spec reads
+        // back into the neutral body. Pairing has to look there, or a swept project
+        // is a stranger and the sweep duplicates it.
+        let project = |connector: &ConnectorId, id: &str, title: &str| {
+            Found::new(
+                EntityRef {
+                    connector: connector.clone(),
+                    kind: crate::domain::EntityKind::Project,
+                    scope: Some("scope".to_string()),
+                    native_id: id.to_string(),
+                    url: None,
+                },
+                IssueFields {
+                    title: title.to_string(),
+                    body: "the description".to_string(),
+                    ..IssueFields::default()
+                },
+                None,
+            )
+        };
+        let mut copied = project(&forge(), "4", "Mirror the widget");
+        copied.fields.body = markers::with_marker(
+            "the description",
+            &markers::OriginMarker::new("linear", "project-uuid"),
+        );
+        let source = vec![project(&linear(), "project-uuid", "Mirror the widget")];
+
+        let pairings = pair_up(&source, &[copied], &forge(), &[]);
+
+        assert_eq!(pairings.len(), 1);
+        assert!(pairings[0].is_pair());
+        assert_eq!(pairings[0].matched, Match::Marker);
+    }
+
+    #[test]
     fn two_issues_that_merely_look_alike_are_not_paired() {
         // The whole safety of a sweep: identity is proven by a link or a marker, and a
         // sweep that matched on titles would mirror every issue into a duplicate of

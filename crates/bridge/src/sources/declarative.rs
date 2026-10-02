@@ -247,6 +247,8 @@ enum Kind {
     Issue,
     Comment,
     Reference,
+    /// A container of issues: Linear's project, a forge's project.
+    Project,
     /// Recognised and deliberately ignored.
     Skip,
     /// An entity kind named by the event itself: models a platform's new events
@@ -260,6 +262,7 @@ impl Kind {
             "issue" => Some(Kind::Issue),
             "comment" => Some(Kind::Comment),
             "reference" => Some(Kind::Reference),
+            "project" => Some(Kind::Project),
             "skip" => Some(Kind::Skip),
             "event-name" => Some(Kind::EventName),
             _ => None,
@@ -315,7 +318,7 @@ impl SourceSpec {
             }
             if Kind::parse(&rule.kind).is_none() {
                 return Err(format!(
-                    "rule for `{}` has unknown kind `{}` (known: issue, comment, reference, skip, event-name)",
+                    "rule for `{}` has unknown kind `{}` (known: issue, comment, reference, project, skip, event-name)",
                     rule.event, rule.kind
                 ));
             }
@@ -467,6 +470,7 @@ impl DeclarativeSource {
             Some(Kind::Issue) => EntityKind::Issue,
             Some(Kind::Comment) => EntityKind::Comment,
             Some(Kind::Reference) => EntityKind::Reference,
+            Some(Kind::Project) => EntityKind::Project,
             // `skip` and `event-name` point at no entity of their own, and neither
             // does an undeclared subject kind: the event's own kind stands.
             _ => kind.clone(),
@@ -614,6 +618,7 @@ impl Source for DeclarativeSource {
             Kind::Issue => EntityKind::Issue,
             Kind::Comment => EntityKind::Comment,
             Kind::Reference => EntityKind::Reference,
+            Kind::Project => EntityKind::Project,
             Kind::EventName => EntityKind::Other(event_name.clone()),
             Kind::Skip => unreachable!("handled above"),
         };

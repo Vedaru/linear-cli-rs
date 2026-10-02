@@ -66,6 +66,26 @@ create = "created"
 update = "updated"
 remove = "deleted"
 
+# A project: the container an issue can live in. Mirrored as its own entity, but
+# only when a mapping asks for it (`sync_projects`) - otherwise the event is still
+# read, and the reconciler leaves it alone.
+[[event.rule]]
+match = "Project"
+kind = "project"
+[event.rule.fields]
+action = "/action"
+id = "/data/id"
+url = "/url"
+actor = "/actor/id"
+actor_name = "/actor/name"
+# Deliberately no `scope`: a Linear project is workspace-level and names its teams
+# as a *list* (`/data/teams`), not as the single team a scope pointer resolves to.
+# The mapping supplies the scope a pairing is looked up by.
+[event.rule.actions]
+create = "created"
+update = "updated"
+remove = "deleted"
+
 # One catch-all still covers every Linear event: the event name selects the kind,
 # and an event type this preset does not model still becomes an event of kind
 # `event-name` rather than being dropped, so a new Linear feature is visible in
@@ -277,3 +297,58 @@ method = "POST"
 path = ""
 [sink.issue.lookup.assignee.list.body]
 query = "query Users { users { nodes { id email } } }"
+
+# --- projects ---------------------------------------------------------------
+#
+# A project is mirrored as its own entity when a mapping sets `sync_projects`.
+# It has a name and a description and nothing else the two platforms share, so the
+# write half is the same engine with fewer fields: Linear spells them `name` /
+# `description`, addresses a project by its id, and takes the team the project
+# belongs to as a list of UUIDs - which is why `teamIds` carries the resolved
+# `$scope_id` inside an array.
+
+[sink.project.list.request]
+method = "POST"
+path = ""
+items = "/data/projects/nodes"
+[sink.project.list.request.body]
+query = "query Projects($after: String) { projects(first: 50, after: $after) { nodes { id slugId name description state url } pageInfo { hasNextPage endCursor } } }"
+variables = { after = "$cursor" }
+[sink.project.list.paginate.cursor]
+next = "/data/projects/pageInfo/endCursor"
+more = "/data/projects/pageInfo/hasNextPage"
+max_pages = 40
+[sink.project.list.read]
+id = "/id"
+url = "/url"
+title = "/name"
+body = "/description"
+
+[sink.project.fetch]
+method = "POST"
+path = ""
+[sink.project.fetch.body]
+query = "query Project($id: String!) { project(id: $id) { id name description url } }"
+variables = { id = "$id" }
+
+[sink.project.create]
+method = "POST"
+path = ""
+id = "/data/projectCreate/project/id"
+url = "/data/projectCreate/project/url"
+[sink.project.create.body]
+query = "mutation ProjectCreate($input: ProjectCreateInput!) { projectCreate(input: $input) { success project { id url } } }"
+variables = { input = { name = "$title", description = "$body", teamIds = ["$scope_id"] } }
+
+[sink.project.update]
+method = "POST"
+path = ""
+[sink.project.update.body]
+query = "mutation ProjectUpdate($id: String!, $input: ProjectUpdateInput!) { projectUpdate(id: $id, input: $input) { success } }"
+variables = { id = "$id", input = { name = "$title", description = "$body" } }
+
+[sink.project.read]
+title = "/data/project/name"
+body = "/data/project/description"
+id = "/data/project/id"
+url = "/data/project/url"

@@ -83,6 +83,16 @@ body = '''{ "action": "create", "type": "Comment", "webhookTimestamp": {now},
   "data": { "id": "comment-1", "body": "hello", "issue": { "id": "issue-uuid" } } }'''
 
 [[delivery]]
+# A project: an entity of its own, not an issue. The mapping's `sync_projects`
+# decides whether it travels; the preset only has to read it as a project.
+event = "Project"
+kind = "project"
+action = "created"
+id = "project-uuid"
+body = '''{ "action": "create", "type": "Project", "webhookTimestamp": {now},
+  "data": { "id": "project-uuid", "name": "Mirror the projects" } }'''
+
+[[delivery]]
 # A type this preset does not model. It survives as an event rather than being dropped:
 # acknowledging a delivery from a newer Linear version beats failing it.
 event = "ProjectUpdate"

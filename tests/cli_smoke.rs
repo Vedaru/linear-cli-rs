@@ -11,6 +11,11 @@ use serde_json::{json, Value};
 fn clean_env(home: &str) -> Vec<(String, String)> {
     vec![
         ("HOME".to_string(), home.to_string()),
+        // Redirecting HOME is not enough: a developer's XDG_CONFIG_HOME can hold a
+        // real `linear/linear.toml` with an api_key in it, and the CLI reads that
+        // path independently of HOME. A test that asserts "no key configured" then
+        // finds one and fails for a reason that has nothing to do with the code.
+        ("XDG_CONFIG_HOME".to_string(), format!("{home}/.config")),
         ("LINEAR_IGNORE_ENV_FILE".to_string(), "1".to_string()),
     ]
 }

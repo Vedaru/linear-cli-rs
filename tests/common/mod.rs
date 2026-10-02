@@ -413,8 +413,24 @@ pub fn run_cli_full(
 }
 
 /// Environment that points the CLI at `server` and supplies a token.
+///
+/// HOME and XDG_CONFIG_HOME are redirected to a scratch directory because the CLI
+/// resolves `linear/linear.toml` through either of them. On a machine where the
+/// developer has run `linear auth login`, these suites otherwise read *their*
+/// workspace: a mock answers no request it was not told about ("No mock response
+/// configured for this query"), and a test that asserts "no API key configured"
+/// finds one. Both are failures of the test setup, not of the command under test.
 pub fn mock_env(server: &MockLinearServer) -> Vec<(String, String)> {
+    static SCRATCH: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let home = SCRATCH
+        .get_or_init(|| tempfile::tempdir().expect("scratch home"))
+        .path();
     vec![
+        ("HOME".to_string(), home.display().to_string()),
+        (
+            "XDG_CONFIG_HOME".to_string(),
+            home.join(".config").display().to_string(),
+        ),
         ("LINEAR_GRAPHQL_ENDPOINT".to_string(), server.get_endpoint()),
         ("LINEAR_API_KEY".to_string(), "test-token".to_string()),
         ("LINEAR_IGNORE_ENV_FILE".to_string(), "1".to_string()),

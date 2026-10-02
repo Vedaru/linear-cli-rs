@@ -246,3 +246,56 @@ id = "/id"
 [sink.issue.lookup.label.create.body]
 name = "$name"
 color = "#ededed"
+
+# --- projects ---------------------------------------------------------------
+#
+# A forge project has no description field of the kind an issue body is, so the
+# pairing marker this bridge writes rides in the project's *description* and is
+# read back into the neutral body - the same trick an issue body uses, and what
+# lets a sweep adopt a project without the store.
+
+[sink.project.list.request]
+method = "GET"
+path = "/repos/{scope}/projects"
+query = { page = "$page", limit = "50" }
+[sink.project.list.paginate.page]
+param = "page"
+size = 50
+size_param = "limit"
+max_pages = 40
+[sink.project.list.read]
+id = "/id"
+url = "/html_url"
+title = "/title"
+body = "/description"
+
+[sink.project.fetch]
+method = "GET"
+path = "/repos/{scope}/projects/{id}"
+
+[sink.project.create]
+method = "POST"
+path = "/repos/{scope}/projects"
+id = "/id"
+url = "/html_url"
+[sink.project.create.body]
+title = "$title"
+description = "$body"
+# Forgejo builds a project's columns from a template. `none` is the empty one, but
+# a project with no column cannot hold an issue, so a mirrored project asks for the
+# kanban board: it is the only template that yields a default column for the issues
+# a sweep assigns to it.
+template_type = "basic_kanban"
+
+[sink.project.update]
+method = "PATCH"
+path = "/repos/{scope}/projects/{id}"
+[sink.project.update.body]
+title = "$title"
+description = "$body"
+
+[sink.project.read]
+title = "/title"
+body = "/description"
+id = "/id"
+url = "/html_url"
