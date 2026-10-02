@@ -51,3 +51,145 @@ body = "/data/body"
 create = "created"
 update = "updated"
 remove = "deleted"
+
+# ---------------------------------------------------------------------------
+# The write half.
+#
+# The same engine as the forge sink - a GraphQL endpoint is not a special case:
+# `variables` is a body template with the same directives, and the response is
+# addressed by the same JSON pointers. What is specific to Linear is written
+# here: ids instead of names (hence the lookups), a workspace that reports
+# failure inside a `200 OK`, and a "delete" that is an archive.
+
+[sink]
+base_url = "https://api.linear.app/graphql"
+# A rejected mutation arrives as `200 OK` with an `errors` array. Believing the
+# status code here would mean reporting a sync that never happened.
+error_pointer = "/errors"
+
+[sink.auth]
+header = "Authorization"
+# Linear takes a personal API key raw - no `Bearer ` prefix.
+
+[sink.issue.create]
+method = "POST"
+path = ""
+id = "/data/issueCreate/issue/id"
+url = "/data/issueCreate/issue/url"
+[sink.issue.create.body]
+query = "mutation IssueCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }"
+variables = { input = { title = "$title", description = "$body", teamId = "$scope_id", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
+
+[sink.issue.update]
+method = "POST"
+path = ""
+id = "/data/issueUpdate/issue/id"
+[sink.issue.update.body]
+query = "mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id url } } }"
+variables = { id = "$id", input = { title = "$title", description = "$body", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date!", priority = "$priority!", assigneeId = "$assignee_id" } }
+
+[sink.issue.fetch]
+method = "POST"
+path = ""
+[sink.issue.fetch.body]
+query = "query Issue($id: String!) { issue(id: $id) { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } } }"
+variables = { id = "$id" }
+
+# Linear has no delete: `issueArchive` is how an issue is retired, and it keeps
+# the issue recoverable, which is the safe direction for a mirror.
+[sink.issue.delete]
+method = "POST"
+path = ""
+[sink.issue.delete.body]
+query = "mutation IssueArchive($id: String!) { issueArchive(id: $id) { success } }"
+variables = { id = "$id" }
+
+[sink.issue.comment]
+method = "POST"
+path = ""
+id = "/data/commentCreate/comment/id"
+url = "/data/commentCreate/comment/url"
+[sink.issue.comment.body]
+query = "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id url } } }"
+variables = { input = { issueId = "$id", body = "$body" } }
+
+[sink.issue.transition]
+method = "POST"
+path = ""
+[sink.issue.transition.body]
+query = "mutation IssueState($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }"
+variables = { id = "$id", input = { stateId = "$state_id" } }
+
+# The one operation a forge does not have: a pull request or commit becomes an
+# attachment on the Linear issue.
+[sink.issue.attach]
+method = "POST"
+path = ""
+[sink.issue.attach.body]
+query = "mutation AttachmentCreate($input: AttachmentCreateInput!) { attachmentCreate(input: $input) { success } }"
+variables = { input = { issueId = "$id", url = "$url", title = "$title" } }
+
+[sink.issue.read]
+title = "/data/issue/title"
+body = "/data/issue/description"
+due_date = "/data/issue/dueDate"
+state = "/data/issue/state/name"
+priority = "/data/issue/priority"
+labels = { path = "/data/issue/labels/nodes", pick = "/name" }
+assignee = "/data/issue/assignee/email"
+id = "/data/issue/id"
+url = "/data/issue/url"
+
+# Name -> UUID. A human writes `VED` and `Done`; every Linear mutation wants a
+# UUID, so each name is resolved (and cached) through the same mechanism a forge
+# uses for its label ids.
+
+[sink.issue.lookup.team]
+name = "/key"
+id = "/id"
+items = "/data/teams/nodes"
+[sink.issue.lookup.team.list]
+method = "POST"
+path = ""
+[sink.issue.lookup.team.list.body]
+query = "query Teams { teams { nodes { id key } } }"
+
+[sink.issue.lookup.state]
+name = "/name"
+id = "/id"
+items = "/data/team/states/nodes"
+[sink.issue.lookup.state.list]
+method = "POST"
+path = ""
+[sink.issue.lookup.state.list.body]
+query = "query TeamStates($teamId: String!) { team(id: $teamId) { states { nodes { id name } } } }"
+variables = { teamId = "$scope_id" }
+
+[sink.issue.lookup.label]
+name = "/name"
+id = "/id"
+items = "/data/team/labels/nodes"
+[sink.issue.lookup.label.list]
+method = "POST"
+path = ""
+[sink.issue.lookup.label.list.body]
+query = "query TeamLabels($teamId: String!) { team(id: $teamId) { labels { nodes { id name } } } }"
+variables = { teamId = "$scope_id" }
+[sink.issue.lookup.label.create]
+method = "POST"
+path = ""
+id = "/data/issueLabelCreate/issueLabel/id"
+[sink.issue.lookup.label.create.body]
+query = "mutation IssueLabelCreate($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { success issueLabel { id } } }"
+variables = { input = { name = "$name", teamId = "$scope_id" } }
+
+# The neutral assignee is an email, which is also how a Linear user is matched.
+[sink.issue.lookup.assignee]
+name = "/email"
+id = "/id"
+items = "/data/users/nodes"
+[sink.issue.lookup.assignee.list]
+method = "POST"
+path = ""
+[sink.issue.lookup.assignee.list.body]
+query = "query Users { users { nodes { id email } } }"

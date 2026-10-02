@@ -40,6 +40,15 @@ pub struct SourceSpec {
     pub freshness: Option<FreshnessSpec>,
     #[serde(default)]
     pub capabilities: CapabilitySpec,
+    /// The write half, for a platform that can be written to as well as read from.
+    ///
+    /// It lives in this file on purpose. One platform is one description: the
+    /// capabilities above are the *shared* contract, and a sink built from this
+    /// spec is held to the same declaration, so a platform cannot claim in one
+    /// direction what it denies in the other. The source engine ignores this
+    /// field entirely.
+    #[serde(default)]
+    pub sink: Option<crate::sink::spec::SinkSpec>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -5,6 +5,7 @@
 use thiserror::Error;
 
 use crate::connector::Reject;
+use crate::domain::ConnectorId;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -37,4 +38,16 @@ pub enum Error {
     /// under its backoff policy; only the message reaches the delivery row.
     #[error("handler failed: {0}")]
     Handler(String),
+
+    /// An upstream API answered with a failure, or with something this bridge
+    /// cannot use (a 404 is not an error - see `fetch_issue`).
+    #[error("upstream: {0}")]
+    Upstream(String),
+
+    /// The platform's spec does not declare an operation the caller needs. Fail
+    /// visibly: a mapping that asks a forge to attach a link must not be a silent
+    /// no-op, or the operator learns about it when someone notices the missing
+    /// attachment weeks later.
+    #[error("connector `{1}` has no `{0}` operation")]
+    Unsupported(String, ConnectorId),
 }

@@ -4,6 +4,7 @@
 //! on it, so `type = "forgejo"` and an inline `[platform.internal]` spec run the
 //! same code. That is the whole point: a platform's quirks are data.
 
+use crate::sink::spec::SinkSpec;
 use crate::sources::declarative::SourceSpec;
 use crate::Error;
 
@@ -42,6 +43,29 @@ pub fn preset(name: &str) -> Result<SourceSpec, Error> {
         .map_err(|error| Error::Config(format!("the built-in `{name}` preset is invalid: {error}")))
 }
 
+/// The write half of a preset, when it has one.
+///
+/// Deliberately derived from the same text as [`preset`]: a platform's two
+/// directions cannot drift apart if they are one file.
+pub fn preset_sink(name: &str) -> Result<Option<SinkSpec>, Error> {
+    Ok(preset(name)?.sink)
+}
+
+/// Every preset that ships with a sink, so a caller can see what a build can
+/// write to without parsing the spec itself.
+pub fn sink_preset_names() -> Vec<&'static str> {
+    let mut names = Vec::new();
+    for (name, text) in PRESETS {
+        if SourceSpec::from_toml(text)
+            .map(|spec| spec.sink.is_some())
+            .unwrap_or(false)
+        {
+            names.push(*name);
+        }
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,7 +80,24 @@ mod tests {
                 !spec.describe().is_empty(),
                 "preset `{name}` describes itself"
             );
+            if let Some(sink) = &spec.sink {
+                sink.validate()
+                    .unwrap_or_else(|error| panic!("preset `{name}` sink is invalid: {error}"));
+            }
         }
+    }
+
+    #[test]
+    fn the_presets_that_can_write_are_known() {
+        let names = sink_preset_names();
+        assert!(names.contains(&"forgejo"), "{names:?}");
+        assert!(names.contains(&"linear"), "{names:?}");
+        // A preset without a sink is still a valid connector: reading is the
+        // half that every platform has.
+        assert!(
+            preset_sink("github").unwrap().is_none(),
+            "github has no write half yet"
+        );
     }
 
     #[test]

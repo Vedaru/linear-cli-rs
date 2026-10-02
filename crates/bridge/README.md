@@ -11,6 +11,8 @@ test or from an agent.
 
 ```text
 http  ->  connector::Source  ->  domain::Event  ->  store  ->  queue  ->  Handler
+                                                                             |
+                                                            sink::Sink  <----+
 ```
 
 | Module | Owns | Must not |
@@ -18,9 +20,10 @@ http  ->  connector::Source  ->  domain::Event  ->  store  ->  queue  ->  Handle
 | `domain` | the vocabulary: entities, events, capabilities, secrets | do I/O, name a platform |
 | `connector` | the `Source` trait, signature schemes, `Reject` | know about HTTP, storage or a platform |
 | `sources/*` | one platform each: parse + authenticate a delivery | write to a store, call another platform |
+| `sink` | the `Sink` trait and the engine that executes a `SinkSpec` | decide *what* to write - that is the mapping |
+| `http` | routing, body limits, status codes | contain reconciliation logic |
 | `store` | durable state: deliveries, links, migrations | know what a delivery means |
 | `queue` | claim / retry / park, and the `Handler` seam | know what a handler does |
-| `http` | routing, body limits, status codes | contain reconciliation logic |
 | `config` | the `[bridge]`/`[platform.*]`/`[[mapping]]` sections | hold a secret in a file it writes |
 
 The rule: **the dependency arrows only point right**. `domain` depends on nothing
@@ -86,13 +89,32 @@ Logging is `LINEAR_BRIDGE_LOG` (`error|warn|info|debug|trace|off`, default
 
 ## Adding a platform
 
-1. Add a module under `src/sources/` implementing `Source`: `id`, `signature`
-   (the header names, so the one verification path knows where to look),
-   `parse` (native payload -> `Vec<Event>`, empty for "nothing to do"), and
-   `capabilities` (what the platform can actually carry).
-2. Wire `type = "<name>"` into `PlatformKind::parse`.
-3. If it can be written to as well, add a `Sink` implementation beside it.
+A platform is a **preset file**, not a module. `presets/forgejo.toml` is the whole
+forge connector - the webhook half *and* the write half - and adding Codeberg or
+an internal service is copying it. The two halves of a preset:
 
-Nothing else changes: intake, the queue, the store and the status codes are
-already platform-agnostic. Until `Sink` has its first implementation (M3) the
-trait is deliberately absent rather than declared empty.
+- **the read half** (top level): `[signature]` (where the signature lives),
+  `[delivery]`/`[event]` (where the ids and the event name live), `[[event.rule]]`
+  (how a payload becomes an event, by JSON pointer), `[freshness]` (the replay
+  bound, where the platform signs a timestamp), `[capabilities]`.
+- **the write half** (`[sink]`): `base_url`, `[sink.auth]`, the issue operations
+  (`create`, `update`, `fetch`, `delete`, `comment`, `transition`, `labels`,
+  `attach`), `[sink.issue.read]`, and `[sink.issue.lookup.*]` for turning a name
+  into whatever id the platform wants.
+
+Nothing else changes: intake, the queue, the store, the status codes and the
+write path are already platform-agnostic. A new platform is validated at load
+(`linear webhook serve --check`), so a typo is a startup error rather than a
+field that mysteriously stops syncing.
+
+What a preset cannot express, the engine refuses to guess:
+
+- an operation the preset does not declare (`attach` on a forge) is
+  `Error::Unsupported` naming the connector, not a silently skipped step;
+- a request body may only use the neutral directives (`$title`, `$label_ids`,
+  `$state_id`, ...); a typo is a validation error;
+- a `$field` with no value **drops its key**, so a mirror never clears a field
+  it merely has nothing to say about - `$field!` is how a preset asks for an
+  explicit null;
+- a failure inside a successful response (GraphQL's `errors` under `200 OK`) is a
+  failure: `error_pointer` says where to look.

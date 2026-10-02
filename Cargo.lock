@@ -782,6 +782,7 @@ dependencies = [
  "thiserror",
  "tiny_http",
  "toml",
+ "ureq",
 ]
 
 [[package]]

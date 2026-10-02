@@ -88,3 +88,110 @@ url = "/url"
 scope = "/repository/full_name"
 actor = "/author/email"
 actor_name = "/author/name"
+
+# ---------------------------------------------------------------------------
+# The write half.
+#
+# Same platform, other direction, and still no forge-specific Rust: the sink
+# engine executes these operations. The capabilities above are the shared
+# contract - the write path is held to the same `[capabilities]` the read path
+# declares, so a platform cannot claim in one direction what it denies in the
+# other.
+
+[sink]
+base_url = "http://127.0.0.1:3000/api/v1"
+
+[sink.auth]
+header = "Authorization"
+# Forgejo (like Gitea) wants the scheme in the value, not in the header name.
+prefix = "token "
+
+[sink.issue.create]
+method = "POST"
+path = "/repos/{scope}/issues"
+id = "/number"
+url = "/html_url"
+[sink.issue.create.body]
+title = "$title"
+body = "$body"
+labels = "$label_ids"
+# `$field` disappears when the value is absent, which is what a create wants:
+# nothing to say about a due date means the field is never mentioned.
+due_date = "$due_date"
+assignees = "$assignees"
+
+[sink.issue.update]
+method = "PATCH"
+path = "/repos/{scope}/issues/{id}"
+[sink.issue.update.body]
+title = "$title"
+body = "$body"
+# A forge carries the state on the issue itself, so a transition is an update
+# with a different `state`.
+state = "$state"
+# `!` is the opposite of the default: send null anyway. A due date that was
+# cleared on the other side has to be cleared here, or the two diverge silently.
+due_date = "$due_date!"
+assignees = "$assignees"
+
+[sink.issue.fetch]
+method = "GET"
+path = "/repos/{scope}/issues/{id}"
+
+[sink.issue.delete]
+method = "DELETE"
+path = "/repos/{scope}/issues/{id}"
+
+# A forge replaces the whole label set in one call, and it addresses labels by
+# id - which is why this operation and the `label` lookup below are a pair.
+[sink.issue.labels]
+method = "PUT"
+path = "/repos/{scope}/issues/{id}/labels"
+[sink.issue.labels.body]
+labels = "$label_ids"
+
+[sink.issue.comment]
+method = "POST"
+path = "/repos/{scope}/issues/{id}/comments"
+id = "/id"
+url = "/html_url"
+[sink.issue.comment.body]
+body = "$body"
+
+[sink.issue.transition]
+method = "PATCH"
+path = "/repos/{scope}/issues/{id}"
+[sink.issue.transition.body]
+state = "$state"
+
+# How a forge issue reads back into the neutral field set. The write path needs
+# this as much as the reconciler does: a webhook payload is a snapshot, so the
+# authoritative text of an issue is always fetched before it is mirrored.
+[sink.issue.read]
+title = "/title"
+body = "/body"
+due_date = "/due_date"
+state = "/state"
+labels = { path = "/labels", pick = "/name" }
+assignee = "/assignees/0/login"
+# A forge has no priority field. The priority travels as a `priority:*` label
+# (and degrades to part of the body when the label cannot be written), so
+# reading it back is reading the labels.
+priority = { from_labels = true }
+
+# Name -> id, for the label ids `$label_ids` needs. A label the bridge is told
+# to apply but the repository does not have is created rather than dropped:
+# silently losing a label is worse than an extra one.
+[sink.issue.lookup.label]
+name = "/name"
+id = "/id"
+[sink.issue.lookup.label.list]
+method = "GET"
+path = "/repos/{scope}/labels"
+[sink.issue.lookup.label.create]
+method = "POST"
+path = "/repos/{scope}/labels"
+id = "/id"
+[sink.issue.lookup.label.create.body]
+name = "$name"
+color = "#ededed"
