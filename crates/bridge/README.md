@@ -211,3 +211,78 @@ What a preset cannot express, the engine refuses to guess:
   explicit null;
 - a failure inside a successful response (GraphQL's `errors` under `200 OK`) is a
   failure: `error_pointer` says where to look.
+
+### What else a platform brings: a fixture
+
+A preset says how to *talk* to the platform. `presets/fixtures/<name>.toml` says what the
+platform *sends* and what the bridge must make of it - and it is what the shared suite runs
+on. Nothing in that suite knows which platform it is looking at, so a new platform is two
+config files and no Rust:
+
+```toml
+[proof]                       # what the platform really signs with
+algorithm = "hmac-sha256"     # or `token`, for a shared secret in a header
+header = "X-Hub-Signature-256"
+prefix = "sha256="            # where the platform wraps the digest, if it does
+
+[headers]                     # the headers an ordinary delivery carries
+"X-GitHub-Event" = "issues"
+
+[[delivery]]                  # a delivery it sends, and what it must become
+event = "issues"
+kind = "issue"                # issue | comment | reference | other
+action = "created"            # created | updated | deleted | closed | reopened | other:<name>
+id = "7"                      # the subject's id
+scope = "owner/repo"
+delivery_id = "d-1"           # the id header, where the platform sends one
+url = "https://..."           # and the fields a test wants pinned
+actor = "vedaru"
+body = '''{ ...the payload, with {now} where its own time goes... }'''
+
+[[delivery]]
+reject = "stale"              # stale | malformed | missing-header
+body = '''{ ...the payload that must be refused... }'''
+```
+
+`same_as = "forgejo"` covers a platform that *is* another one (Codeberg and Gitea are
+Forgejo), rather than a second copy that can drift.
+
+```sh
+cargo test -p linear-bridge --test conformance           # every preset, every fixture
+cargo test -p linear-bridge --test conformance_honesty   # what a preset may claim
+```
+
+The suite signs each body with the scheme the **preset** declares and checks it against
+`[proof]`, so a preset that reads the wrong header, or wraps a digest in the wrong prefix,
+fails rather than passing its own test. It enforces the platform's real signature (a
+tampered body, a foreign secret, a missing proof, a stale delivery, and - stated rather
+than hidden - the fact that a shared *token* proves the sender and says nothing about the
+body), reads every declared delivery the way the fixture says it should be read, and holds
+the preset to what it claims: a capability nothing carries fails, and so does a field the
+preset *reads* but can never write, because that difference can never be resolved.
+
+### The adapter table
+
+Derived from each preset's `[capabilities]` and kept honest by the suite above. "Emulated"
+means the engine carries the field in the only way that platform has - it is not silently
+dropped.
+
+| preset | states | labels | due dates | priority | assignees | references | deletion | sweepable |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `linear` | named workflow states | yes | yes | yes | one | no native PRs | yes - `issueArchive`, its API has no delete | yes |
+| `forgejo`, `codeberg`, `gitea` | open / closed | yes | yes | emulated as a `priority:*` label | one | yes | push only, cannot be observed | yes |
+| `github` | open / closed | yes | not claimed | not claimed | many | yes | not claimed | intake only |
+| `gitlab` | open / closed | yes | yes | not claimed | many | yes | not claimed | intake only |
+
+The limits worth stating out loud, because each one is a real thing a deployment will meet:
+
+- **GitHub and GitLab have no write half yet.** They verify, parse and store deliveries
+  today; their API halves are separate work. `capabilities.list` is derived from the
+  operation, so a sweep against one refuses by name instead of reporting an empty scope.
+- **A shared token cannot detect a changed body.** GitLab proves itself with a header that
+  travels alongside the payload, so the platform has to be trusted for the body's integrity;
+  the conformance suite asserts that instead of implying otherwise.
+- **Forgejo emits no webhook when an issue is deleted**, so a deletion can be pushed *to* it
+  and never observed *from* it.
+- **An action this deployment does not model keeps its own name** (`milestoned` arrives as
+  `Other("milestoned")`), rather than being mistaken for an update.
