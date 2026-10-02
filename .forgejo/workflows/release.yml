@@ -105,34 +105,80 @@ jobs:
               rc=1
             fi
           }
+          # `--all-features` is not decoration: the default feature set is the CLI alone, and the
+          # service half's suites are gated on `service`. Without it, `cargo test --workspace`
+          # would compile those files to nothing and pass - green by absence, the same trap the
+          # `default-members` note in Cargo.toml describes one level up. The `--no-default-features`
+          # clippy checks the other shape, which is what a laptop installs from source.
           check "cargo build --workspace --locked" cargo build --workspace --locked
-          check "cargo test --workspace --locked" cargo test --workspace --locked -- --test-threads=4
-          check "cargo clippy --workspace --all-targets --locked -- -D warnings" \
-                cargo clippy --workspace --all-targets --locked -- -D warnings
-          check "cargo build --release --workspace --locked" cargo build --release --workspace --locked
+          check "cargo test --workspace --all-features --locked" cargo test --workspace --all-features --locked -- --test-threads=4
+          check "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings" \
+                cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          check "cargo clippy -p linear --no-default-features --all-targets --locked -- -D warnings" \
+                cargo clippy -p linear --no-default-features --all-targets --locked -- -D warnings
+          check "cargo build --release --workspace --all-features --locked" cargo build --release --workspace --all-features --locked
+          check "cargo build --release -p linear --no-default-features --locked" \
+                cargo build --release -p linear --no-default-features --locked
           if [ "$rc" -eq 0 ]; then echo "gate: PASS"; else echo "gate: FAIL"; fi
           exit "$rc"
 
-      - name: Package the release binary
+      - name: Package the release binaries
+        # Two archives, because the two jobs are the same tool at two sizes: the **service** build
+        # (the mirroring engine and the intake server - what a deployment installs) and the **CLI**
+        # build (what a laptop installs). They differ only by the `service` feature, so the second
+        # build reuses every compiled dependency and compiles one crate.
+        #
+        # Order matters: both builds write `target/release/linear`, so the service binary is copied
+        # aside *before* the CLI build overwrites that path. Packaging the wrong one of these is
+        # silent - the archive would simply be missing `webhook` - so each is named for what it is.
         env:
           SHA: ${{ forge.sha }}
         run: |
           set -euo pipefail
           src="$RUNNER_TEMP/linear-cli-rs"
           out="$RUNNER_TEMP/dist"
-          rm -rf "$out" "$RUNNER_TEMP/stage"
+          bins="$RUNNER_TEMP/bins"
+          rm -rf "$out" "$bins" "$RUNNER_TEMP/stage"
+          mkdir -p "$out" "$bins" "$RUNNER_TEMP/stage"
           short=$(printf '%s' "$SHA" | cut -c1-12)
-          want="linear-cli-rs-${short}-x86_64-unknown-linux-gnu"
-          stage="$RUNNER_TEMP/stage/$want"
-          mkdir -p "$stage" "$out"
-          # The archive holds the binary at the top level plus the documents a
-          # release reader needs; AGENTS.md is here for the same reason the
-          # repository ships it - this port is written to be driven by agents.
-          install -m 0755 "$src/target/release/linear" "$stage/linear"
-          cp "$src/README.md" "$stage/README.md"
-          cp "$src/AGENTS.md" "$stage/AGENTS.md"
-          tar czf "$out/$want.tar.gz" -C "$RUNNER_TEMP/stage" "$want"
-          (cd "$out" && sha256sum "$want.tar.gz" > "$want.tar.gz.sha256")
+          stem="linear-cli-rs-${short}"
+
+          # The gate above built the service shape; keep its binary before the next build replaces it.
+          install -m 0755 "$src/target/release/linear" "$bins/linear-service"
+          (cd "$src" && cargo build --release -p linear --no-default-features --locked)
+          install -m 0755 "$src/target/release/linear" "$bins/linear-cli"
+
+          # The two must actually differ, or the feature gate is decorative and the "CLI" archive
+          # is the service under another name.
+          service_size=$(stat -c%s "$bins/linear-service")
+          cli_size=$(stat -c%s "$bins/linear-cli")
+          echo "service binary: $service_size bytes; cli binary: $cli_size bytes"
+          if [ "$service_size" -le "$cli_size" ]; then
+            echo "the service build is not larger than the CLI build - the feature gate is not doing anything" >&2
+            exit 1
+          fi
+          "$bins/linear-cli" webhook --help >/dev/null 2>&1 && {
+            echo "the CLI build answers \`webhook\` - it was built with the service feature" >&2
+            exit 1
+          } || true
+
+          stage_archive() { # <name> <binary>
+            name="$1"; bin="$2"
+            stage="$RUNNER_TEMP/stage/$name"
+            rm -rf "$stage"
+            mkdir -p "$stage"
+            # The archive holds the binary at the top level plus the documents a release reader
+            # needs; AGENTS.md is here for the same reason the repository ships it - this port is
+            # written to be driven by agents.
+            install -m 0755 "$bin" "$stage/linear"
+            cp "$src/README.md" "$stage/README.md"
+            cp "$src/AGENTS.md" "$stage/AGENTS.md"
+            tar czf "$out/$name.tar.gz" -C "$RUNNER_TEMP/stage" "$name"
+            (cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          }
+
+          stage_archive "${stem}-service-x86_64-unknown-linux-gnu" "$bins/linear-service"
+          stage_archive "${stem}-x86_64-unknown-linux-gnu" "$bins/linear-cli"
           ls -l "$out"
 
       - name: Publish the rolling release
@@ -148,8 +194,12 @@ jobs:
           api="$FORGEJO_URL/api/v1/repos/${{ forge.repository }}"
           auth=(-H "Authorization: token $FORGEJO_TOKEN")
           out="$RUNNER_TEMP/dist"
-          asset=$(ls "$out"/*.tar.gz)
           short=$(printf '%s' "$SHA" | cut -c1-12)
+          # Both archives and both digests. Globbing into an array rather than `ls "$out"/*.tar.gz`
+          # (which would take one of them) or a for-loop over unquoted output (which breaks on
+          # names with spaces): every file that was packaged has to reach the release, and the
+          # loop at the end checks nothing was left behind.
+          files=("$out"/*.tar.gz "$out"/*.tar.gz.sha256)
 
           # Parse the release id out of the API's JSON with a real parser. A
           # greedy `sed 's/.*"id":\([0-9]*\).*/\1/'` looks like it works and
@@ -168,10 +218,24 @@ jobs:
           fi
           curl -sS -X DELETE "${auth[@]}" "$api/tags/rolling" >/dev/null || true
 
-          body=$(printf 'Rolling build of `%s` - the last commit on main that built, gated and published.\n\n- commit: `%s`\n- toolchain: %s\n- sha256: `%s`\n\nAssets are rebuilt and replaced on every push to main.\n' \
-                  "$short" "$SHA" \
-                  "$("$HOME/.cargo/bin/rustc" --version)" \
-                  "$(cut -d' ' -f1 "$asset.sha256")")
+          # The body names each asset with its digest, so a reader can tell the two builds apart
+          # without downloading both: `-service-` is the deployment's, the other is the CLI alone.
+          {
+            printf '%s\n' "Rolling build of \`$short\` - the last commit on main that built, gated and published."
+            printf '\n'
+            printf -- '- commit: \`%s\`\n' "$SHA"
+            printf -- '- toolchain: %s\n\n' "$("$HOME/.cargo/bin/rustc" --version)"
+            printf '%s\n' '| asset | sha256 |' '| -- | -- |'
+            for f in "$out"/*.tar.gz; do
+              printf '| \`%s\` | \`%s\` |\n' "$(basename "$f")" "$(cut -d' ' -f1 "$f.sha256")"
+            done
+            printf '\n'
+            printf '%s\n' '`*-service-*` carries the bridge half - `linear sync` and `linear webhook` - and is what a deployment installs.'
+            printf '%s\n' 'The other archive is the CLI alone: no store, no intake server, no SQLite.'
+            printf '\n'
+            printf '%s\n' 'Assets are rebuilt and replaced on every push to main.'
+          } > "$RUNNER_TEMP/body.md"
+          body=$(cat "$RUNNER_TEMP/body.md")
           payload=$(BODY="$body" SHA="$SHA" python3 -c \
               'import json,os;print(json.dumps({"tag_name":"rolling","target_commitish":os.environ["SHA"],"name":"Rolling build","body":os.environ["BODY"],"draft":False,"prerelease":True}))')
           created=$(curl -sS -X POST "${auth[@]}" -H "Content-Type: application/json" \
@@ -180,7 +244,7 @@ jobs:
           [ -n "${rid:-}" ] || { echo "release creation failed: $created" >&2; exit 1; }
           echo "created rolling release id=$rid"
 
-          for f in "$asset" "$asset.sha256"; do
+          for f in "${files[@]}"; do
             name=$(basename "$f")
             code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${auth[@]}" \
                 -F "attachment=@$f" "$api/releases/$rid/assets?name=$name")
@@ -194,7 +258,7 @@ jobs:
           attached=$(printf '%s' "$final" | python3 -c \
               'import json,sys;print(" ".join(a.get("name","") for a in (json.load(sys.stdin).get("assets") or [])))')
           echo "assets attached: $attached"
-          for f in "$asset" "$asset.sha256"; do
+          for f in "${files[@]}"; do
             base=$(basename "$f")
             case " $attached " in
               *" $base "*) ;;

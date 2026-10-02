@@ -23,10 +23,22 @@ members = ["crates/bridge"]
 # be green-by-absence. The workflows pass `--workspace` explicitly as well.
 default-members = [".", "crates/bridge"]
 
+[features]
+# The CLI is the product; the bridge half is opt-in. A bare `cargo build` therefore produces the
+# same surface as upstream - no store, no intake server, nothing to configure - which is what a
+# machine that only talks to Linear wants, and what keeps SQLite out of that binary.
+#
+# `service` adds the `linear-bridge` half: `linear sync` (the mirroring engine, one-shot) and
+# `linear webhook serve|replay` (the intake server). The published release asset is built with it
+# on, because the deployment that consumes that asset *is* the service; a build from source that
+# is meant to run the service has to ask for it explicitly.
+default = []
+service = ["dep:linear-bridge"]
+
 [dependencies]
 # The webhook/bridge framework: domain model, connector traits, webhook intake,
 # durable queue and link store. Platform-agnostic by construction.
-linear-bridge = { path = "crates/bridge" }
+linear-bridge = { path = "crates/bridge", optional = true }
 clap = { version = "4", features = ["derive", "wrap_help", "env"] }
 clap_complete = "4.5.67"
 serde = { version = "1", features = ["derive"] }
@@ -60,8 +72,10 @@ codegen-units = 1
 strip = true
 # Size over throughput: every command is network-bound, so the slower code this
 # generates is invisible next to an API round trip, while the binary itself ships
-# to servers and agents. Measured on the same source and toolchain:
-# 8.25 MiB -> 4.74 MiB (-43%), with peak memory unchanged.
+# to servers and agents. Measured on the same source and toolchain against cargo's
+# default release profile (opt-level 3, no LTO, 16 codegen units, unstripped,
+# unwinding), rustc 1.93.1:
+# 16.22 MiB -> 4.91 MiB (-70%).
 #
 # panic = "abort" additionally drops the unwinding tables (.eh_frame,
 # .gcc_except_table) that stripping cannot remove. Nothing in this crate catches

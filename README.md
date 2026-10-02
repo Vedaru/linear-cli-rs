@@ -38,12 +38,28 @@ tar xf linear-cli-rs-<sha>-x86_64-unknown-linux-gnu.tar.gz
 install -m 0755 linear-cli-rs-<sha>-x86_64-unknown-linux-gnu/linear ~/.local/bin/linear
 ```
 
+Two archives are published for each build, from one commit: the plain name above is the **CLI
+alone**, and `linear-cli-rs-<sha>-service-x86_64-unknown-linux-gnu.tar.gz` adds the bridge half
+(`linear sync`, `linear webhook`) that a deployment installs.
+
 Or build it:
 
 ```sh
-cargo build --release        # target/release/linear
+cargo build --release        # target/release/linear — the CLI, and nothing else
 cargo install --path .       # onto PATH
 ```
+
+That is the whole CLI: no store, no intake server, no SQLite (4.91 MiB). The bridge half — the
+mirroring engine behind `linear sync` and the webhook service behind `linear webhook` — is behind
+one optional feature, so it stays out of a binary that only talks to Linear:
+
+```sh
+cargo build --release --features service    # adds `sync`, `webhook`; 6.83 MiB
+```
+
+The published release tarball is built **with** it, because the deployment that consumes that
+tarball is the service. Everything below about `linear sync` and `linear webhook` needs that build
+or that tarball.
 
 ## Authenticate
 
@@ -230,10 +246,12 @@ and neither writes anything. It reads the same store the service writes, prints 
 the mappings, and lists the deliveries the queue gave up on with the error that stopped each
 one. A store it cannot read is a failure, not a zero.
 
-Running it as a service is [deploy/README.md](deploy/README.md): a systemd unit, the secrets file
-it reads, and the three things that decide whether a deployment works - chiefly that the webhook's
-route must not be behind a login page, which is measured rather than assumed for this server. The
-container equivalent is its own runbook, [deploy/container.md](deploy/container.md).
+Running it as a service is a `linear.toml`, the four variables the config names, and a port: the
+service binds `127.0.0.1:8787`, reads the same file the CLI does, and answers `sync` on its own
+store. Two things decide whether a deployment works, and neither is a file this repository can
+carry: the webhook's route must not sit behind a login page (a `302` is followed by the platform,
+read as `200`, and filed as a delivery that never happened), and the Linear → forge direction needs
+no route at all if the timer runs `linear sync --apply` instead.
 
 `linear config service` prints those sections rather than asking questions: one file holds both
 halves - the CLI's settings and the bridge's - which is the design rather than a coincidence,
@@ -279,17 +297,28 @@ request. See [crates/bridge/README.md](crates/bridge/README.md).
 ## Development
 
 ```sh
-cargo build --release
-cargo test --locked                     # 225 tests
-cargo clippy --all-targets --locked -- -D warnings
+cargo build --release                       # the CLI alone (default: no `service` feature)
+cargo test --workspace --locked             # the CLI's own suite
+cargo test --workspace --all-features --locked   # + the bridge half's suites
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo clippy -p linear --no-default-features --all-targets --locked -- -D warnings
 ```
 
-The release profile is tuned for distribution, not for speed: `lto`, `codegen-units = 1`,
-`strip`, `opt-level = "z"` and `panic = "abort"` cut the binary from 8.25 MiB to 4.74 MiB,
-and every command is network-bound so the slower code is invisible next to an API round
-trip. A release-mode test run would need `-Z panic-abort-tests`.
+Two shapes, and both are built and linted by CI. The default is the CLI; `--features service`
+adds the `linear-bridge` half, and five integration suites are gated on that feature
+(`#![cfg(feature = "service")]`) because they exercise commands that only exist there. That is
+exactly why the gate passes `--all-features`: without it the service tests would be skipped and
+the run would be green by absence. The reverse check - a `--no-default-features` clippy - keeps
+the shape a laptop installs from drifting into warnings nobody sees.
 
-The bridge adds 1.64 MiB on top of that (4.74 -> 6.38 MiB): SQLite (bundled, so no system
+The release profile is tuned for distribution, not for speed: `lto`, `codegen-units = 1`,
+`strip`, `opt-level = "z"` and `panic = "abort"` take the CLI from 16.22 MiB to 4.91 MiB (-70%)
+against cargo's default release profile for the same source (opt-level 3, no LTO, 16 codegen
+units, unstripped, unwinding), measured with rustc 1.93.1. Every command is network-bound, so the
+slower code this generates is invisible next to an API round trip. A release-mode test run would
+need `-Z panic-abort-tests`.
+
+The bridge adds 1.92 MiB on top of that (4.91 -> 6.83 MiB): SQLite (bundled, so no system
 library is needed to run it), a small sync HTTP server, TOML parsing and HMAC. Memory is
 bounded by construction rather than by tuning - bodies are capped while reading, one
 delivery is in flight per worker, and the queue lives in the database rather than in

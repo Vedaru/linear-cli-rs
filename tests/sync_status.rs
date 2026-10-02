@@ -3,6 +3,8 @@
 //! A service that is up but backed up and one that is doing nothing answer a webhook the same
 //! way and neither writes anything, so the difference has to be visible somewhere. This is it.
 
+#![cfg(feature = "service")]
+
 mod common;
 
 use std::path::{Path, PathBuf};

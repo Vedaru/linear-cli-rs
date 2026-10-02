@@ -5,6 +5,8 @@
 //! parses what the command printed - with the same parser the service uses - and then asks it to
 //! reconcile, which is the step that proves the sections are not only well-formed but runnable.
 
+#![cfg(feature = "service")]
+
 mod common;
 
 use common::run_cli;

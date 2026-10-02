@@ -4,6 +4,8 @@
 //! provider sent, which is the only way to diagnose a sync bug after deploying a fix" - and
 //! until now nothing ran one.
 
+#![cfg(feature = "service")]
+
 mod common;
 
 use std::path::{Path, PathBuf};

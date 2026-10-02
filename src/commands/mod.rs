@@ -16,10 +16,12 @@ pub mod milestone;
 pub mod project;
 pub mod project_update;
 pub mod schema;
+#[cfg(feature = "service")]
 pub mod sync;
 pub mod team;
 pub mod template;
 pub mod user;
+#[cfg(feature = "service")]
 pub mod webhook;
 
 use crate::cli::Command;
@@ -52,7 +54,9 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Api(args)) => api::run(args),
         Some(Command::Markdown(args)) => markdown::run(args),
         Some(Command::Completions(args)) => completions::run(args),
+        #[cfg(feature = "service")]
         Some(Command::Webhook(args)) => webhook::run(args),
+        #[cfg(feature = "service")]
         Some(Command::Sync(args)) => sync::run(args),
     }
 }

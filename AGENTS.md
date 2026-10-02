@@ -8,10 +8,18 @@ reference; this port keeps its command tree, output strings, error contexts and
 ## Build and test
 
 ```sh
-cargo build                 # debug binary at target/debug/linear
-cargo test                  # unit tests + tests/ integration suites
-cargo clippy --all-targets  # lint
+cargo build                         # debug binary at target/debug/linear - the CLI only
+cargo build --features service      # + `linear sync` / `linear webhook` (the crates/bridge half)
+cargo test --workspace --all-features   # unit tests + tests/ integration suites
+cargo clippy --workspace --all-targets --all-features  # lint
 ```
+
+`linear-bridge` is an **optional** dependency behind the `service` feature, and it is not in the
+default feature set: the CLI is the product, so `cargo build` gives the same surface as upstream -
+nothing to configure, no store, no SQLite. Five suites under `tests/` are likewise gated
+(`#![cfg(feature = "service")]`) because they drive `sync`/`webhook` commands that do not exist in
+the default shape. Run the suite with `--all-features` (as CI does), or those files compile to
+nothing and the run is green by absence.
 
 The crate is a single binary (`src/main.rs`); shared code lives in modules under
 `src/`. There is no library target, so integration tests exercise the compiled

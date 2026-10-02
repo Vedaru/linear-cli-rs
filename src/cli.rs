@@ -83,8 +83,10 @@ pub enum Command {
     /// Generate shell completion scripts
     Completions(crate::commands::completions::CompletionsArgs),
     /// Run and inspect the webhook bridge service
+    #[cfg(feature = "service")]
     Webhook(crate::commands::webhook::WebhookArgs),
     /// Bring a mapping's two platforms into agreement, once (dry run by default)
+    #[cfg(feature = "service")]
     Sync(crate::commands::sync::SyncArgs),
 }
 

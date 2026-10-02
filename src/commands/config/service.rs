@@ -135,6 +135,7 @@ fn repo_from_remote_url(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "service")]
     #[test]
     fn the_scaffold_is_a_config_the_bridge_can_read() {
         // The config resolves `token_env` when it loads, so the variables have to exist for

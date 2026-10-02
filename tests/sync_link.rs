@@ -1,5 +1,7 @@
 //! `linear sync link`: the one thing the engine cannot work out for itself.
 
+#![cfg(feature = "service")]
+
 mod common;
 
 use std::path::{Path, PathBuf};

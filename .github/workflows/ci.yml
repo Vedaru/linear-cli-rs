@@ -51,11 +51,16 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         if: matrix.os == 'ubuntu-latest'
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        # `--all-features` so the service half is linted too; `--no-default-features` so the shape
+        # a laptop installs is. The default feature set is the CLI alone.
+        run: |
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo clippy -p linear --no-default-features --all-targets --locked -- -D warnings
       # Bounded: four cores, and an unbounded run oversubscribes itself, which
       # makes wall-clock waits inside tests fail for unrelated reasons.
+      # `--all-features`: the gated suites compile to nothing without it.
       - name: Test
-        run: cargo test --workspace --locked -- --test-threads=4
+        run: cargo test --workspace --all-features --locked -- --test-threads=4
 
   build:
     name: Build (${{ matrix.target }})
@@ -88,7 +93,9 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build
-        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
+        # `--all-features` so the published binaries carry the service half, as the rolling asset
+        # does. A bare build is the CLI only.
+        run: cargo build --release --workspace --all-features --locked --target ${{ matrix.target }}
       - name: Stage (unix)
         if: runner.os != 'Windows'
         shell: bash

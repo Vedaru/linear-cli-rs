@@ -6,6 +6,8 @@
 //! built from the platforms' credentials, and the mappings resolved with the state
 //! vocabularies the two platforms declared.
 
+#![cfg(feature = "service")]
+
 mod common;
 
 use std::io::Write;
