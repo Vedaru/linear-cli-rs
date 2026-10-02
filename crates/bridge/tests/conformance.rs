@@ -23,7 +23,7 @@ use support::{
 };
 
 use linear_bridge::connector::{Algorithm, HeaderMap, Reject, Source};
-use linear_bridge::domain::Secret;
+use linear_bridge::domain::{Action, EntityKind, EventDetail, Secret};
 use linear_bridge::sources::declarative::DeclarativeSource;
 use linear_bridge::sources::presets;
 
@@ -269,6 +269,124 @@ fn every_preset_verifies_what_the_platform_really_sends() {
             proof.prefix.as_deref(),
             "{name}: the digest is wrapped differently from how the platform wraps it"
         );
+    }
+}
+
+#[test]
+fn every_declared_delivery_is_read_as_its_fixture_says() {
+    // The whole of a platform's payload knowledge, in one place: the fixtures say what each
+    // delivery means, and this runs the same comparison over every one of them. A preset
+    // that drifts from the platform it describes fails here, and nothing in this file knows
+    // which platform it is looking at.
+    for (name, fixture) in conformance_fixtures() {
+        let source = source(&name);
+        for delivery in &fixture.deliveries {
+            let body = delivery.body_at(now_millis());
+            let mut pairs: Vec<(String, String)> = fixture
+                .headers
+                .iter()
+                .chain(delivery.headers.iter())
+                .map(|(header, value)| (header.clone(), value.clone()))
+                .collect();
+            let (header, value) = proof_header(&source, TEST_SECRET, &body);
+            pairs.push((header, value));
+            let headers = HeaderMap::from_pairs(
+                pairs
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            );
+
+            if let Some(expected) = &delivery.reject {
+                let rejected = match source.parse(&headers, &body) {
+                    Ok(events) => panic!(
+                        "{name}: a {expected} delivery was read as {} event(s) instead of \
+                         refused: {}",
+                        events.len(),
+                        delivery.body
+                    ),
+                    Err(reject) => reject,
+                };
+                let matched = matches!(
+                    (expected.as_str(), &rejected),
+                    ("stale", Reject::Stale) | ("malformed", Reject::Malformed(_))
+                );
+                assert!(
+                    matched,
+                    "{name}: expected {expected}, got {rejected:?} for {}",
+                    delivery.body
+                );
+                continue;
+            }
+
+            let events = source.parse(&headers, &body).unwrap_or_else(|reject| {
+                panic!("{name} refused a delivery its own fixture declares: {reject}")
+            });
+            if let Some(count) = delivery.count {
+                assert_eq!(events.len(), count, "{name}: {}", delivery.body);
+            }
+            let event = &events[0];
+
+            if let Some(expected) = &delivery.event {
+                assert_eq!(&event.event, expected, "{name}: {}", delivery.body);
+            }
+            if let Some(kind) = &delivery.kind {
+                let expected = match kind.as_str() {
+                    "issue" => EntityKind::Issue,
+                    "comment" => EntityKind::Comment,
+                    "reference" => EntityKind::Reference,
+                    "other" => EntityKind::Other(
+                        delivery
+                            .other_name
+                            .clone()
+                            .unwrap_or_else(|| panic!("{name}: `other` needs `other_name`")),
+                    ),
+                    unknown => panic!("{name}: unknown kind `{unknown}` in its fixture"),
+                };
+                assert_eq!(event.kind, expected, "{name}: {}", delivery.body);
+            }
+            if let Some(action) = &delivery.action {
+                let expected = match action.as_str() {
+                    "created" => Action::Created,
+                    "updated" => Action::Updated,
+                    "deleted" => Action::Deleted,
+                    unknown => panic!("{name}: unknown action `{unknown}` in its fixture"),
+                };
+                assert_eq!(event.action, expected, "{name}: {}", delivery.body);
+            }
+            if let Some(id) = &delivery.id {
+                assert_eq!(&event.subject.native_id, id, "{name}: {}", delivery.body);
+            }
+            if let Some(scope) = &delivery.scope {
+                assert_eq!(
+                    event.subject.scope.as_deref(),
+                    Some(scope.as_str()),
+                    "{name}: {}",
+                    delivery.body
+                );
+            }
+            if let Some(delivery_id) = &delivery.delivery_id {
+                assert_eq!(event.delivery.as_str(), delivery_id, "{name}");
+            }
+            if let Some(url) = &delivery.url {
+                assert_eq!(event.subject.url.as_deref(), Some(url.as_str()), "{name}");
+            }
+            if let Some(actor) = &delivery.actor {
+                assert_eq!(
+                    event.actor.as_ref().map(|actor| actor.id.as_str()),
+                    Some(actor.as_str()),
+                    "{name}"
+                );
+            }
+            if delivery.comment_id.is_some() || delivery.comment_body.is_some() {
+                match &event.detail {
+                    EventDetail::Comment { id, body } => {
+                        assert_eq!(id.as_deref(), delivery.comment_id.as_deref(), "{name}");
+                        assert_eq!(body.as_deref(), delivery.comment_body.as_deref(), "{name}");
+                    }
+                    other => panic!("{name}: expected a comment detail, got {other:?}"),
+                }
+            }
+        }
     }
 }
 

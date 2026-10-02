@@ -27,3 +27,81 @@ body = '''{
 [proof]
 algorithm = "hmac-sha256"
 header = "Linear-Signature"
+
+# --- the deliveries ---------------------------------------------------------
+#
+# What this platform sends, and what the bridge must make of each one. The bodies are the
+# real shapes; the expectations are what a reader of Linear's documentation would say they
+# mean. Nothing here is Rust, and nothing in the suite knows Linear.
+
+[[delivery]]
+event = "Issue"
+kind = "issue"
+action = "created"
+id = "issue-uuid"
+scope = "VED"
+delivery_id = "d-1"
+url = "https://linear.app/vedaru/issue/VED-1/x"
+actor = "user-1"
+body = '''{
+  "action": "create", "type": "Issue",
+  "url": "https://linear.app/vedaru/issue/VED-1/x",
+  "webhookTimestamp": {now},
+  "actor": { "id": "user-1", "name": "loner" },
+  "data": { "id": "issue-uuid", "identifier": "VED-1", "team": { "key": "VED" } }
+}'''
+
+[[delivery]]
+# The same event, updated: Linear spells the action inside the body.
+event = "Issue"
+kind = "issue"
+action = "updated"
+id = "i"
+scope = "VED"
+body = '''{ "action": "update", "type": "Issue", "webhookTimestamp": {now},
+  "data": { "id": "i", "team": { "key": "VED" } } }'''
+
+[[delivery]]
+event = "Issue"
+kind = "issue"
+action = "deleted"
+id = "i"
+scope = "VED"
+body = '''{ "action": "remove", "type": "Issue", "webhookTimestamp": {now},
+  "data": { "id": "i", "team": { "key": "VED" } } }'''
+
+[[delivery]]
+# A comment: the subject is the *issue* it is on - what a link pairs - and the comment's
+# own id and text ride in the detail.
+event = "Comment"
+kind = "comment"
+action = "created"
+id = "issue-uuid"
+comment_id = "comment-1"
+comment_body = "hello"
+body = '''{ "action": "create", "type": "Comment", "webhookTimestamp": {now},
+  "data": { "id": "comment-1", "body": "hello", "issue": { "id": "issue-uuid" } } }'''
+
+[[delivery]]
+# A type this preset does not model. It survives as an event rather than being dropped:
+# acknowledging a delivery from a newer Linear version beats failing it.
+event = "ProjectUpdate"
+kind = "other"
+other_name = "ProjectUpdate"
+body = '''{ "action": "create", "type": "ProjectUpdate", "webhookTimestamp": {now},
+  "data": { "id": "p-1" } }'''
+
+[[delivery]]
+# No time at all: the scheme binds it, so this cannot be trusted and is refused.
+reject = "stale"
+body = '''{ "action": "create", "type": "Issue", "data": { "id": "i" } }'''
+
+[[delivery]]
+# An issue with no id: the preset has nothing to pair, and says so by name.
+reject = "malformed"
+body = '''{ "action": "create", "type": "Issue", "webhookTimestamp": {now},
+  "data": { "team": { "key": "VED" } } }'''
+
+[[delivery]]
+reject = "malformed"
+body = '''not json'''

@@ -40,6 +40,13 @@ pub struct Fixture {
     /// The headers it sends that are not the proof.
     #[serde(default)]
     pub headers: std::collections::BTreeMap<String, String>,
+    /// Deliveries this platform sends, and what the bridge must make of them.
+    ///
+    /// The body is opaque here on purpose: a payload shape is the platform's business, and
+    /// the suite's job is to check that the preset reads it the way the platform means it.
+    #[serde(default, rename = "delivery")]
+    pub deliveries: Vec<DeliveryExpectation>,
+
     /// What this platform really signs with, so the suite can hold the preset to the real
     /// contract instead of to itself: the harness builds the proof from the *preset*, so
     /// without this nothing would notice a preset that reads the wrong header.
@@ -48,6 +55,62 @@ pub struct Fixture {
     /// proof and all.
     #[serde(default)]
     pub proof: Option<Proof>,
+}
+
+/// One delivery, and what the bridge is supposed to make of it.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct DeliveryExpectation {
+    /// The payload, as the platform sends it, with `{now}` where its own time goes.
+    pub body: String,
+    /// Headers this delivery carries on top of the fixture's own - the event name, usually.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// The event name the preset should read out of it.
+    #[serde(default)]
+    pub event: Option<String>,
+    /// `issue`, `comment`, `reference` or `other`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// For `kind = "other"`: the name the unmodelled type keeps.
+    #[serde(default)]
+    pub other_name: Option<String>,
+    /// `created`, `updated` or `deleted`.
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// The delivery id the platform sent, as the preset should carry it through.
+    #[serde(default)]
+    pub delivery_id: Option<String>,
+    /// The subject's url, as the payload gives it.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The actor's id.
+    #[serde(default)]
+    pub actor: Option<String>,
+    /// A comment's own id and text, when the delivery is one.
+    #[serde(default)]
+    pub comment_id: Option<String>,
+    #[serde(default)]
+    pub comment_body: Option<String>,
+    /// How many events it becomes (a push fans out per commit).
+    #[serde(default)]
+    pub count: Option<usize>,
+    /// `stale` or `malformed`: what this delivery must be *refused* with, instead of read.
+    #[serde(default)]
+    pub reject: Option<String>,
+}
+
+impl DeliveryExpectation {
+    pub fn body_at(&self, millis: i64) -> Vec<u8> {
+        self.body.replace("{now}", &millis.to_string()).into_bytes()
+    }
+
+    pub fn binds_time(&self) -> bool {
+        self.body.contains("{now}")
+    }
 }
 
 /// A platform's proof of authenticity, as its own documentation describes it.
