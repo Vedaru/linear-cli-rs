@@ -282,12 +282,23 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
         let source = source(&name);
         for delivery in &fixture.deliveries {
             let body = delivery.body_at(now_millis());
-            let mut pairs: Vec<(String, String)> = fixture
-                .headers
-                .iter()
-                .chain(delivery.headers.iter())
-                .map(|(header, value)| (header.clone(), value.clone()))
-                .collect();
+            // The fixture's headers are what this platform normally sends. A delivery
+            // that must be *refused* is not given them: the point of such a case is what
+            // it lacks, and inheriting the rest would quietly fill the gap.
+            let mut pairs: Vec<(String, String)> = if delivery.reject.is_some() {
+                delivery
+                    .headers
+                    .iter()
+                    .map(|(header, value)| (header.clone(), value.clone()))
+                    .collect()
+            } else {
+                fixture
+                    .headers
+                    .iter()
+                    .chain(delivery.headers.iter())
+                    .map(|(header, value)| (header.clone(), value.clone()))
+                    .collect()
+            };
             let (header, value) = proof_header(&source, TEST_SECRET, &body);
             pairs.push((header, value));
             let headers = HeaderMap::from_pairs(
@@ -308,7 +319,11 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                 };
                 let matched = matches!(
                     (expected.as_str(), &rejected),
-                    ("stale", Reject::Stale) | ("malformed", Reject::Malformed(_))
+                    ("stale", Reject::Stale)
+                        | ("malformed", Reject::Malformed(_))
+                        // A delivery with no event header at all: the platform cannot say
+                        // what it is, so it is refused rather than guessed at.
+                        | ("missing-header", Reject::MissingHeader(_))
                 );
                 assert!(
                     matched,
@@ -323,6 +338,23 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
             });
             if let Some(count) = delivery.count {
                 assert_eq!(events.len(), count, "{name}: {}", delivery.body);
+            }
+            for (index, id) in delivery.ids.iter().enumerate() {
+                assert_eq!(
+                    events
+                        .get(index)
+                        .unwrap_or_else(|| panic!("{name}: expected {} events", delivery.ids.len()))
+                        .subject
+                        .native_id,
+                    *id,
+                    "{name}: event {index} of {}",
+                    delivery.body
+                );
+            }
+            if events.is_empty() {
+                // Acknowledged and dropped on purpose - asserted above by `count = 0`.
+                // Nothing else is expected of a delivery that becomes no event.
+                continue;
             }
             let event = &events[0];
 
@@ -349,7 +381,14 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                     "created" => Action::Created,
                     "updated" => Action::Updated,
                     "deleted" => Action::Deleted,
-                    unknown => panic!("{name}: unknown action `{unknown}` in its fixture"),
+                    "closed" => Action::Closed,
+                    "reopened" => Action::Reopened,
+                    // An action this deployment does not model keeps its own name, the
+                    // same way an unmodelled entity type does.
+                    other => match other.strip_prefix("other:") {
+                        Some(name) => Action::Other(name.to_string()),
+                        None => panic!("{name}: unknown action `{other}` in its fixture"),
+                    },
                 };
                 assert_eq!(event.action, expected, "{name}: {}", delivery.body);
             }
@@ -367,6 +406,15 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
             if let Some(delivery_id) = &delivery.delivery_id {
                 assert_eq!(event.delivery.as_str(), delivery_id, "{name}");
             }
+            if let Some(length) = delivery.delivery_id_length {
+                // No delivery header on the old releases: the id falls back to a digest of
+                // the body, and its length is the only thing a fixture can assert.
+                assert_eq!(
+                    event.delivery.as_str().len(),
+                    length,
+                    "{name}: the fallback delivery id is a digest"
+                );
+            }
             if let Some(url) = &delivery.url {
                 assert_eq!(event.subject.url.as_deref(), Some(url.as_str()), "{name}");
             }
@@ -376,6 +424,29 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                     Some(actor.as_str()),
                     "{name}"
                 );
+            }
+            if delivery.reference_text.is_some() || delivery.closing_keyword.is_some() {
+                match &event.detail {
+                    EventDetail::Reference {
+                        text,
+                        closing_keywords,
+                    } => {
+                        if let Some(expected) = &delivery.reference_text {
+                            assert_eq!(
+                                text.as_str(),
+                                expected.as_str(),
+                                "{name}: the reference text differs"
+                            );
+                        }
+                        if let Some(keyword) = &delivery.closing_keyword {
+                            assert!(
+                                closing_keywords.contains(keyword),
+                                "{name}: `{keyword}` should read as a closing keyword, got                                  {closing_keywords:?}"
+                            );
+                        }
+                    }
+                    other => panic!("{name}: expected a reference detail, got {other:?}"),
+                }
             }
             if delivery.comment_id.is_some() || delivery.comment_body.is_some() {
                 match &event.detail {

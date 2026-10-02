@@ -95,9 +95,23 @@ pub struct DeliveryExpectation {
     pub comment_id: Option<String>,
     #[serde(default)]
     pub comment_body: Option<String>,
-    /// How many events it becomes (a push fans out per commit).
+    /// The subject ids of the events it becomes, in order (a push fans out per commit).
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// How many events it becomes. `0` is a real answer: a ping, or an event type this
+    /// deployment does not model, is acknowledged without becoming anything.
     #[serde(default)]
     pub count: Option<usize>,
+    /// For a reference: the text that arrived, and a closing keyword it must be read as
+    /// carrying.
+    #[serde(default)]
+    pub reference_text: Option<String>,
+    #[serde(default)]
+    pub closing_keyword: Option<String>,
+    /// Where the platform sends no delivery id, the preset falls back to a body digest -
+    /// and this is how long that digest is supposed to be.
+    #[serde(default)]
+    pub delivery_id_length: Option<usize>,
     /// `stale` or `malformed`: what this delivery must be *refused* with, instead of read.
     #[serde(default)]
     pub reject: Option<String>,

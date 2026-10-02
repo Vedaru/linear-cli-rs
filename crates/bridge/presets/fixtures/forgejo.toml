@@ -16,3 +16,154 @@ body = '''{
 [proof]
 algorithm = "hmac-sha256"
 header = "X-Gitea-Signature"
+
+# --- the deliveries ---------------------------------------------------------
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "created"
+id = "7"
+scope = "Vedaru/linear-cli-rs"
+delivery_id = "d-1"
+actor = "vedaru"
+headers = { "X-Forgejo-Event" = "issues", "X-Forgejo-Delivery" = "d-1" }
+body = '''{
+  "action": "opened",
+  "repository": { "full_name": "Vedaru/linear-cli-rs" },
+  "sender": { "login": "vedaru" },
+  "issue": { "number": 7, "html_url": "http://127.0.0.1:3000/Vedaru/linear-cli-rs/issues/7" }
+}'''
+
+# One delivery per action, because this platform's actions are the interesting part: two
+# of them have no Linear equivalent, and one this deployment does not model keeps its name
+# rather than being mistaken for an update.
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "closed"
+id = "3"
+scope = "a/b"
+headers = { "X-Forgejo-Event" = "issues" }
+body = '''{ "action": "closed", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "reopened"
+id = "3"
+scope = "a/b"
+headers = { "X-Forgejo-Event" = "issues" }
+body = '''{ "action": "reopened", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "updated"
+id = "3"
+scope = "a/b"
+headers = { "X-Forgejo-Event" = "issues" }
+body = '''{ "action": "edited", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "deleted"
+id = "3"
+scope = "a/b"
+headers = { "X-Forgejo-Event" = "issues" }
+body = '''{ "action": "deleted", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "other:milestoned"
+id = "3"
+scope = "a/b"
+headers = { "X-Forgejo-Event" = "issues" }
+body = '''{ "action": "milestoned", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+# A comment: the subject is the issue it is on.
+event = "issue_comment"
+kind = "comment"
+action = "created"
+id = "12"
+scope = "a/b"
+comment_id = "12"
+comment_body = "looks good"
+headers = { "X-Forgejo-Event" = "issue_comment" }
+body = '''{
+  "action": "created",
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" },
+  "issue": { "number": 12 },
+  "comment": { "id": 12, "body": "looks good", "html_url": "http://x/c/12" }
+}'''
+
+[[delivery]]
+# A pull request: a *reference*, so the text that names a Linear issue travels as one.
+event = "pull_request"
+kind = "reference"
+action = "created"
+id = "4"
+scope = "a/b"
+reference_text = "Fixes VED-2\n\nwhy"
+closing_keyword = "fixes"
+headers = { "X-Forgejo-Event" = "pull_request" }
+body = '''{
+  "action": "opened",
+  "repository": { "full_name": "a/b" },
+  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why" }
+}'''
+
+[[delivery]]
+# A push fans out per commit, and only the ones naming an issue become references.
+event = "push"
+kind = "reference"
+action = "created"
+ids = ["abc123", "def456"]
+scope = "a/b"
+count = 2
+headers = { "X-Forgejo-Event" = "push" }
+body = '''{
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" },
+  "commits": [
+    { "id": "abc123", "message": "fixes VED-1", "url": "http://x/commit/abc123",
+      "author": { "name": "Vedaru", "email": "v@example.com" } },
+    { "id": "def456", "message": "chore: tidy", "author": { "name": "Vedaru" } }
+  ]
+}'''
+
+[[delivery]]
+# Old releases send no delivery header: the id falls back to a digest of the body.
+event = "issues"
+kind = "issue"
+action = "closed"
+id = "3"
+scope = "a/b"
+delivery_id_length = 16
+headers = { "X-Gitea-Event" = "issues" }
+body = '''{ "action": "closed", "repository": { "full_name": "a/b" }, "issue": { "number": 3 } }'''
+
+[[delivery]]
+# A ping and an event this deployment does not model are both acknowledged and become
+# nothing: retrying them would be pointless, and failing them would make the platform
+# disable the hook.
+event = "ping"
+count = 0
+headers = { "X-Forgejo-Event" = "ping" }
+body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awesome." }'''
+
+[[delivery]]
+event = "wiki"
+count = 0
+headers = { "X-Forgejo-Event" = "wiki" }
+body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awesome." }'''
+
+[[delivery]]
+# No event header at all: the platform cannot say what this is, so it is refused rather
+# than guessed at.
+reject = "missing-header"
+body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awesome." }'''

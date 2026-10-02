@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use linear_bridge::connector::{HeaderMap, Reject, Source};
-use linear_bridge::domain::{Action, EntityKind, EventDetail, Secret};
+use linear_bridge::connector::Source;
+use linear_bridge::domain::Secret;
 use linear_bridge::sources::declarative::DeclarativeSource;
 use linear_bridge::sources::presets;
 
@@ -23,167 +23,9 @@ fn source(name: &str) -> DeclarativeSource {
     )
 }
 
-fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
-    HeaderMap::from_pairs(pairs.iter().map(|(name, value)| (*name, *value)))
-}
-
 // --- Linear -----------------------------------------------------------------
 
 // --- Forgejo ----------------------------------------------------------------
-
-#[test]
-fn forgejo_issue_deliveries_map_onto_the_domain() {
-    let source = source("forgejo");
-    let body = br#"{
-        "action": "opened",
-        "repository": { "full_name": "Vedaru/linear-cli-rs" },
-        "sender": { "login": "vedaru" },
-        "issue": { "number": 7, "html_url": "http://127.0.0.1:3000/Vedaru/linear-cli-rs/issues/7" }
-    }"#;
-    let events = source
-        .parse(
-            &headers(&[("X-Forgejo-Event", "issues"), ("X-Forgejo-Delivery", "d-1")]),
-            body,
-        )
-        .unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].kind, EntityKind::Issue);
-    assert_eq!(events[0].action, Action::Created);
-    assert_eq!(events[0].subject.native_id, "7");
-    assert_eq!(
-        events[0].subject.scope.as_deref(),
-        Some("Vedaru/linear-cli-rs")
-    );
-    assert_eq!(events[0].delivery.as_str(), "d-1");
-    assert_eq!(
-        events[0].actor.as_ref().map(|a| a.id.as_str()),
-        Some("vedaru")
-    );
-}
-
-#[test]
-fn forgejo_issue_actions_map_and_unknown_ones_are_surfaced() {
-    let source = source("forgejo");
-    for (action, expected) in [
-        ("closed", Action::Closed),
-        ("reopened", Action::Reopened),
-        ("edited", Action::Updated),
-        ("deleted", Action::Deleted),
-        ("milestoned", Action::Other("milestoned".into())),
-    ] {
-        let body = format!(
-            r#"{{"action":"{action}","repository":{{"full_name":"a/b"}},"issue":{{"number":3}}}}"#
-        );
-        let events = source
-            .parse(&headers(&[("X-Forgejo-Event", "issues")]), body.as_bytes())
-            .unwrap();
-        assert_eq!(events[0].action, expected, "action `{action}`");
-    }
-}
-
-#[test]
-fn forgejo_comments_and_pull_requests_carry_their_text() {
-    let source = source("forgejo");
-    let comment = br#"{
-        "action": "created",
-        "repository": { "full_name": "a/b" },
-        "sender": { "login": "vedaru" },
-        "issue": { "number": 12 },
-        "comment": { "id": 12, "body": "looks good", "html_url": "http://x/c/12" }
-    }"#;
-    let events = source
-        .parse(&headers(&[("X-Forgejo-Event", "issue_comment")]), comment)
-        .unwrap();
-    assert_eq!(events[0].kind, EntityKind::Comment);
-    assert_eq!(events[0].subject.native_id, "12");
-    assert_eq!(
-        events[0].detail,
-        EventDetail::Comment {
-            id: Some("12".into()),
-            body: Some("looks good".into())
-        }
-    );
-
-    let pull_request = br#"{
-        "action": "opened",
-        "repository": { "full_name": "a/b" },
-        "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why" }
-    }"#;
-    let events = source
-        .parse(
-            &headers(&[("X-Forgejo-Event", "pull_request")]),
-            pull_request,
-        )
-        .unwrap();
-    assert_eq!(events[0].kind, EntityKind::Reference);
-    match &events[0].detail {
-        EventDetail::Reference {
-            text,
-            closing_keywords,
-        } => {
-            assert_eq!(text, "Fixes VED-2\n\nwhy");
-            assert!(closing_keywords.contains(&"fixes".to_string()));
-        }
-        other => panic!("unexpected detail: {other:?}"),
-    }
-}
-
-#[test]
-fn a_forgejo_push_fans_out_per_commit() {
-    let source = source("forgejo");
-    let body = br#"{
-        "repository": { "full_name": "a/b" },
-        "sender": { "login": "vedaru" },
-        "commits": [
-            { "id": "abc123", "message": "fixes VED-1", "url": "http://x/commit/abc123",
-              "author": { "name": "Vedaru", "email": "v@example.com" } },
-            { "id": "def456", "message": "chore: tidy", "author": { "name": "Vedaru" } }
-        ]
-    }"#;
-    let events = source
-        .parse(&headers(&[("X-Forgejo-Event", "push")]), body)
-        .unwrap();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].subject.native_id, "abc123");
-    assert_eq!(events[0].subject.scope.as_deref(), Some("a/b"));
-    assert_eq!(events[0].action, Action::Created);
-    match &events[0].detail {
-        EventDetail::Reference { text, .. } => assert_eq!(text, "fixes VED-1"),
-        other => panic!("unexpected detail: {other:?}"),
-    }
-    assert_eq!(events[1].subject.native_id, "def456");
-}
-
-#[test]
-fn forgejo_accepts_the_legacy_gitea_headers_and_ignores_pings() {
-    let source = source("forgejo");
-    let body = br#"{"action":"closed","repository":{"full_name":"a/b"},"issue":{"number":3}}"#;
-    let events = source
-        .parse(&headers(&[("X-Gitea-Event", "issues")]), body)
-        .unwrap();
-    assert_eq!(events[0].action, Action::Closed);
-    // No delivery header on the old releases: the id falls back to a body digest.
-    assert_eq!(events[0].delivery.as_str().len(), 16);
-
-    let ping = br#"{"repository":{"full_name":"a/b"},"zen":"Keep it logically awesome."}"#;
-    assert_eq!(
-        source
-            .parse(&headers(&[("X-Forgejo-Event", "ping")]), ping)
-            .unwrap(),
-        vec![]
-    );
-    assert_eq!(
-        source
-            .parse(&headers(&[("X-Forgejo-Event", "wiki")]), ping)
-            .unwrap(),
-        vec![],
-        "an event this deployment does not model is acknowledged, not retried"
-    );
-    assert_eq!(
-        source.parse(&HeaderMap::default(), ping),
-        Err(Reject::MissingHeader("x-forgejo-event".into()))
-    );
-}
 
 // --- GitHub and GitLab ------------------------------------------------------
 
