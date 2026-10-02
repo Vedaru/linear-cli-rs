@@ -134,12 +134,21 @@ variables = { id = "$id" }
 
 # Every issue of the team, for a sweep. Linear pages by cursor, so the walk follows
 # `pageInfo` rather than counting pages - and `hasNextPage` is what ends it.
+#
+# `$teamId` is declared `ID!`, not `String!`: the engine hands this variable the team
+# UUID it resolved through the `team` lookup above (see `context`), but Linear validates
+# the *document* before it looks at any value, and `filter: { team: { id: { eq: ... } } }`
+# sits in an `ID` position - so `String!` is rejected for every value with
+# "Variable \"$teamId\" of type \"String!\" used in position expecting type \"ID\"" and the
+# sweep fails before it reads anything. The lookup is what makes a human key (`VED`)
+# acceptable here at all: `issues(filter:)` compares ids and answers `eq must be a UUID`
+# for a key, while `team(id:)` accepts either.
 [sink.issue.list.request]
 method = "POST"
 path = ""
 items = "/data/issues/nodes"
 [sink.issue.list.request.body]
-query = "query Issues($teamId: String!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } } pageInfo { hasNextPage endCursor } } }"
+query = "query Issues($teamId: ID!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } } pageInfo { hasNextPage endCursor } } }"
 variables = { teamId = "$scope_id", after = "$cursor" }
 [sink.issue.list.paginate.cursor]
 next = "/data/issues/pageInfo/endCursor"

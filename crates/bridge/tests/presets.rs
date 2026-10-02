@@ -130,3 +130,93 @@ fn an_answer_is_chosen_by_what_the_body_asks_for() {
     assert!(unknown.contains("404"), "unmatched: {unknown}");
     assert!(unknown.contains("no answer"), "unmatched: {unknown}");
 }
+
+#[test]
+fn an_id_position_takes_an_id_variable() {
+    // A preset's GraphQL is validated by the platform and by nothing here: the engine's checks are
+    // structural, the fixtures answer whatever shape a test asks for, and the end-to-end harnesses
+    // talk to a fake. So a wrong *variable type* - not a wrong field, which the fixtures do catch -
+    // reaches a release and fails on the first sweep. It shipped once: the `list` operation
+    // declared `$teamId: String!` for a value Linear reads in an `ID` position, and Linear rejects
+    // such a document for *every* value:
+    //
+    //   Variable "$teamId" of type "String!" used in position expecting type "ID".
+    //
+    // The broad check is `graphql-core` over the live SDL, which validates every document in the
+    // tree - mutations included, statically - but needs a schema, so it cannot run in this suite.
+    // This is the narrow tripwire for the trap that actually shipped.
+    for name in presets::preset_names() {
+        let text = presets::preset_text(name).expect("the preset is shipped");
+        for (at, query) in documents(text) {
+            for variable in id_position_variables(&query) {
+                let declared = declaration(&query, &variable);
+                assert!(
+                    matches!(declared.as_deref(), Some("ID") | Some("ID!")),
+                    "{name} {at}: ${variable} is compared as an id but declared {}\n\
+                     Linear validates the document before it reads any value, so this fails for \
+                     every value.\n{query}",
+                    declared.as_deref().unwrap_or("nothing"),
+                );
+            }
+        }
+    }
+}
+
+/// Every `query = "..."` in a preset, with the path of the table it came from.
+fn documents(text: &str) -> Vec<(String, String)> {
+    // `toml::Value`'s own `FromStr` parses a *value*; a preset is a document, so it goes through
+    // the deserialiser - which is also what reports a malformed preset by name.
+    let parsed: toml::Value = toml::from_str(text).expect("the preset is valid TOML");
+    let mut found = Vec::new();
+    collect_documents(&parsed, "", &mut found);
+    found
+}
+
+fn collect_documents(value: &toml::Value, path: &str, out: &mut Vec<(String, String)>) {
+    match value {
+        toml::Value::Table(table) => {
+            if let Some(toml::Value::String(query)) = table.get("query") {
+                out.push((path.to_string(), query.clone()));
+            }
+            for (key, child) in table {
+                collect_documents(child, &format!("{path}.{key}"), out);
+            }
+        }
+        toml::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                collect_documents(child, &format!("{path}[{index}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The variables a document compares as an id: `id: { eq: $x }`, `id: { in: [$x] }`.
+fn id_position_variables(query: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for marker in ["id: { eq: $", "id: { in: [$"] {
+        let mut rest = query;
+        while let Some(at) = rest.find(marker) {
+            rest = &rest[at + marker.len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// The type a document declares for `$name`, if it declares one at all.
+fn declaration(query: &str, name: &str) -> Option<String> {
+    let marker = format!("${name}:");
+    let rest = query[query.find(&marker)? + marker.len()..].trim_start();
+    let declared: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '!' | '[' | ']'))
+        .collect();
+    (!declared.is_empty()).then_some(declared)
+}
