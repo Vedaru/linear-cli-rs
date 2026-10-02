@@ -209,7 +209,16 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 ```sh
 LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... linear webhook serve
 linear webhook serve --check      # resolve the config, print it, do not bind
+
+linear sync                       # or work on demand, with no service at all:
+linear sync --apply               #   the plan, and then the plan carried out
 ```
+
+`linear sync` is the same engine driven by a command instead of by a delivery: it reads
+both ends of every mapping, works out which side moved from the revision each link
+recorded, and writes the difference. It is a **dry run** unless `--apply` is given - a
+sweep can create, so the safe default is to look first, and the plan it prints is the
+plan that runs.
 
 `POST /webhooks/<platform>` verifies the signature against the raw body, stores the delivery
 and answers `202`; the work happens off the request path. `GET /healthz` reports store

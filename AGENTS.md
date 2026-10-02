@@ -121,6 +121,9 @@ one is the missing half of a group that could only move one way.
   `linear-bridge` library crate (`crates/bridge/`) so the same code is callable
   from a test or an agent, and **platforms are configuration**: adding one means
   adding a preset file or an inline `[platform.<name>.spec]`, never a Rust module.
+- `sync` — the same engine, once, from the terminal: reads both ends of each
+  mapping, decides from the revision each link recorded, and writes only what
+  differs. Dry run unless `--apply`; no service, no intake, no queue.
 
 Deliberately **not** wrapped, with the reason:
 
