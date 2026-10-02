@@ -209,6 +209,9 @@ jobs:
           SHA: ${{ forge.sha }}
         run: |
           set -euo pipefail
+          # `rustc --version` goes into the release body below, and the toolchain is installed with
+          # `--no-modify-path` - so the first published body carried "toolchain: " and nothing else.
+          export PATH="$HOME/.cargo/bin:$PATH"
           api="$FORGEJO_URL/api/v1/repos/${{ forge.repository }}"
           auth=(-H "Authorization: token $FORGEJO_TOKEN")
           out="$RUNNER_TEMP/dist"
@@ -242,7 +245,7 @@ jobs:
             printf 'Rolling build of `%s` - the last commit on main that built, gated and published.\n' "$short"
             printf '\n'
             printf -- '- commit: `%s`\n' "$SHA"
-            printf -- '- toolchain: %s\n\n' "$(rustc --version)"
+            printf -- '- toolchain: %s\n\n' "$(rustc --version 2>/dev/null || echo unknown)"
             printf '%s\n' '| asset | sha256 |' '| -- | -- |'
             for f in "$out"/*.tar.gz; do
               printf '| `%s` | `%s` |\n' "$(basename "$f")" "$(cut -d' ' -f1 "$f.sha256")"
