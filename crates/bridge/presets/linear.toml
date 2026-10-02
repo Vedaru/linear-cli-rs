@@ -1,0 +1,53 @@
+# Linear webhook preset.
+#
+# Linear is not a special case in code: it is this file. Linear signs the raw body
+# with HMAC-SHA256 (hex) and, unlike the forges, puts the event type in the body
+# instead of a header and sends a signed `webhookTimestamp` that bounds replay.
+
+[signature]
+headers = ["linear-signature"]
+algorithm = "hmac-sha256"
+
+[delivery]
+headers = ["linear-delivery"]
+
+[event]
+# Linear names the event in the payload: Issue, Comment, Project, ...
+body_field = "/type"
+
+[freshness]
+field = "/webhookTimestamp"
+unit = "millis"
+tolerance_secs = 60
+
+[capabilities]
+states = "named"
+labels = true
+due_dates = true
+priorities = true
+multiple_assignees = false
+native_pull_requests = false
+deletion = true
+
+# One rule covers every Linear event: the event name selects the kind, and an
+# event type this preset does not model still becomes an event of kind
+# `event-name` rather than being dropped, so a new Linear feature is visible in
+# the log instead of silently ignored.
+[[event.rule]]
+match = "*"
+kind = "event-name"
+[event.rule.kinds]
+Issue = "issue"
+Comment = "comment"
+[event.rule.fields]
+action = "/action"
+id = "/data/id"
+scope = "/data/team/key"
+url = "/url"
+actor = "/actor/id"
+actor_name = "/actor/name"
+body = "/data/body"
+[event.rule.actions]
+create = "created"
+update = "updated"
+remove = "deleted"

@@ -82,6 +82,8 @@ pub enum Command {
     Markdown(crate::commands::markdown::MarkdownArgs),
     /// Generate shell completion scripts
     Completions(crate::commands::completions::CompletionsArgs),
+    /// Run and inspect the webhook bridge service
+    Webhook(crate::commands::webhook::WebhookArgs),
 }
 
 /// `linear auth` — manage workspace credentials.

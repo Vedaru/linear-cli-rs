@@ -1,0 +1,86 @@
+# GitHub webhook preset.
+#
+# GitHub signs the raw body with HMAC-SHA256 and sends `sha256=<hex>` in
+# `X-Hub-Signature-256` - the one place a signature needs a prefix stripped before
+# decoding. Its event names are plurals/underscores in a header, and the payload
+# shape is the one Linear's own integration mirrors.
+
+[signature]
+headers = ["x-hub-signature-256"]
+algorithm = "hmac-sha256"
+prefix = "sha256="
+
+[delivery]
+headers = ["x-github-delivery"]
+
+[event]
+headers = ["x-github-event"]
+
+[capabilities]
+states = "open-closed"
+labels = true
+due_dates = false
+priorities = false
+multiple_assignees = true
+native_pull_requests = true
+deletion = false
+
+[[event.rule]]
+match = "issues"
+kind = "issue"
+[event.rule.fields]
+action = "/action"
+id = "/issue/number"
+scope = "/repository/full_name"
+url = "/issue/html_url"
+actor = "/sender/login"
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+closed = "closed"
+reopened = "reopened"
+deleted = "deleted"
+
+[[event.rule]]
+match = "issue_comment"
+kind = "comment"
+[event.rule.fields]
+action = "/action"
+id = "/comment/id"
+scope = "/repository/full_name"
+url = "/comment/html_url"
+actor = "/sender/login"
+body = "/comment/body"
+[event.rule.actions]
+created = "created"
+edited = "updated"
+deleted = "deleted"
+
+[[event.rule]]
+match = "pull_request"
+kind = "reference"
+[event.rule.fields]
+action = "/action"
+id = "/pull_request/number"
+scope = "/repository/full_name"
+url = "/pull_request/html_url"
+actor = "/sender/login"
+text = ["/pull_request/title", "/pull_request/body"]
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+synchronized = "updated"
+closed = "closed"
+reopened = "reopened"
+
+[[event.rule]]
+match = "push"
+kind = "reference"
+action_default = "created"
+[event.rule.fields]
+fan_out = "/commits"
+id = "/id"
+text = ["/message"]
+url = "/url"
+scope = "/repository/full_name"
+actor = "/commits/0/author/username"

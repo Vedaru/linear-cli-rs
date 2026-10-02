@@ -1,0 +1,90 @@
+# Forgejo / Gitea / Codeberg webhook preset.
+#
+# The forge signs the raw body with HMAC-SHA256 (hex) using the secret set on the
+# repository's webhook and sends it in `X-Forgejo-Signature`; releases before the
+# rename send `X-Gitea-Signature`, which is why both are listed and tried in
+# order. There is no signed timestamp, so replay safety rests on the delivery id
+# plus the link store.
+
+[signature]
+headers = ["x-forgejo-signature", "x-gitea-signature"]
+algorithm = "hmac-sha256"
+
+[delivery]
+headers = ["x-forgejo-delivery", "x-gitea-delivery"]
+
+[event]
+headers = ["x-forgejo-event", "x-gitea-event"]
+
+[capabilities]
+states = "open-closed"
+labels = true
+due_dates = true
+priorities = false
+multiple_assignees = false
+native_pull_requests = true
+# The forge emits no webhook when an issue is deleted, so deletion can never be
+# observed here - only pushed to it.
+deletion = false
+
+[[event.rule]]
+match = "issues"
+kind = "issue"
+[event.rule.fields]
+action = "/action"
+id = "/issue/number"
+scope = "/repository/full_name"
+url = "/issue/html_url"
+actor = "/sender/login"
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+closed = "closed"
+reopened = "reopened"
+deleted = "deleted"
+
+[[event.rule]]
+match = "issue_comment"
+kind = "comment"
+[event.rule.fields]
+action = "/action"
+id = "/comment/id"
+scope = "/repository/full_name"
+url = "/comment/html_url"
+actor = "/sender/login"
+body = "/comment/body"
+[event.rule.actions]
+created = "created"
+edited = "updated"
+deleted = "deleted"
+
+[[event.rule]]
+match = "pull_request"
+kind = "reference"
+[event.rule.fields]
+action = "/action"
+id = "/pull_request/number"
+scope = "/repository/full_name"
+url = "/pull_request/html_url"
+actor = "/sender/login"
+text = ["/pull_request/title", "/pull_request/body"]
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+synchronized = "updated"
+closed = "closed"
+reopened = "reopened"
+
+# A push is the one delivery that fans out: every commit may reference an issue.
+[[event.rule]]
+match = "push"
+kind = "reference"
+action_default = "created"
+[event.rule.fields]
+fan_out = "/commits"
+id = "/id"
+text = ["/message"]
+url = "/url"
+scope = "/repository/full_name"
+actor = "/author/email"
+actor_name = "/author/name"

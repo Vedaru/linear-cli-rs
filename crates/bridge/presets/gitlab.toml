@@ -1,0 +1,83 @@
+# GitLab webhook preset.
+#
+# GitLab does not sign the body at all: the shared secret is sent verbatim in
+# `X-Gitlab-Token`, so the verification algorithm is `token` (a constant-time
+# comparison) rather than `hmac-sha256`. This is exactly the kind of platform
+# difference that must be configuration, not a second code path.
+
+[signature]
+headers = ["x-gitlab-token"]
+algorithm = "token"
+
+[delivery]
+headers = ["x-gitlab-event-uuid"]
+
+[event]
+headers = ["x-gitlab-event"]
+
+[capabilities]
+states = "open-closed"
+labels = true
+due_dates = true
+priorities = false
+multiple_assignees = true
+native_pull_requests = true
+deletion = false
+
+[[event.rule]]
+match = "Issue Hook"
+kind = "issue"
+[event.rule.fields]
+action = "/object_attributes/action"
+id = "/object_attributes/iid"
+scope = "/project/path_with_namespace"
+url = "/object_attributes/url"
+actor = "/user/username"
+[event.rule.actions]
+open = "created"
+update = "updated"
+close = "closed"
+reopen = "reopened"
+
+[[event.rule]]
+match = "Note Hook"
+kind = "comment"
+[event.rule.fields]
+action = "/object_attributes/action"
+id = "/object_attributes/id"
+scope = "/project/path_with_namespace"
+url = "/object_attributes/url"
+actor = "/user/username"
+body = "/object_attributes/note"
+[event.rule.actions]
+create = "created"
+update = "updated"
+
+[[event.rule]]
+match = "Merge Request Hook"
+kind = "reference"
+[event.rule.fields]
+action = "/object_attributes/action"
+id = "/object_attributes/iid"
+scope = "/project/path_with_namespace"
+url = "/object_attributes/url"
+actor = "/user/username"
+text = ["/object_attributes/title", "/object_attributes/description"]
+[event.rule.actions]
+open = "created"
+update = "updated"
+merge = "closed"
+close = "closed"
+reopen = "reopened"
+
+[[event.rule]]
+match = "Push Hook"
+kind = "reference"
+action_default = "created"
+[event.rule.fields]
+fan_out = "/commits"
+id = "/id"
+text = ["/message"]
+url = "/url"
+scope = "/project/path_with_namespace"
+actor = "/user_username"

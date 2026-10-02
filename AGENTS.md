@@ -35,6 +35,7 @@ binary end to end.
 | `src/vcs.rs`, `src/git.rs`, `src/jj.rs` | Branch/issue-id detection across git and jj worktrees. |
 | `src/editor.rs`, `src/pager.rs`, `src/proc.rs`, `src/upload.rs` | `$EDITOR`, paging, subprocess runners, signed-URL uploads. |
 | `tests/common/mod.rs` | Headless mock Linear GraphQL server and `run_cli` helper. |
+| `crates/bridge/` | The service half: platform-neutral domain, connector traits, the one declarative connector engine, webhook presets, durable queue, SQLite store, intake server. Layering rules are in its own README. |
 
 ## Conventions
 
@@ -115,6 +116,11 @@ one is the missing half of a group that could only move one way.
   adding or removing the authenticated API user as a watcher.
 - `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
   `commentUnresolve`, which the app's resolve button covers but no CLI did.
+- `webhook serve` — the service half of the binary: webhook intake, a durable
+  queue and the platform specs that describe a webhook payload. It lives in the
+  `linear-bridge` library crate (`crates/bridge/`) so the same code is callable
+  from a test or an agent, and **platforms are configuration**: adding one means
+  adding a preset file or an inline `[platform.<name>.spec]`, never a Rust module.
 
 Deliberately **not** wrapped, with the reason:
 

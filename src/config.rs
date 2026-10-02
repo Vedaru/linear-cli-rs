@@ -186,6 +186,25 @@ pub fn global_config_path() -> Option<PathBuf> {
     crate::paths::config_file("linear.toml")
 }
 
+/// Text of the config file the *service* half should read: the project file when
+/// one exists, otherwise the global one - the same order every other lookup here
+/// uses.
+///
+/// The bridge parses its own sections (`[bridge]`, `[platform.*]`,
+/// `[[mapping]]`) out of this text rather than being handed this module's parsed
+/// schema, so the two halves share one file and one precedence rule without
+/// sharing a key list that would have to grow in lockstep.
+pub fn service_config_text() -> Option<(PathBuf, String)> {
+    init();
+    let state = state().lock().ok()?;
+    let path = state
+        .project_path
+        .clone()
+        .or_else(|| state.global_path.clone())?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some((path, text))
+}
+
 /// Project config candidates, in precedence order.
 fn project_config_paths() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("linear.toml"), PathBuf::from(".linear.toml")];

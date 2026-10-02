@@ -19,6 +19,7 @@ pub mod schema;
 pub mod team;
 pub mod template;
 pub mod user;
+pub mod webhook;
 
 use crate::cli::Command;
 use crate::errors::Result;
@@ -50,5 +51,6 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Api(args)) => api::run(args),
         Some(Command::Markdown(args)) => markdown::run(args),
         Some(Command::Completions(args)) => completions::run(args),
+        Some(Command::Webhook(args)) => webhook::run(args),
     }
 }

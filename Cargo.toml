@@ -11,7 +11,17 @@ rust-version = "1.80"
 name = "linear"
 path = "src/main.rs"
 
+[workspace]
+# The CLI is the only binary in the workspace; everything it needs beyond
+# argument parsing and Linear itself lives in a library, so the same code can be
+# driven from a test, from an agent, or from the service loop rather than only
+# from argv. See crates/bridge/README.md for the layering rules.
+members = ["crates/bridge"]
+
 [dependencies]
+# The webhook/bridge framework: domain model, connector traits, webhook intake,
+# durable queue and link store. Platform-agnostic by construction.
+linear-bridge = { path = "crates/bridge" }
 clap = { version = "4", features = ["derive", "wrap_help", "env"] }
 clap_complete = "4.5.67"
 serde = { version = "1", features = ["derive"] }

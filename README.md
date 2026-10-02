@@ -188,11 +188,47 @@ before you rely on something:
   stripping a trailing "ed" from `deleted`. Kept for output parity rather than silently
   improved.
 
+## Webhook service
+
+The same binary also runs as a service that accepts webhook deliveries (and, from M3,
+mirrors work between the platforms behind them). It reads the same `linear.toml`:
+
+```toml
+[bridge]
+bind = "127.0.0.1:8787"
+
+[platform.forgejo]
+type = "forgejo"
+secret_env = "FORGEJO_WEBHOOK_SECRET"
+
+[[mapping]]
+source = "linear:VED"
+sink = "forgejo:Vedaru/linear-cli-rs"
+```
+
+```sh
+LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... linear webhook serve
+linear webhook serve --check      # resolve the config, print it, do not bind
+```
+
+`POST /webhooks/<platform>` verifies the signature against the raw body, stores the delivery
+and answers `202`; the work happens off the request path. `GET /healthz` reports store
+liveness and delivery counts.
+
+**Platforms are configuration, not code.** Each platform is described by a spec: where its
+signature lives, where its event name lives, and how to address the entity in the payload
+(JSON pointers for the id, scope, URL, actor, comment body, reference text, and an optional
+fan-out array for a push). The presets in [`crates/bridge/presets/`](crates/bridge/presets)
+- `linear`, `forgejo`/`gitea`/`codeberg`, `github`, `gitlab` - are exactly that description,
+so `type = "forgejo"` and an inline `[platform.<name>.spec]` run the same engine, and a
+platform nobody has written a preset for costs a configuration change rather than a pull
+request. See [crates/bridge/README.md](crates/bridge/README.md).
+
 ## Development
 
 ```sh
 cargo build --release
-cargo test --locked                     # 198 tests
+cargo test --locked                     # 225 tests
 cargo clippy --all-targets --locked -- -D warnings
 ```
 
@@ -201,10 +237,21 @@ The release profile is tuned for distribution, not for speed: `lto`, `codegen-un
 and every command is network-bound so the slower code is invisible next to an API round
 trip. A release-mode test run would need `-Z panic-abort-tests`.
 
+The bridge adds 1.64 MiB on top of that (4.74 -> 6.38 MiB): SQLite (bundled, so no system
+library is needed to run it), a small sync HTTP server, TOML parsing and HMAC. Memory is
+bounded by construction rather than by tuning - bodies are capped while reading, one
+delivery is in flight per worker, and the queue lives in the database rather than in
+memory - so a burst costs disk, not RSS.
+
 CI gates every push on `build`, `test`, `clippy -D warnings` and a release build, then
 publishes a rolling release. Output fidelity is enforced where it matters: `linear schema`
 is checked byte-for-byte against goldens captured from the pre-change binary, so a
 refactor that alters a single byte of SDL fails the suite.
+
+One caveat when running the suite by hand: the CLI resolves configuration from the
+environment, so a real `~/.config/linear/linear.toml` (or an exported `XDG_CONFIG_HOME`)
+leaks into the tests and some of them will fail on a machine that is configured. Run
+`env -u XDG_CONFIG_HOME HOME=$(mktemp -d) cargo test --locked` to see the true result.
 
 ## Provenance and licence
 
