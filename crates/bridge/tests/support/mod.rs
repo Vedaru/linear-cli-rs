@@ -20,6 +20,147 @@ use linear_bridge::sink::declarative::DeclarativeSink;
 use linear_bridge::sink::spec::SinkSpec;
 use linear_bridge::sources::presets;
 
+// --- conformance fixtures ---------------------------------------------------
+//
+// A platform's conformance fixture lives in a config file beside its preset, so the suite
+// that runs over every adapter contains no per-platform code: it reads these files, signs
+// the body with the scheme each *preset* declares, and asks the same questions of each.
+// Adding a platform is a preset and a fixture - two files.
+
+/// One platform's fixture, as configured.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Fixture {
+    /// Another preset whose fixture this one is - a line of configuration instead of a
+    /// second copy that can drift from the first.
+    #[serde(default)]
+    pub same_as: Option<String>,
+    /// What the platform sends, with `{now}` where its own time goes.
+    #[serde(default)]
+    pub body: String,
+    /// The headers it sends that are not the proof.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+}
+
+impl Fixture {
+    /// Whether this payload carries its own time, and so whether a scheme that binds time
+    /// must reject an old one.
+    pub fn binds_time(&self) -> bool {
+        self.body.contains("{now}")
+    }
+
+    /// The body, with the platform's own time filled in.
+    pub fn body_at(&self, millis: i64) -> Vec<u8> {
+        self.body.replace("{now}", &millis.to_string()).into_bytes()
+    }
+}
+
+/// A secret the fixtures can be signed with.
+pub const TEST_SECRET: &str = "0123456789abcdef";
+
+/// A different one, for the deliveries that must be refused.
+pub const OTHER_SECRET: &str = "fedcba9876543210";
+
+fn fixtures_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets/fixtures")
+}
+
+/// Every fixture in the build, keyed by the preset name it belongs to.
+///
+/// Read from the directory rather than listed here, so a new platform's fixture is picked
+/// up by existing it. `same_as` is resolved to the fixture it names.
+pub fn conformance_fixtures() -> Vec<(String, Fixture)> {
+    let dir = fixtures_dir();
+    let mut fixtures = std::collections::BTreeMap::new();
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
+        .map(|entry| entry.expect("a readable directory entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    entries.sort();
+
+    for path in entries {
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("a fixture file is named after its preset")
+            .to_string();
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        let fixture: Fixture = toml::from_str(&text)
+            .unwrap_or_else(|error| panic!("{} is not a usable fixture: {error}", path.display()));
+        fixtures.insert(name, fixture);
+    }
+
+    // Resolved in a second pass: a fixture may point at one that was read before or after it.
+    let resolved: Vec<(String, Fixture)> = fixtures
+        .keys()
+        .map(|name| {
+            let mut fixture = fixtures[name].clone();
+            if let Some(target) = fixture.same_as.clone() {
+                fixture = fixtures
+                    .get(&target)
+                    .unwrap_or_else(|| {
+                        panic!("`{name}` says it is `{target}`, which has no fixture")
+                    })
+                    .clone();
+            }
+            (name.clone(), fixture)
+        })
+        .collect();
+    resolved
+}
+
+/// Every preset the build ships must have a fixture - checked here rather than in a test,
+/// so the failure names the file to add.
+pub fn fixture_for(name: &str) -> Fixture {
+    conformance_fixtures()
+        .into_iter()
+        .find(|(candidate, _)| candidate == name)
+        .map(|(_, fixture)| fixture)
+        .unwrap_or_else(|| {
+            panic!(
+                "the `{name}` preset has no conformance fixture: add presets/fixtures/{name}.toml \
+                 with a delivery it would really send"
+            )
+        })
+}
+
+/// The proof a delivery carries, built from the scheme the *preset* declares - so the
+/// harness has no per-platform signing code either.
+pub fn proof_header(
+    source: &dyn linear_bridge::connector::Source,
+    secret: &str,
+    body: &[u8],
+) -> (String, String) {
+    use hmac::{Hmac, Mac};
+    use linear_bridge::connector::Algorithm;
+    use sha2::Sha256;
+
+    let scheme = source.signature();
+    let value = match scheme.algorithm {
+        Algorithm::HmacSha256 => {
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("a key");
+            mac.update(body);
+            mac.finalize()
+                .into_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+        Algorithm::Token => secret.to_string(),
+    };
+    let header = scheme
+        .headers
+        .first()
+        .expect("every scheme names the header it reads proof from")
+        .clone();
+    (
+        header,
+        format!("{}{value}", scheme.prefix.clone().unwrap_or_default()),
+    )
+}
+
 /// What the platform answers for one request.
 pub type Route =
     Box<dyn Fn(&str, &str, &serde_json::Value) -> (u16, serde_json::Value) + Send + Sync>;

@@ -1,0 +1,3 @@
+# gitea is the same API and the same delivery shape as Forgejo, so it points at that
+# fixture rather than repeating it - a line of configuration, not a second copy to drift.
+same_as = "forgejo"

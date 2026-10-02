@@ -1,0 +1,11 @@
+# A delivery this platform really sends, for the conformance suite.
+
+body = '''{
+  "action": "opened",
+  "repository": { "full_name": "o/r" },
+  "sender": { "login": "vedaru" },
+  "issue": { "number": 12, "html_url": "https://github.com/o/r/issues/12" }
+}'''
+
+[headers]
+"X-GitHub-Event" = "issues"

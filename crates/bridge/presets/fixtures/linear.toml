@@ -1,0 +1,23 @@
+# A delivery this platform really sends, for the conformance suite.
+#
+# Nothing here is code, and nothing about it is specific to the suite's Rust: the harness
+# reads this file, signs the body with the scheme the *preset* declares, and runs the
+# shared checks. Adding a platform is therefore a preset and a file like this one.
+#
+# `body` comes first on purpose: in TOML, keys after a table header belong to that table.
+
+# `{now}` is the current time in milliseconds. A fixture that uses it is one whose payload
+# carries its own time, and the harness then also requires a stale copy to be refused -
+# a scheme that binds time cannot pretend it does not.
+body = '''{
+  "action": "create",
+  "type": "Issue",
+  "webhookTimestamp": {now},
+  "data": { "id": "issue-uuid", "identifier": "VED-1", "team": { "key": "VED" } }
+}'''
+
+# Headers the platform sends that are not the proof - the harness adds that itself, from
+# the preset's own signature scheme, which is why nothing platform-specific lives in Rust.
+[headers]
+"Linear-Event" = "Issue"
+"Linear-Delivery" = "d-1"

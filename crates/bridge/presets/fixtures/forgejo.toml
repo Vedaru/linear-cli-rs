@@ -1,0 +1,12 @@
+# A delivery this platform really sends, for the conformance suite. See linear.toml for
+# what the fields mean - this file is data, not code.
+
+body = '''{
+  "action": "opened",
+  "number": 7,
+  "issue": { "id": 7, "number": 7, "title": "T", "body": "B" },
+  "repository": { "full_name": "Vedaru/linear-cli-rs" }
+}'''
+
+[headers]
+"X-Gitea-Event" = "issues"

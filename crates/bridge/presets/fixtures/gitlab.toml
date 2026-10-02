@@ -1,0 +1,12 @@
+# A delivery this platform really sends, for the conformance suite. GitLab proves itself
+# with a shared token rather than a body signature - the preset declares that, and the
+# harness reads it from there, so this file does not have to know.
+
+body = '''{
+  "object_attributes": { "action": "open", "iid": 9, "url": "https://gitlab/x/-/issues/9" },
+  "project": { "path_with_namespace": "group/project" },
+  "user": { "username": "vedaru" }
+}'''
+
+[headers]
+"X-Gitlab-Event" = "Issue Hook"
