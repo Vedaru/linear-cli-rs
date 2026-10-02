@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::connector::Source;
 use crate::domain::{
-    markers, parse_connector_ref, Capabilities, Change, ConnectorId, EntityKind, EntityRef, Event,
-    IssueFields, Patch, UserMap,
+    markers, parse_connector_ref, references, Capabilities, Change, ConnectorId, EntityKind,
+    EntityRef, Event, EventDetail, IssueFields, Patch, UserMap,
 };
 use crate::error::{Error, Result};
 use crate::queue::Handler;
@@ -234,6 +234,17 @@ impl ReconcileHandler {
             None => None,
         };
 
+        // A reference event's subject is the *pull request or commit*, not the issue its
+        // text names - so the issue has to be resolved from the text. Without this, a
+        // commit saying "fixes VED-1" is looked up as an entity nobody links, the planner
+        // correctly decides there is nothing it can do, and the attachment this feature
+        // exists for is never made.
+        let reference_target = if event.kind == EntityKind::Reference {
+            self.named_issue(event)?
+        } else {
+            None
+        };
+
         // The pairing (if any), and the authoritative state of both ends. The
         // payload is a snapshot from whenever the provider queued it; these reads
         // are what the decision is actually made on.
@@ -270,6 +281,7 @@ impl ReconcileHandler {
             side,
             policy: &mapping.policy,
             link: link.as_ref(),
+            reference_target: reference_target.as_ref(),
             comment_link: comment_link.as_ref(),
             observed: &observed,
             counterpart: &counterpart,
@@ -474,17 +486,17 @@ impl ReconcileHandler {
                 // re-creation resume a stale pairing instead of starting clean.
                 self.store.delete_links(pair.subject)?;
             }
-            Step::Attach { url, title } => {
-                let Some(reference) = pair.counterpart.cloned() else {
-                    return Ok(());
-                };
-                let sink = self.sink(&pair.there.connector)?;
-                sink.attach(&pair.there.scope, &reference.native_id, &url, &title)?;
+            Step::Attach { url, title, target } => {
+                // On the target's own side, by the target's own id: the attachment goes on
+                // the issue the reference named.
+                let scope = target.scope.clone().unwrap_or_default();
+                let sink = self.sink(&target.connector)?;
+                sink.attach(&scope, &target.native_id, &url, &title)?;
                 log::info!(
                     "attached {} to {} {}",
                     url,
-                    pair.there.connector,
-                    reference.native_id
+                    target.connector,
+                    target.native_id
                 );
             }
         }
@@ -802,6 +814,54 @@ impl Handler for ReconcileHandler {
             log::debug!("delivery {} carried no events", delivery.id);
         }
         Ok(())
+    }
+}
+
+/// The issue a reference event names.
+///
+/// The identifier in the text (`VED-1`) belongs to one of the mapping's two ends - the one
+/// whose scope is that team key - and the link a pairing would use is keyed by the id that
+/// platform issued, not by the identifier a human wrote. So this asks that platform, which
+/// is also the only way an identifier and an id can disagree without anyone finding out.
+impl ReconcileHandler {
+    fn named_issue(&self, event: &Event) -> Result<Option<EntityRef>> {
+        let EventDetail::Reference { text, .. } = &event.detail else {
+            return Ok(None);
+        };
+        let named = references::extract(text);
+        if named.is_empty() {
+            return Ok(None);
+        }
+
+        for mapping in &self.mappings {
+            for side in [Side::Source, Side::Sink] {
+                let endpoint = mapping.endpoint(side);
+                // Only identifiers this deployment owns: a quoted unrelated ticket in a
+                // commit message is not a reason to touch anything.
+                let Some(found) = references::filter_by_team_keys(
+                    named.clone(),
+                    std::slice::from_ref(&endpoint.scope),
+                )
+                .into_iter()
+                .next() else {
+                    continue;
+                };
+                let Some(issue) = self
+                    .sink(&endpoint.connector)?
+                    .fetch_issue(&endpoint.scope, &found.identifier)?
+                else {
+                    continue;
+                };
+                return Ok(Some(EntityRef {
+                    connector: endpoint.connector.clone(),
+                    kind: EntityKind::Issue,
+                    scope: Some(endpoint.scope.clone()),
+                    native_id: issue.reference.id,
+                    url: issue.reference.url,
+                }));
+            }
+        }
+        Ok(None)
     }
 }
 

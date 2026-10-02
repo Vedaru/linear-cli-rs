@@ -29,8 +29,8 @@ pub mod sweep;
 pub use survey::{Action, Entry, Survey};
 
 use crate::domain::{
-    markers, Actor, Capabilities, Change, ConnectorId, EntityKind, Event, EventDetail, IssueFields,
-    Patch,
+    markers, Actor, Capabilities, Change, ConnectorId, EntityKind, EntityRef, Event, EventDetail,
+    IssueFields, Patch,
 };
 use crate::store::Link;
 
@@ -302,6 +302,10 @@ pub enum Step {
     Attach {
         url: String,
         title: String,
+        /// The issue to attach it to. A reference names an issue in text, and the
+        /// attachment belongs on *that* issue - not on its mirror, which may not even
+        /// exist. Carrying the target is what makes the step independent of the link.
+        target: EntityRef,
     },
 }
 
@@ -322,6 +326,15 @@ pub struct Context<'a> {
     pub policy: &'a Policy,
     /// The pair this entity is part of, if it has one.
     pub link: Option<&'a Link>,
+    /// The issue a *reference* event names, resolved by the handler against the platform
+    /// the identifier belongs to.
+    ///
+    /// A commit or pull request says "fixes VED-1": the issue is on the side the team key
+    /// names, which may be either end of the mapping, and it need not be mirrored at all.
+    /// Resolving it here - rather than inferring it from a link - is what lets a reference
+    /// travel in either direction.
+    /// Borrowed, like the links: the handler owns it for the length of the call.
+    pub reference_target: Option<&'a EntityRef>,
     /// The pair a *comment* is part of, when the event is about a comment.
     ///
     /// A comment needs its own pairing: the issue's says where the copy lives, and
@@ -653,11 +666,11 @@ fn plan_reference(context: &Context<'_>) -> Step {
     if !policy.direction.allows(context.side) {
         return Step::Nothing(Nothing::Direction);
     }
-    if context.link.is_none() || !context.counterpart.exists() {
-        // A referenced issue that is not mirrored stays unmirrored: a commit is not
-        // a reason to create an issue.
+    // A reference to an issue this deployment does not have is nothing to do: a commit is
+    // not a reason to create an issue.
+    let Some(target) = context.reference_target.cloned() else {
         return Step::Nothing(Nothing::Unpaired);
-    }
+    };
     let Some(url) = context.event.subject.url.clone() else {
         return Step::Nothing(Nothing::Empty);
     };
@@ -676,7 +689,7 @@ fn plan_reference(context: &Context<'_>) -> Step {
     if title.is_empty() {
         return Step::Nothing(Nothing::Empty);
     }
-    Step::Attach { url, title }
+    Step::Attach { url, title, target }
 }
 
 #[cfg(test)]
@@ -752,6 +765,8 @@ mod tests {
         link: Option<Link>,
         /// The pairing a *comment* has, when the event is about one.
         comment_link: Option<Link>,
+        /// The issue a reference event names, as the handler would have resolved it.
+        reference_target: Option<EntityRef>,
         observed: Snapshot,
         counterpart: Snapshot,
         counterpart_connector: ConnectorId,
@@ -770,6 +785,7 @@ mod tests {
                 event: event(EntityKind::Issue, Action::Updated),
                 policy: policy(),
                 link: None,
+                reference_target: None,
                 comment_link: None,
                 observed: Snapshot::present(fields("One", &["bug"], 0), Some("In Progress".into())),
                 counterpart: Snapshot::present(fields("One", &["bug"], 0), Some("open".into())),
@@ -801,6 +817,7 @@ mod tests {
                 side,
                 policy: &self.policy,
                 link: self.link.as_ref(),
+                reference_target: self.reference_target.as_ref(),
                 comment_link: self.comment_link.as_ref(),
                 observed: &self.observed,
                 counterpart: &self.counterpart,
@@ -1194,17 +1211,23 @@ mod tests {
             closing_keywords: vec!["fixes".into()],
         };
 
+        // The issue the text names, as the handler resolves it: the attachment belongs on
+        // *that* issue, not on a mirror of it.
+        fixture.reference_target = Some(reference("linear", "issue-uuid"));
+
         match fixture.plan(Side::Source) {
-            Step::Attach { url, title } => {
+            Step::Attach { url, title, target } => {
                 assert_eq!(url, "http://forge/pulls/4");
                 assert_eq!(title, "Fix the thing");
+                assert_eq!(target.connector.as_str(), "linear");
+                assert_eq!(target.native_id, "issue-uuid");
             }
             other => panic!("expected an attachment, got {other:?}"),
         }
     }
 
     #[test]
-    fn a_reference_to_an_unmirrored_issue_creates_nothing() {
+    fn a_reference_to_an_issue_this_deployment_cannot_resolve_creates_nothing() {
         let mut fixture = Fixture::default();
         fixture.event.kind = EntityKind::Reference;
         fixture.event.detail = EventDetail::Reference {
@@ -1228,6 +1251,8 @@ mod tests {
             text: "Fix the thing".into(),
             closing_keywords: vec![],
         };
+        // The issue resolves; it is the *url* that is missing, which is what this is about.
+        fixture.reference_target = Some(reference("linear", "issue-uuid"));
 
         assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Empty));
     }
