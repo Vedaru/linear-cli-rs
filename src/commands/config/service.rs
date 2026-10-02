@@ -76,10 +76,15 @@ fn sections(team: &str, repo: &str, forge: &str, store: &str) -> Vec<String> {
         "type = \"linear\"".into(),
         "# The CLI's own key, unless LINEAR_API_KEY is set, which wins either way.".into(),
         "token_env = \"LINEAR_API_KEY\"".into(),
+        "# What `webhook serve` verifies Linear's deliveries with. Required: every platform the"
+            .into(),
+        "# service accepts deliveries from needs one (`linear sync` alone needs neither).".into(),
+        "secret_env = \"LINEAR_WEBHOOK_SECRET\"".into(),
         String::new(),
         "[platform.forgejo]".into(),
         "type = \"forgejo\"".into(),
         "token_env = \"FORGEJO_TOKEN\"".into(),
+        "secret_env = \"FORGEJO_WEBHOOK_SECRET\"".into(),
         format!("api_url = \"{forge}/api/v1\""),
         String::new(),
         "[[mapping]]".into(),
@@ -137,6 +142,14 @@ mod tests {
         // and the variable names - never values - are the point of the scaffold.
         std::env::set_var("LINEAR_API_KEY", "a-dummy-key-long-enough-to-be-one");
         std::env::set_var("FORGEJO_TOKEN", "a-dummy-token-long-enough-to-be-one");
+        std::env::set_var(
+            "LINEAR_WEBHOOK_SECRET",
+            "a-dummy-secret-long-enough-to-be-one",
+        );
+        std::env::set_var(
+            "FORGEJO_WEBHOOK_SECRET",
+            "a-dummy-secret-long-enough-to-be-one",
+        );
 
         // The property that matters: what this prints, `webhook serve` can run. A scaffold that
         // only looks like a config is worse than none, because it fails at the first command
@@ -156,6 +169,15 @@ mod tests {
         assert_eq!(mappings[0].source.connector.as_str(), "linear");
         assert_eq!(mappings[0].source.scope, "VED");
         assert_eq!(mappings[0].sink.scope, "Vedaru/linear-cli-rs");
+
+        // The stricter question, and the one the scaffold used to fail: `serve` asks every
+        // platform it accepts deliveries from for a secret, so a scaffold with only `token_env`
+        // parses, reconciles, and then refuses to bind. This is `serve`'s own check, not a
+        // second opinion about it.
+        let receiving = config
+            .receiving_sources()
+            .expect("and be one `webhook serve` can bind");
+        assert_eq!(receiving.len(), 2);
     }
 
     #[test]

@@ -11,11 +11,20 @@ use common::run_cli;
 
 #[test]
 fn the_scaffold_printed_is_a_config_the_bridge_can_read() {
-    // The config resolves `token_env` as it loads, so the variables have to exist for this to be
-    // the real check. A dummy value is enough: nothing here talks to a platform, and what the
-    // scaffold is *about* is the variable's name, never its value.
+    // The config resolves `token_env` and `secret_env` as it loads, and the *load* happens in
+    // this process - the CLI under test only prints the scaffold, so its own environment is
+    // irrelevant. That is why these are set here rather than passed to `run_cli`: a dummy value
+    // is enough, and what the scaffold is about is the variable's name, never its value.
     std::env::set_var("LINEAR_API_KEY", "a-dummy-key-long-enough-to-be-one");
     std::env::set_var("FORGEJO_TOKEN", "a-dummy-token-long-enough-to-be-one");
+    std::env::set_var(
+        "LINEAR_WEBHOOK_SECRET",
+        "a-dummy-secret-long-enough-to-be-one",
+    );
+    std::env::set_var(
+        "FORGEJO_WEBHOOK_SECRET",
+        "a-dummy-secret-long-enough-to-be-one",
+    );
 
     let out = run_cli(
         &[
@@ -47,6 +56,15 @@ fn the_scaffold_printed_is_a_config_the_bridge_can_read() {
     assert_eq!(mappings[0].source.scope, "VED");
     assert_eq!(mappings[0].sink.scope, "Vedaru/linear-cli-rs");
 
+    // And runnable by the *service*, which is the stricter question: `webhook serve` requires a
+    // secret from every platform it accepts deliveries from, so a scaffold that prints only
+    // `token_env` parses, reconciles - and then refuses to bind. That gap is why this test now
+    // asks the same question `serve` does instead of a weaker one.
+    let receiving = config
+        .receiving_sources()
+        .expect("and be one `webhook serve` can bind");
+    assert_eq!(receiving.len(), 2);
+
     // The store path is expanded on the way in, so a config saying `~/…` does not make the
     // service create a directory literally called `~` beside wherever it started.
     assert!(
@@ -75,6 +93,10 @@ fn what_it_cannot_know_is_a_placeholder_rather_than_a_guess() {
     );
     // And never a secret: the file names the variable, the environment holds the value.
     assert!(out.stdout.contains("token_env"), "{}", out.stdout);
+    // Including the delivery secrets, which is what `webhook serve` verifies a webhook with:
+    // naming them is the whole difference between a scaffold the service binds with and one it
+    // rejects at startup.
+    assert!(out.stdout.contains("secret_env"), "{}", out.stdout);
     assert!(
         !out.stdout.contains("lin_api"),
         "nothing that looks like a key: {}",
