@@ -34,7 +34,10 @@ name = "sync"
 source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
 "#,
-            dir.join("bridge.db").display()
+            // TOML reads `\` in a basic string as an escape, so a Windows path has
+            // to be written with `/` - which Windows accepts - or it is a parse
+            // error, not a path.
+            dir.join("bridge.db").to_string_lossy().replace('\\', "/")
         ),
     )
     .unwrap();

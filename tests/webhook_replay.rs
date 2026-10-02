@@ -50,7 +50,10 @@ name = "sync"
 source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
 "#,
-            store.display()
+            // TOML reads `\` in a basic string as an escape, so a Windows path has
+            // to be written with `/` - which Windows accepts - or it is a parse
+            // error, not a path.
+            store.to_string_lossy().replace('\\', "/")
         ),
     )
     .unwrap();
