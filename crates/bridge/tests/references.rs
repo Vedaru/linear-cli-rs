@@ -35,16 +35,19 @@ const SECRET: &str = "0123456789abcdef";
 const SCOPE: &str = "a/b";
 
 fn policy() -> Policy {
+    // The mapping here is forge -> Linear, because that is the direction the automation runs
+    // in: the forge's events arrive, and the issue they name is Linear's. Each side's states
+    // are named as that platform holds them.
     let mut policy = default_policy(Sides::new(
-        StateNames {
-            closed: vec!["Done".into(), "Canceled".into()],
-            open: Some("In Progress".into()),
-            initial: Some("Todo".into()),
-        },
         StateNames {
             closed: vec!["closed".into()],
             open: Some("open".into()),
             initial: None,
+        },
+        StateNames {
+            closed: vec!["Done".into(), "Canceled".into()],
+            open: Some("In Progress".into()),
+            initial: Some("Todo".into()),
         },
     ));
     // Without this the planner switches the whole reference axis off, which is the
@@ -57,12 +60,23 @@ fn policy() -> Policy {
 /// Linear issue. Taken from the fixture rather than spelled out, so the payload the platform
 /// really sends is the one on the wire.
 fn reference_delivery() -> Delivery {
+    delivery_where("an open review request", |delivery| {
+        delivery.reference_text.is_some() && delivery.merged != Some(true)
+    })
+}
+
+/// The merge: the same reference, reported as closed **and** merged.
+fn merged_reference_delivery() -> Delivery {
+    delivery_where("a merge", |delivery| delivery.merged == Some(true))
+}
+
+fn delivery_where(what: &str, matches: impl Fn(&support::DeliveryExpectation) -> bool) -> Delivery {
     let fixture = support::fixture_for("forgejo");
     let expected = fixture
         .deliveries
         .iter()
-        .find(|delivery| delivery.reference_text.is_some())
-        .expect("the fixture declares a reference delivery");
+        .find(|delivery| matches(delivery))
+        .unwrap_or_else(|| panic!("the fixture declares {what}"));
 
     Delivery {
         id: 1,
@@ -151,6 +165,19 @@ impl Fixture {
         self.handler.handle(delivery)
     }
 
+    /// The state ids the target was asked to move an issue to.
+    fn moved_to(&self) -> Vec<String> {
+        self.target
+            .graphql("issueUpdate")
+            .into_iter()
+            .filter_map(|record| {
+                record.body["variables"]["input"]["stateId"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
     /// The ids the target was asked to attach things to.
     fn attached_to(&self) -> Vec<String> {
         self.target
@@ -213,6 +240,37 @@ fn a_pull_request_that_names_an_issue_is_attached_to_it() {
         vec!["1a2b3c4d-0000-4000-8000-000000000002".to_string()],
         "one attachment, on the issue the text named"
     );
+
+    // And the half that makes it automation rather than a bookmark: an open review request
+    // moves the issue it names to the state this policy calls open.
+    assert_eq!(
+        fixture.moved_to(),
+        vec!["state-progress".to_string()],
+        "an open review request moves the issue to the open state"
+    );
+}
+
+#[test]
+fn a_merged_pull_request_moves_the_named_issue_to_done() {
+    let mut fixture = Fixture::start();
+
+    fixture
+        .deliver(&merged_reference_delivery())
+        .expect("the merge is handled");
+
+    // Merged is what says done. A forge reports a merge as a close, so without the flag this
+    // delivery would be indistinguishable from an abandoned request - and the issue would sit
+    // in progress forever, or be marked done while the work was cancelled.
+    assert_eq!(
+        fixture.moved_to(),
+        vec!["state-done".to_string()],
+        "a merge moves the issue to the first state this policy calls closed"
+    );
+    assert_eq!(
+        fixture.attached_to().len(),
+        1,
+        "and it is still attached - the merge is the same reference"
+    );
 }
 
 #[test]
@@ -261,8 +319,10 @@ fn the_side_the_reference_arrives_from_does_not_change_where_it_goes() {
         Arc::new(target.sink("linear")),
     ];
     let mut policy = policy();
-    // A mapping that points the other way still receives the forge's events.
+    // A mapping that points the other way still receives the forge's events - and the state
+    // vocabularies swap with the mapping, because the ends did.
     policy.direction = linear_bridge::reconcile::Direction::Both;
+    policy.names = Sides::new(policy.names.sink.clone(), policy.names.source.clone());
 
     let mapping = Mapping {
         name: "reversed".into(),

@@ -120,3 +120,25 @@ method = "POST"
 path = "/graphql"
 match = "attachmentCreate"
 answer = """{"data": {"attachmentCreate": {"success": true}}}"""
+
+# A state is named, not numbered, so writing one costs two lookups: the team the scope names,
+# then that team's states. Both are answered here, because a reference that moves an issue is
+# only proven end to end if the move's target resolves.
+
+[[api]]
+method = "POST"
+path = "/graphql"
+match = "query Teams"
+answer = """{"data": {"teams": {"nodes": [{"id": "team-uuid", "key": "VED"}]}}}"""
+
+[[api]]
+method = "POST"
+path = "/graphql"
+match = "TeamStates"
+answer = """{"data": {"team": {"states": {"nodes": [{"id": "state-todo", "name": "Todo"}, {"id": "state-progress", "name": "In Progress"}, {"id": "state-done", "name": "Done"}]}}}}"""
+
+[[api]]
+method = "POST"
+path = "/graphql"
+match = "issueUpdate"
+answer = """{"data": {"issueUpdate": {"success": true, "issue": {"id": "1a2b3c4d-0000-4000-8000-000000000002", "url": "http://linear.test/VED-2"}}}}"""

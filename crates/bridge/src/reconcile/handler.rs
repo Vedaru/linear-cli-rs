@@ -486,7 +486,12 @@ impl ReconcileHandler {
                 // re-creation resume a stale pairing instead of starting clean.
                 self.store.delete_links(pair.subject)?;
             }
-            Step::Attach { url, title, target } => {
+            Step::Attach {
+                url,
+                title,
+                target,
+                transition,
+            } => {
                 // On the target's own side, by the target's own id: the attachment goes on
                 // the issue the reference named.
                 let scope = target.scope.clone().unwrap_or_default();
@@ -498,6 +503,19 @@ impl ReconcileHandler {
                     target.connector,
                     target.native_id
                 );
+                // And, when the reference is a review request, the move that goes with it.
+                // Through `transition` rather than a full update with one field in it: it is
+                // the operation a state-only move has, and a preset that can move an issue but
+                // not be updated wholesale still gets this step.
+                if let Some(state) = transition {
+                    sink.transition(&scope, &target.native_id, &state)?;
+                    log::info!(
+                        "moved {} {} to {}",
+                        target.connector,
+                        target.native_id,
+                        state
+                    );
+                }
             }
         }
         Ok(())

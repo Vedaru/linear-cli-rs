@@ -133,6 +133,13 @@ pub struct Fields {
     /// Reference text: all non-empty parts, joined (a title and a body).
     #[serde(default)]
     pub text: Vec<String>,
+    /// Where the platform says whether a review request was merged.
+    ///
+    /// Declaring this is what makes a reference a *review request* rather than a commit: a
+    /// commit mentions an issue and that is all it does, while a review request opens and
+    /// (sometimes) merges, and the engine can tell them apart only because the preset says
+    /// where to look. Absent, a reference never moves anything.
+    pub merged: Option<String>,
     /// Address of an array in the payload; one event is produced per element,
     /// with these fields resolved inside the element first and the document
     /// second. A push is the case: the repository is on the delivery, the commit
@@ -486,6 +493,11 @@ impl DeclarativeSource {
             },
             EntityKind::Reference => EventDetail::Reference {
                 text: join_text(item, root, &rule.fields.text).unwrap_or_default(),
+                merged: rule
+                    .fields
+                    .merged
+                    .as_deref()
+                    .and_then(|pointer| flag(item, root, pointer)),
                 closing_keywords: match &rule.closing_keywords {
                     Some(configured) => configured.clone(),
                     None => DEFAULT_CLOSING_KEYWORDS
@@ -665,6 +677,19 @@ impl Source for DeclarativeSource {
 /// whose id is inside an array element.
 fn pick(item: &serde_json::Value, root: &serde_json::Value, pointer: &str) -> Option<String> {
     resolve_string(item, pointer).or_else(|| resolve_string(root, pointer))
+}
+
+/// Resolve a flag the way [`pick`] resolves a string: the element first, the document second.
+///
+/// Only a real boolean counts. A platform that sends `"true"` as text is saying something
+/// else, and reading it as a merge would be a guess about the most consequential field here.
+fn flag(item: &serde_json::Value, root: &serde_json::Value, pointer: &str) -> Option<bool> {
+    let at = |document: &serde_json::Value| {
+        document
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_bool)
+    };
+    at(item).or_else(|| at(root))
 }
 
 fn as_field(

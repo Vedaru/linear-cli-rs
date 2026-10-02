@@ -430,7 +430,18 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                     EventDetail::Reference {
                         text,
                         closing_keywords,
+                        merged,
                     } => {
+                        // A merge is reported as a close on most forges, so the flag is the
+                        // only thing that says the work is finished - which makes it worth
+                        // asserting rather than assuming.
+                        if let Some(expected) = delivery.merged {
+                            assert_eq!(
+                                *merged,
+                                Some(expected),
+                                "{name}: the merge state differs from the payload"
+                            );
+                        }
                         if let Some(expected) = &delivery.reference_text {
                             assert_eq!(
                                 text.as_str(),

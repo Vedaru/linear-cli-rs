@@ -306,6 +306,10 @@ pub enum Step {
         /// attachment belongs on *that* issue - not on its mirror, which may not even
         /// exist. Carrying the target is what makes the step independent of the link.
         target: EntityRef,
+        /// The state the named issue moves to, when the reference is a review request
+        /// opening or merging. Attaching and moving travel together because they are one
+        /// event's consequence, and a reference always attaches - the url is what it is.
+        transition: Option<String>,
     },
 }
 
@@ -689,7 +693,42 @@ fn plan_reference(context: &Context<'_>) -> Step {
     if title.is_empty() {
         return Step::Nothing(Nothing::Empty);
     }
-    Step::Attach { url, title, target }
+    Step::Attach {
+        url,
+        title,
+        target: target.clone(),
+        transition: reference_transition(context, &target),
+    }
+}
+
+/// The move a review request makes to the issue it names, if any.
+///
+/// Opening one says the work has started; merging it says the work is done. Closing it
+/// *without* merging says neither, so it leaves the state alone - an abandoned request is not
+/// a finished one, and guessing would leave someone undoing it by hand. A commit has no merge
+/// state at all, so it never moves anything: a mention is not a workflow step.
+fn reference_transition(context: &Context<'_>, target: &EntityRef) -> Option<String> {
+    let EventDetail::Reference { merged, .. } = &context.event.detail else {
+        return None;
+    };
+    let merged = (*merged)?;
+    // The state vocabulary is the one belonging to the end the issue is on, which is not
+    // necessarily the end the event arrived from.
+    let side = if target.connector == *context.counterpart_connector {
+        context.side.other()
+    } else {
+        context.side
+    };
+    let names = context.policy.names.of(side);
+    if merged {
+        // Merged means finished: the first name this policy accepts as closed - `Done` before
+        // `Canceled`, which is why the list is ordered.
+        names.closed.first().cloned()
+    } else if context.event.action == crate::domain::Action::Created {
+        names.open.clone()
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1209,6 +1248,8 @@ mod tests {
         fixture.event.detail = EventDetail::Reference {
             text: "Fix the thing\n\nlonger body".into(),
             closing_keywords: vec!["fixes".into()],
+            // A commit: a reference with no merge state moves nothing.
+            merged: None,
         };
 
         // The issue the text names, as the handler resolves it: the attachment belongs on
@@ -1216,14 +1257,85 @@ mod tests {
         fixture.reference_target = Some(reference("linear", "issue-uuid"));
 
         match fixture.plan(Side::Source) {
-            Step::Attach { url, title, target } => {
+            Step::Attach {
+                url,
+                title,
+                target,
+                transition,
+            } => {
                 assert_eq!(url, "http://forge/pulls/4");
                 assert_eq!(title, "Fix the thing");
                 assert_eq!(target.connector.as_str(), "linear");
                 assert_eq!(target.native_id, "issue-uuid");
+                assert_eq!(transition, None, "a commit does not move the issue");
             }
             other => panic!("expected an attachment, got {other:?}"),
         }
+    }
+
+    /// A reference event that names an issue, as the handler resolves one: the merge state is
+    /// the one thing the case varies, because it is the one thing that decides the move.
+    fn review_request(merged: Option<bool>) -> Fixture {
+        let mut fixture = Fixture::default();
+        fixture.event.kind = EntityKind::Reference;
+        fixture.event.subject = EntityRef {
+            kind: EntityKind::Reference,
+            native_id: "4".into(),
+            url: Some("http://forge/pulls/4".into()),
+            ..reference("forgejo", "4")
+        };
+        fixture.event.detail = EventDetail::Reference {
+            text: "Fixes VED-2".into(),
+            closing_keywords: vec!["fixes".into()],
+            merged,
+        };
+        fixture.reference_target = Some(reference("linear", "issue-uuid"));
+        fixture
+    }
+
+    fn transition_of(fixture: &Fixture) -> Option<String> {
+        match fixture.plan(Side::Source) {
+            Step::Attach { transition, .. } => transition,
+            other => panic!("expected an attachment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_open_review_request_moves_the_issue_to_the_open_state() {
+        let mut fixture = review_request(Some(false));
+        fixture.event.action = Action::Created;
+
+        assert_eq!(transition_of(&fixture).as_deref(), Some("In Progress"));
+    }
+
+    #[test]
+    fn a_merged_review_request_moves_the_issue_to_a_closed_state() {
+        let mut fixture = review_request(Some(true));
+        fixture.event.action = Action::Closed;
+
+        // `Done` and not `Canceled`: the policy's list is ordered, and a merge means finished.
+        assert_eq!(transition_of(&fixture).as_deref(), Some("Done"));
+    }
+
+    #[test]
+    fn a_review_request_closed_without_merging_moves_nothing() {
+        // An abandoned request is not finished work, and marking it done would be a claim
+        // somebody has to undo by hand. The attachment still happens: the reference is real
+        // either way.
+        let mut fixture = review_request(Some(false));
+        fixture.event.action = Action::Closed;
+
+        assert_eq!(transition_of(&fixture), None);
+        assert!(matches!(fixture.plan(Side::Source), Step::Attach { .. }));
+    }
+
+    #[test]
+    fn a_commit_never_moves_an_issue() {
+        // No merge state at all: a commit message is a mention, not a workflow step.
+        let mut fixture = review_request(None);
+        fixture.event.action = Action::Created;
+
+        assert_eq!(transition_of(&fixture), None);
     }
 
     #[test]
@@ -1233,6 +1345,7 @@ mod tests {
         fixture.event.detail = EventDetail::Reference {
             text: "Fix the thing".into(),
             closing_keywords: vec![],
+            merged: None,
         };
 
         assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Unpaired));
@@ -1250,6 +1363,7 @@ mod tests {
         fixture.event.detail = EventDetail::Reference {
             text: "Fix the thing".into(),
             closing_keywords: vec![],
+            merged: None,
         };
         // The issue resolves; it is the *url* that is missing, which is what this is about.
         fixture.reference_target = Some(reference("linear", "issue-uuid"));
@@ -1266,6 +1380,7 @@ mod tests {
         fixture.event.detail = EventDetail::Reference {
             text: "Fix".into(),
             closing_keywords: vec![],
+            merged: None,
         };
 
         assert_eq!(

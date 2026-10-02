@@ -69,6 +69,12 @@ pub enum EventDetail {
     Reference {
         text: String,
         closing_keywords: Vec<String>,
+        /// Whether the review request this reference is about has been merged.
+        ///
+        /// `None` is a reference that is not a review request at all - a commit message is a
+        /// mention, not a workflow step. `Some(false)` is an open request, `Some(true)` a
+        /// merged one, and the difference is the whole reason a merge is not a close.
+        merged: Option<bool>,
     },
 }
 

@@ -235,6 +235,7 @@ action = "created"            # created | updated | deleted | closed | reopened 
 id = "7"                      # the subject's id
 scope = "owner/repo"
 delivery_id = "d-1"           # the id header, where the platform sends one
+merged = false                # what the platform reports about a review request
 url = "https://..."           # and the fields a test wants pinned
 actor = "vedaru"
 body = '''{ ...the payload, with {now} where its own time goes... }'''
@@ -277,6 +278,13 @@ means the value really was lost).
 
 The limits worth stating out loud, because each one is a real thing a deployment will meet:
 
+- **A reference moves the issue it names, but only as far as the platform says.** A review
+  request that names an issue is attached to it and moves it: to the open state when it opens,
+  to the first closed state when it *merges*. A request closed *without* merging leaves the
+  state alone - abandoned work is not finished work, and marking it done is a claim somebody
+  has to undo by hand - and a commit only ever attaches, because a mention is not a workflow
+  step. Which of those a delivery is comes from the preset: it says where the platform reports
+  the merge, and a reference whose payload has no such field is a commit.
 - **A platform Linear integrates through its own app is deliberately not a preset here.**
   Bridging it would duplicate that integration rather than add to it. A preset is written for a
   platform this deployment actually talks to, and nothing in the engine is shaped around any

@@ -130,6 +130,10 @@ pub struct DeliveryExpectation {
     pub id: Option<String>,
     #[serde(default)]
     pub scope: Option<String>,
+    /// The merge state the platform reports, where it reports one: this is what tells a
+    /// merged review request from one that was merely closed.
+    #[serde(default)]
+    pub merged: Option<bool>,
     /// The delivery id the platform sent, as the preset should carry it through.
     #[serde(default)]
     pub delivery_id: Option<String>,

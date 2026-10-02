@@ -230,7 +230,8 @@ liveness and delivery counts.
 
 **Platforms are configuration, not code.** Each platform is described by a spec: where its
 signature lives, where its event name lives, and how to address the entity in the payload
-(JSON pointers for the id, scope, URL, actor, comment body, reference text, and an optional
+(JSON pointers for the id, scope, URL, actor, comment body, reference text, a review
+request's merge state, and an optional
 fan-out array for a push). The presets in [`crates/bridge/presets/`](crates/bridge/presets)
 - `linear`, `forgejo`/`gitea`/`codeberg` - are exactly that description,
 so `type = "forgejo"` and an inline `[platform.<name>.spec]` run the same engine, and a

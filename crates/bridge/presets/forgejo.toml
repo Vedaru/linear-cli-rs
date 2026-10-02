@@ -73,6 +73,11 @@ scope = "/repository/full_name"
 url = "/pull_request/html_url"
 actor = "/sender/login"
 text = ["/pull_request/title", "/pull_request/body"]
+# Where the forge says whether the request was merged. A merge arrives as `action = closed`
+# with this flag set, so the flag - not the action - is what says the work is finished. It is
+# also what tells the engine this reference is a review request rather than a commit, which is
+# why a push rule has no `merged`: a commit moves no issue through a workflow.
+merged = "/pull_request/merged"
 [event.rule.actions]
 opened = "created"
 edited = "updated"

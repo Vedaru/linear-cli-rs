@@ -111,11 +111,12 @@ scope = "a/b"
 reference_text = "Fixes VED-2\n\nwhy"
 closing_keyword = "fixes"
 url = "http://forge/a/b/pulls/4"
+merged = false
 headers = { "X-Forgejo-Event" = "pull_request" }
 body = '''{
   "action": "opened",
   "repository": { "full_name": "a/b" },
-  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why", "html_url": "http://forge/a/b/pulls/4" }
+  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why", "html_url": "http://forge/a/b/pulls/4", "merged": false }
 }'''
 
 [[delivery]]
@@ -252,3 +253,22 @@ method = "POST"
 path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/comments"
 status = 201
 answer = '''{ "id": 77, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12#comment-77" }'''
+
+[[delivery]]
+# The merge. A forge reports it as `closed` with the flag set, so the flag - not the action -
+# is what says the work is finished: the same action without it is an abandoned request, and
+# that must not move an issue to done.
+event = "pull_request"
+kind = "reference"
+action = "closed"
+id = "4"
+scope = "a/b"
+reference_text = "Fixes VED-2\n\nwhy"
+closing_keyword = "fixes"
+merged = true
+headers = { "X-Forgejo-Event" = "pull_request" }
+body = '''{
+  "action": "closed",
+  "repository": { "full_name": "a/b" },
+  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why", "html_url": "http://forge/a/b/pulls/4", "merged": true }
+}'''
