@@ -162,6 +162,12 @@ pub trait Store: Send {
 
     fn counts(&mut self) -> Result<Counts>;
 
+    /// The deliveries the queue has given up on, most recently seen first.
+    ///
+    /// A count of failures is not a lead. These carry the body the provider sent and the error
+    /// that stopped it, which is what an operator reads to find out what broke.
+    fn dead_deliveries(&mut self, limit: usize) -> Result<Vec<Delivery>>;
+
     /// Cheapest possible liveness check on the store, used by `/healthz`.
     fn health(&mut self) -> Result<()>;
 

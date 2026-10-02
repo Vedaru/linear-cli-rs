@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use linear_bridge::config::BridgeConfig;
 use linear_bridge::reconcile::handler::ReconcileHandler;
 use linear_bridge::store::sqlite::SqliteStore;
@@ -21,8 +21,13 @@ use crate::commands::webhook::serve::config_source;
 use crate::errors::{CliError, Result};
 use crate::output;
 
+mod status;
+
 #[derive(Args, Debug)]
 pub struct SyncArgs {
+    #[command(subcommand)]
+    pub command: Option<SyncCommand>,
+
     /// The configuration to sync (the same file `webhook serve` reads).
     #[arg(long)]
     pub config: Option<PathBuf>,
@@ -37,7 +42,22 @@ pub struct SyncArgs {
     pub json: bool,
 }
 
+#[derive(Subcommand, Debug)]
+pub enum SyncCommand {
+    /// What the store holds, and what the queue has given up on.
+    Status(status::StatusArgs),
+}
+
 pub fn run(args: SyncArgs) -> Result<()> {
+    match args.command {
+        Some(SyncCommand::Status(status_args)) => status::run(status_args),
+        // No subcommand is the sweep, which is what `linear sync` has always meant. A sweep
+        // is the thing you run repeatedly, so it should not have to be spelled out.
+        None => sweep(args),
+    }
+}
+
+fn sweep(args: SyncArgs) -> Result<()> {
     linear_bridge::logging::init_default();
 
     let (path, text) = config_source(args.config.as_deref())?;

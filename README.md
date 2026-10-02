@@ -212,6 +212,7 @@ linear webhook serve --check      # resolve the config, print it, do not bind
 
 linear sync                       # or work on demand, with no service at all:
 linear sync --apply               #   the plan, and then the plan carried out
+linear sync status                # what the store holds, and what it gave up on
 ```
 
 `linear sync` is the same engine driven by a command instead of by a delivery: it reads
@@ -219,6 +220,12 @@ both ends of every mapping, works out which side moved from the revision each li
 recorded, and writes the difference. It is a **dry run** unless `--apply` is given - a
 sweep can create, so the safe default is to look first, and the plan it prints is the
 plan that runs.
+
+`linear sync status` answers the other question a quiet setup raises - whether the queue
+drained or filled, which look identical from outside because both answer a webhook with `202`
+and neither writes anything. It reads the same store the service writes, prints the queue and
+the mappings, and lists the deliveries the queue gave up on with the error that stopped each
+one. A store it cannot read is a failure, not a zero.
 
 A config for this shape needs no webhook secrets at all - just the credentials it writes
 with - because a sweep never verifies a delivery. The same file is still refused by

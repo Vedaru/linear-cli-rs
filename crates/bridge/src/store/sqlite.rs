@@ -22,6 +22,30 @@ const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_init.sql")];
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Every column a delivery read selects, in the order [`delivery_from_row`] reads them.
+///
+/// One list in one place: two readers that disagree about a column's position is a bug that
+/// surfaces as a delivery whose error message belongs to another delivery.
+const DELIVERY_COLUMNS: &str =
+    "id, connector, delivery_id, event, kind, action, scope, native_id, body, attempts, last_error";
+
+/// One row of [`DELIVERY_COLUMNS`], as a [`Delivery`].
+fn delivery_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Delivery> {
+    Ok(Delivery {
+        id: row.get(0)?,
+        connector: ConnectorId::new(row.get::<_, String>(1)?),
+        delivery_id: row.get(2)?,
+        event: row.get(3)?,
+        kind: kind_from_name(&row.get::<_, String>(4)?),
+        action: action_from_name(&row.get::<_, String>(5)?),
+        scope: row.get(6)?,
+        native_id: row.get(7)?,
+        body: row.get(8)?,
+        attempts: row.get::<_, i64>(9)?.max(0) as u32,
+        last_error: row.get(10)?,
+    })
+}
+
 pub struct SqliteStore {
     conn: Connection,
 }
@@ -127,7 +151,7 @@ impl Store for SqliteStore {
         // `<= now` means the lease has expired and the row is reclaimable. A
         // zero-length lease therefore hides nothing - which is what a test (and a
         // caller that wants synchronous processing) expects.
-        let mut statement = self.conn.prepare(
+        let mut statement = self.conn.prepare(&format!(
             "UPDATE deliveries
                 SET status = 'active', attempts = attempts + 1, available_at = ?2
               WHERE id IN (
@@ -137,29 +161,30 @@ impl Store for SqliteStore {
                      ORDER BY available_at ASC
                      LIMIT ?3
               )
-              RETURNING id, connector, delivery_id, event, kind, action, scope, native_id,
-                        body, attempts, last_error",
-        )?;
-        let rows = statement.query_map(params![now, lease_until, limit as i64], |row| {
-            Ok(Delivery {
-                id: row.get(0)?,
-                connector: ConnectorId::new(row.get::<_, String>(1)?),
-                delivery_id: row.get(2)?,
-                event: row.get(3)?,
-                kind: kind_from_name(&row.get::<_, String>(4)?),
-                action: action_from_name(&row.get::<_, String>(5)?),
-                scope: row.get(6)?,
-                native_id: row.get(7)?,
-                body: row.get(8)?,
-                attempts: row.get::<_, i64>(9)?.max(0) as u32,
-                last_error: row.get(10)?,
-            })
-        })?;
+              RETURNING {DELIVERY_COLUMNS}"
+        ))?;
+        let rows =
+            statement.query_map(params![now, lease_until, limit as i64], delivery_from_row)?;
         let mut claimed = Vec::new();
         for row in rows {
             claimed.push(row?);
         }
         Ok(claimed)
+    }
+
+    fn dead_deliveries(&mut self, limit: usize) -> Result<Vec<Delivery>> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {DELIVERY_COLUMNS} FROM deliveries
+              WHERE status = 'dead'
+              ORDER BY id DESC
+              LIMIT ?1"
+        ))?;
+        let rows = statement.query_map(params![limit as i64], delivery_from_row)?;
+        let mut dead = Vec::new();
+        for row in rows {
+            dead.push(row?);
+        }
+        Ok(dead)
     }
 
     fn complete(&mut self, id: i64) -> Result<()> {
@@ -500,6 +525,30 @@ mod tests {
             ..issue.clone()
         };
         assert!(!store.reference_exists(&commit, &elsewhere).unwrap());
+    }
+
+    #[test]
+    fn a_dead_delivery_is_listed_with_the_reason_it_stopped() {
+        let mut store = SqliteStore::open_in_memory().unwrap();
+        store.migrate().unwrap();
+
+        store.insert_delivery(&new_delivery("d-1")).unwrap();
+        let claimed = store.claim_due(1, Duration::from_secs(30)).unwrap();
+        assert_eq!(claimed.len(), 1);
+        // No retry left: the queue's decision, recorded the way a worker records it.
+        store
+            .fail(claimed[0].id, "HTTP 500 from linear", None)
+            .unwrap();
+
+        let dead = store.dead_deliveries(10).unwrap();
+        assert_eq!(dead.len(), 1, "the one that stopped");
+        assert_eq!(dead[0].last_error.as_deref(), Some("HTTP 500 from linear"));
+        assert_eq!(dead[0].delivery_id, "d-1", "and which delivery it was");
+        assert_eq!(dead[0].attempts, 1, "and that it was tried");
+        assert!(
+            store.dead_deliveries(0).unwrap().is_empty(),
+            "the limit is a limit"
+        );
     }
 
     #[test]
