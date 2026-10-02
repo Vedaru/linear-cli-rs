@@ -56,6 +56,19 @@ impl Bridge {
     pub fn bind(deps: ServeDeps) -> Result<Self> {
         let server = tiny_http::Server::http(deps.addr)
             .map_err(|error| Error::Config(format!("cannot bind {}: {error}", deps.addr)))?;
+
+        // Open the database once, here, before anything serves.
+        //
+        // Every thread opens its own connection, and a connection that cannot be
+        // opened used to kill that thread quietly: no accept loop, no worker, requests
+        // that wait for an answer nobody will send, and one log line nobody reads. It
+        // showed up as a test suite hanging for two minutes in CI while passing here.
+        // Migrations and the journal-mode switch also happen exactly once now, so the
+        // threads only ever open an already-prepared file.
+        let prepared = (deps.store)()
+            .map_err(|error| Error::Config(format!("the store cannot be opened: {error}")))?;
+        drop(prepared);
+
         Ok(Self {
             server: Arc::new(server),
             deps,

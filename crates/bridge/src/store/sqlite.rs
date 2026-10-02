@@ -42,10 +42,16 @@ impl SqliteStore {
     fn prepare(conn: Connection, on_disk: bool) -> Result<Self> {
         conn.busy_timeout(BUSY_TIMEOUT)?;
         if on_disk {
-            // WAL is persistent per database, but setting it is idempotent and
-            // cheap, and the alternative - noticing a missing WAL in production -
-            // is a lock-contention bug that only shows up under load.
-            conn.pragma_update(None, "journal_mode", "WAL")?;
+            // WAL is persistent per database, but setting it is idempotent and cheap.
+            //
+            // Deliberately not fatal: switching the journal mode cannot be waited out
+            // with `busy_timeout`, so when another connection holds the database for a
+            // moment the switch fails - and a store that works in rollback-journal mode
+            // is enormously better than a thread that dies because a *performance*
+            // setting could not be applied.
+            if let Err(error) = conn.pragma_update(None, "journal_mode", "WAL") {
+                log::warn!("could not switch the store to WAL ({error}); continuing without it");
+            }
         }
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;

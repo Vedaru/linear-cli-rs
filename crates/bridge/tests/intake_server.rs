@@ -40,6 +40,9 @@ struct Harness {
 
 impl Harness {
     fn start() -> Self {
+        // A dying intake thread says so in a log line. Without a logger installed, that
+        // line goes nowhere and the symptom is a test that hangs for its whole timeout.
+        linear_bridge::logging::init_default();
         let database = std::env::temp_dir().join(format!(
             "linear-bridge-test-{}-{}.db",
             std::process::id(),
