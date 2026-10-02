@@ -167,3 +167,87 @@ body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awes
 # than guessed at.
 reject = "missing-header"
 body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awesome." }'''
+
+# --- what its API answers ---------------------------------------------------
+#
+# The write half of this platform, as configuration: the shapes a sink reads (a label
+# list, a fetched issue, a created entity's id). Paths include the preset's base-url path
+# (`/api/v1`), because that is what a request to this fake looks like.
+
+[[api]]
+method = "GET"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/labels"
+answer = '''[
+  { "id": 3, "name": "Bug" },
+  { "id": 9, "name": "Urgent" },
+  { "id": 11, "name": "priority:high" },
+  { "id": 21, "name": "due:2026-10-09" }
+]'''
+
+[[api]]
+method = "GET"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=1&state=all"
+answer = '''[
+  { "number": 12, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12",
+    "title": "Mirror the thing", "body": "why it matters", "due_date": "2026-10-09",
+    "state": "open",
+    "labels": [{ "id": 3, "name": "Bug" }, { "id": 11, "name": "priority:high" }],
+    "assignees": [{ "login": "vedaru" }] },
+  { "number": 13, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/13",
+    "title": "Second", "body": "", "due_date": "0001-01-01T00:00:00Z",
+    "state": "closed", "labels": [], "assignees": [] }
+]'''
+
+[[api]]
+method = "GET"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=2&state=all"
+answer = '''[
+  { "number": 14, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/14",
+    "title": "Third", "body": "", "state": "open", "labels": [], "assignees": [] }
+]'''
+
+[[api]]
+method = "POST"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues"
+status = 201
+answer = '''{ "number": 12, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12" }'''
+
+[[api]]
+method = "PATCH"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/12"
+answer = '''{ "number": 12 }'''
+
+[[api]]
+method = "PUT"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/labels"
+answer = '''[]'''
+
+[[api]]
+method = "GET"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/12"
+answer = '''{
+  "number": 12,
+  "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12",
+  "title": "Mirror the thing",
+  "body": "why it matters\n\nmirrored from VED-99",
+  "due_date": "2026-10-09",
+  "state": "closed",
+  "labels": [{ "id": 3, "name": "Bug" }, { "id": 5, "name": "priority:high" }],
+  "assignees": [{ "login": "vedaru" }]
+}'''
+
+[[api]]
+method = "PATCH"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77"
+answer = '''{ "id": 77 }'''
+
+[[api]]
+method = "DELETE"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77"
+answer = '''{}'''
+
+[[api]]
+method = "POST"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/comments"
+status = 201
+answer = '''{ "id": 77, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12#comment-77" }'''

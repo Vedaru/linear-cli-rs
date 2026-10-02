@@ -35,101 +35,15 @@ fn fields() -> IssueFields {
 // ---------------------------------------------------------------------------
 // A forge: REST, ids for labels, the state on the issue itself.
 
-fn forgejo_routes(method: &str, path: &str, _body: &Value) -> (u16, Value) {
-    match (method, path) {
-        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/labels") => (
-            200,
-            json!([
-                { "id": 3, "name": "Bug" },
-                { "id": 9, "name": "Urgent" },
-                { "id": 11, "name": "priority:high" },
-                // A label the bridge wrote as an emulated due date, which is what a
-                // platform with no due-date field is asked for.
-                { "id": 21, "name": "due:2026-10-09" }
-            ]),
-        ),
-        // A sweep: two pages, the second one short - which is how a numbered API
-        // says "that was the last one".
-        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=1&state=all") => (
-            200,
-            json!([
-                {
-                    "number": 12,
-                    "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12",
-                    "title": "Mirror the thing",
-                    "body": "why it matters",
-                    "due_date": "2026-10-09",
-                    "state": "open",
-                    "labels": [{ "id": 3, "name": "Bug" }, { "id": 11, "name": "priority:high" }],
-                    "assignees": [{ "login": "vedaru" }]
-                },
-                {
-                    "number": 13,
-                    "html_url": "http://forge/Vedaru/linear-cli-rs/issues/13",
-                    "title": "Second",
-                    "body": "",
-                    "due_date": "0001-01-01T00:00:00Z",
-                    "state": "closed",
-                    "labels": [],
-                    "assignees": []
-                }
-            ]),
-        ),
-        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=2&state=all") => (
-            200,
-            json!([{
-                "number": 14,
-                "html_url": "http://forge/Vedaru/linear-cli-rs/issues/14",
-                "title": "Third",
-                "body": "",
-                "state": "open",
-                "labels": [],
-                "assignees": []
-            }]),
-        ),
-        ("POST", "/api/v1/repos/Vedaru/linear-cli-rs/issues") => (
-            201,
-            json!({ "number": 12, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12" }),
-        ),
-        ("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12") => (200, json!({ "number": 12 })),
-        ("PUT", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/labels") => (200, json!([])),
-        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12") => (
-            200,
-            json!({
-                "number": 12,
-                "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12",
-                "title": "Mirror the thing",
-                "body": "why it matters\n\nmirrored from VED-99",
-                "due_date": "2026-10-09",
-                "state": "closed",
-                "labels": [{ "id": 3, "name": "Bug" }, { "id": 5, "name": "priority:high" }],
-                "assignees": [{ "login": "vedaru" }],
-            }),
-        ),
-        ("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77") => {
-            (200, json!({ "id": 77 }))
-        }
-        ("DELETE", "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77") => (200, json!({})),
-        ("POST", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/comments") => (
-            201,
-            json!({ "id": 77, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12#comment-77" }),
-        ),
-        _ => (
-            404,
-            json!({ "message": format!("no route for {method} {path}") }),
-        ),
-    }
-}
-
 #[test]
 fn an_emulated_due_date_survives_a_labels_only_update() {
     // The bug this pins: a labels-only patch has nothing to say about the due date, so a
     // sink that read the value out of the patch would send the label set *without* the
     // emulated label - and the target would lose a date nobody touched. On a platform that
     // carries the date in a label, writing the labels means writing the whole set.
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let preset = presets::preset("forgejo").expect("the preset loads");
-    let mut capabilities: linear_bridge::domain::Capabilities = preset.capabilities.clone().into();
+    let mut capabilities: linear_bridge::domain::Capabilities = preset.capabilities.into();
     capabilities.due_dates = false;
     let sink = fake.sink_with(
         "forgejo",
@@ -163,7 +77,7 @@ fn an_emulated_due_date_survives_a_labels_only_update() {
 
 #[test]
 fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     let reference = sink
@@ -194,7 +108,7 @@ fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
 
 #[test]
 fn a_patch_sends_only_what_it_changes() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     // A patch that mentions the title and nothing else. The rest must not reach the
@@ -230,7 +144,7 @@ fn a_patch_sends_only_what_it_changes() {
 
 #[test]
 fn a_patch_clears_exactly_what_it_says_it_clears() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     let patch = Patch {
@@ -260,7 +174,7 @@ fn a_patch_clears_exactly_what_it_says_it_clears() {
 
 #[test]
 fn a_priority_change_rewrites_the_label_set_it_travels_in() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     // On a platform with no priority field the priority *is* a label, so the label
@@ -288,7 +202,7 @@ fn a_priority_change_rewrites_the_label_set_it_travels_in() {
 
 #[test]
 fn a_sweep_reads_every_page_and_every_field() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     // A page size of two, so a three-issue scope exercises the walk without a test
     // fixture of fifty issues. The number is the preset's business, not the engine's.
     let forgejo = presets::preset("forgejo").expect("the preset");
@@ -371,7 +285,7 @@ fn a_sweep_follows_a_cursor_and_believes_has_next_page() {
 
 #[test]
 fn a_platform_that_cannot_be_enumerated_says_so_by_name() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let forgejo = presets::preset("forgejo").expect("the preset");
     let capabilities: linear_bridge::domain::Capabilities =
         forgejo.capabilities.resolve(forgejo.sink.as_ref());
@@ -391,7 +305,7 @@ fn a_platform_that_cannot_be_enumerated_says_so_by_name() {
 
 #[test]
 fn a_fetched_issue_comes_back_as_the_neutral_field_set() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     let remote = sink
@@ -414,7 +328,7 @@ fn a_fetched_issue_comes_back_as_the_neutral_field_set() {
 
 #[test]
 fn a_comment_returns_the_id_the_other_side_will_link_to() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     let reference = sink
@@ -431,7 +345,7 @@ fn a_comment_returns_the_id_the_other_side_will_link_to() {
 
 #[test]
 fn a_mirrored_comment_can_be_edited_and_removed() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     // A comment is created through its issue...
@@ -463,7 +377,7 @@ fn a_platform_that_cannot_edit_a_comment_says_so_by_name() {
     // The engine refuses an operation the spec does not declare rather than
     // inventing a request: a mapping that needs comment edits on a platform that
     // has none should hear about it, not silently post duplicates.
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     // The preset's write half, with the one operation taken away: a platform that
     // cannot edit a comment is a real case (an older API, a stricter token).
     let forgejo = presets::preset("forgejo").expect("the preset");
@@ -486,7 +400,7 @@ fn a_platform_that_cannot_edit_a_comment_says_so_by_name() {
 
 #[test]
 fn an_operation_the_preset_does_not_declare_is_refused_by_name() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     // A forge has no attachments. The write path says so instead of inventing a
@@ -680,7 +594,7 @@ fn a_failure_inside_a_successful_response_is_a_failure() {
 
 #[test]
 fn a_platform_error_is_reported_with_its_status() {
-    let fake = Fake::start(forgejo_routes);
+    let fake = Fake::start_from("forgejo");
     let sink = fake.sink("forgejo");
 
     // No route for this one: the fake answers 404, and the write path must not

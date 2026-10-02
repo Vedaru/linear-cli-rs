@@ -40,6 +40,11 @@ pub struct Fixture {
     /// The headers it sends that are not the proof.
     #[serde(default)]
     pub headers: std::collections::BTreeMap<String, String>,
+    /// What this platform's API answers, so a test can stand in for it without
+    /// spelling the shapes out in Rust. A `path` ending in `*` matches a prefix.
+    #[serde(default, rename = "api")]
+    pub answers: Vec<Answer>,
+
     /// Deliveries this platform sends, and what the bridge must make of them.
     ///
     /// The body is opaque here on purpose: a payload shape is the platform's business, and
@@ -55,6 +60,45 @@ pub struct Fixture {
     /// proof and all.
     #[serde(default)]
     pub proof: Option<Proof>,
+}
+
+/// What a platform's API answers for one request.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Answer {
+    pub method: String,
+    /// The path after the base url. A trailing `*` matches a prefix.
+    pub path: String,
+    #[serde(default = "default_status")]
+    pub status: u16,
+    /// The body, as JSON. Absent means an empty body.
+    #[serde(default)]
+    pub answer: serde_json::Value,
+}
+
+fn default_status() -> u16 {
+    200
+}
+
+impl Answer {
+    /// The body to answer with. A string is parsed as JSON, so a fixture can hold the
+    /// shape the platform really returns rather than a TOML translation of it.
+    fn body(&self) -> serde_json::Value {
+        match &self.answer {
+            serde_json::Value::String(text) => {
+                serde_json::from_str(text).unwrap_or_else(|_| self.answer.clone())
+            }
+            other => other.clone(),
+        }
+    }
+}
+
+/// Whether a configured path matches a request path. A trailing `*` matches a prefix -
+/// which is what a platform whose ids are in the path needs (`/repos/o/r/issues/*`).
+fn path_matches(configured: &str, requested: &str) -> bool {
+    match configured.strip_suffix('*') {
+        Some(prefix) => requested.starts_with(prefix),
+        None => configured == requested,
+    }
 }
 
 /// One delivery, and what the bridge is supposed to make of it.
@@ -277,6 +321,39 @@ pub struct Fake {
 }
 
 impl Fake {
+    /// A fake platform that answers from its fixture instead of from Rust.
+    ///
+    /// This is the half of "a platform is two config files" that a *write* test needs: the
+    /// shapes a platform returns (a lookup's candidates, a created entity's id) live beside
+    /// the deliveries it sends, so standing in for a new platform is writing config rather
+    /// than writing a route table in a test. A fake that has to *remember* what it was told
+    /// (a create that a later read must see) is still a Rust closure: that is behaviour, not
+    /// a shape, and pretending otherwise would hide it.
+    pub fn start_from(platform: &str) -> Self {
+        let fixture = fixture_for(platform);
+        // Owned, because the closure outlives this call and names the platform in its
+        // "no answer configured" message.
+        let platform = platform.to_string();
+        Self::start(move |method: &str, path: &str, _body: &serde_json::Value| {
+            fixture
+                .answers
+                .iter()
+                .find(|answer| {
+                    answer.method.eq_ignore_ascii_case(method)
+                        && path_matches(&answer.path, path)
+                })
+                .map(|answer| (answer.status, answer.body()))
+                .unwrap_or_else(|| {
+                    (
+                        404,
+                        serde_json::json!({
+                            "message": format!("{method} {path} has no answer in the {platform} fixture")
+                        }),
+                    )
+                })
+        })
+    }
+
     pub fn start(
         route: impl Fn(&str, &str, &serde_json::Value) -> (u16, serde_json::Value)
             + Send
