@@ -60,7 +60,9 @@ jobs:
       # makes wall-clock waits inside tests fail for unrelated reasons.
       # `--all-features`: the gated suites compile to nothing without it.
       - name: Test
-        run: cargo test --workspace --all-features --locked -- --test-threads=4
+        # `--no-fail-fast`: one red binary hides every suite behind it, and this matrix
+        # leg is the only place some of them ever run.
+        run: cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=4
 
   build:
     name: Build (${{ matrix.target }})

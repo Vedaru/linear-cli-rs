@@ -886,14 +886,34 @@ struct RouteSection {
     scope: String,
 }
 
-/// `~/…` against the current `HOME`, when there is one. Anything else is left exactly as it is:
-/// a path this does not understand is the operator's, not ours to rewrite.
+/// `~/…` against the current user's home directory, when there is one. Anything else is left
+/// exactly as it is: a path this does not understand is the operator's, not ours to rewrite.
 fn expand_tilde(path: &str) -> String {
+    expand_tilde_with(path, home_directory().as_deref())
+}
+
+/// The home directory this platform names.
+///
+/// Windows has no `HOME` - it calls the same thing `USERPROFILE`. Asking for `HOME` alone left
+/// a store path of `~/.local/…` unexpanded there, and the service then created a directory
+/// literally called `~` beside wherever it happened to start.
+fn home_directory() -> Option<String> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+}
+
+/// The expansion itself, with the home directory named rather than looked up, so both branches
+/// can be pinned on any platform instead of only on the one that fails.
+fn expand_tilde_with(path: &str, home: Option<&str>) -> String {
     let Some(rest) = path.strip_prefix("~/") else {
         return path.to_string();
     };
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() => format!("{}/{}", home.trim_end_matches('/'), rest),
+    match home {
+        Some(home) if !home.is_empty() => {
+            format!("{}/{}", home.trim_end_matches(['/', '\\']), rest)
+        }
         _ => path.to_string(),
     }
 }
@@ -901,6 +921,26 @@ fn expand_tilde(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tilde_is_expanded_from_whichever_home_this_platform_names() {
+        assert_eq!(
+            expand_tilde_with("~/x/bridge.db", Some("/home/dev")),
+            "/home/dev/x/bridge.db"
+        );
+        // Windows names the same thing USERPROFILE, and a joined path is absolute there
+        // whatever separator the join used.
+        assert_eq!(
+            expand_tilde_with("~/x/bridge.db", Some(r"C:\Users\dev")),
+            r"C:\Users\dev/x/bridge.db"
+        );
+        // Nothing to expand against: the operator's path, left exactly as it is.
+        assert_eq!(expand_tilde_with("~/x/bridge.db", None), "~/x/bridge.db");
+        assert_eq!(
+            expand_tilde_with("/already/absolute.db", Some("/home/dev")),
+            "/already/absolute.db"
+        );
+    }
 
     fn document(extra: &str) -> String {
         format!(

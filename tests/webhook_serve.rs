@@ -81,6 +81,17 @@ fn check(config: &Config, env: &[(String, String)], remove: &[&str]) -> CliOutpu
     )
 }
 
+/// The fixture's store path: cargo hands every integration test target a private
+/// temporary directory, so this is a real path on every platform. A literal `/tmp/...`
+/// resolves to `<current drive>:\tmp\...` on Windows, where nothing creates it - and a
+/// fixture that cannot name a writable file is a test that only passes on unix.
+const STORE: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/linear-serve-test.db");
+
+/// The fixture with its store named for this platform.
+fn document() -> String {
+    DOCUMENT.replace("/tmp/linear-serve-test.db", STORE)
+}
+
 const DOCUMENT: &str = r#"
 [bridge]
 bind = "127.0.0.1:8791"
@@ -109,7 +120,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 
 #[test]
 fn check_resolves_a_config_into_a_runnable_mirror() {
-    let config = Config::new("resolved", DOCUMENT);
+    let config = Config::new("resolved", &document());
     let (env, remove) = service_env();
     let output = check(&config, &env, &remove);
 
@@ -149,7 +160,7 @@ fn check_resolves_a_config_into_a_runnable_mirror() {
 
 #[test]
 fn check_shows_the_platforms_write_credential_without_showing_it() {
-    let config = Config::new("redaction", DOCUMENT);
+    let config = Config::new("redaction", &document());
     let (env, remove) = service_env();
     let output = check(&config, &env, &remove);
 
@@ -169,7 +180,7 @@ fn check_shows_the_platforms_write_credential_without_showing_it() {
 fn a_mapping_whose_platform_has_no_credential_is_refused_at_startup() {
     let config = Config::new(
         "no-token",
-        &DOCUMENT.replace(
+        &document().replace(
             "secret_env = \"FORGEJO_WEBHOOK_SECRET\"\ntoken_env = \"FORGEJO_TOKEN\"",
             "secret_env = \"FORGEJO_WEBHOOK_SECRET\"",
         ),
@@ -193,7 +204,7 @@ fn a_cli_only_config_is_refused_by_serve_and_names_the_platform() {
     // credentials for the write path are all it has, and all it should need - but the
     // moment this file is handed to the service, the service says what is missing
     // rather than serving an endpoint that could not verify anything.
-    let without_secrets: String = DOCUMENT
+    let without_secrets: String = document()
         .lines()
         .filter(|line| !line.starts_with("secret_env"))
         .collect::<Vec<_>>()
@@ -225,7 +236,7 @@ fn a_newly_created_issue_lands_in_the_state_the_platform_declares() {
     // that platform's own section - and `--check` proves the reconciler received it.
     let config = Config::new(
         "initial",
-        &DOCUMENT
+        &document()
             .replace("[[mapping]]", "[[mapping]]\ndirection = \"oneway\"")
             .replace(
                 "[platform.forgejo]\ntype = \"forgejo\"",
@@ -245,7 +256,7 @@ fn a_newly_created_issue_lands_in_the_state_the_platform_declares() {
 fn a_direction_nobody_implements_is_refused_by_name() {
     let config = Config::new(
         "direction",
-        &DOCUMENT.replace("[[mapping]]", "[[mapping]]\ndirection = \"sideways\""),
+        &document().replace("[[mapping]]", "[[mapping]]\ndirection = \"sideways\""),
     );
     let (env, remove) = service_env();
     let output = check(&config, &env, &remove);
@@ -257,7 +268,8 @@ fn a_direction_nobody_implements_is_refused_by_name() {
 
 #[test]
 fn a_config_without_mappings_is_an_intake_service() {
-    let text = DOCUMENT[..DOCUMENT.find("[[mapping]]").expect("the fixture has one")].to_string();
+    let doc = document();
+    let text = doc[..doc.find("[[mapping]]").expect("the fixture has one")].to_string();
     let config = Config::new("intake-only", &text);
     let (env, remove) = service_env();
     let output = check(&config, &env, &remove);

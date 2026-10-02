@@ -69,8 +69,10 @@ fn the_scaffold_printed_is_a_config_the_bridge_can_read() {
 
     // The store path is expanded on the way in, so a config saying `~/…` does not make the
     // service create a directory literally called `~` beside wherever it started.
+    // `is_absolute` rather than a leading `/`: an absolute path on Windows begins with a
+    // drive letter, and the question here is whether it is absolute at all.
     assert!(
-        config.store_path.starts_with('/'),
+        std::path::Path::new(&config.store_path).is_absolute(),
         "the store path should be absolute once the config has read it: {}",
         config.store_path
     );
