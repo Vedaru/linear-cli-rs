@@ -124,7 +124,11 @@ impl Harness {
     ) -> (u16, String) {
         let mut stream = TcpStream::connect(self.addr).expect("connect to the bridge");
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            // Generous on purpose: a test client waiting on a local server must not
+            // decide whether the suite is green. Five seconds was enough on an idle
+            // machine and not on a busy one - the same run passed twice and failed once
+            // with a read timeout, under a workspace-wide test run.
+            .set_read_timeout(Some(Duration::from_secs(30)))
             .unwrap();
 
         let mut request = format!(
@@ -234,10 +238,11 @@ fn a_signed_linear_delivery_is_accepted_queued_and_drained() {
     // And the worker picks it up: with a logging handler it completes.
     //
     // The deadline is generous on purpose: CI runs on the same machine as the
-    // tests, so a build in another job can starve this one for seconds. A tight
-    // boundary here fails for reasons that have nothing to do with the code.
+    // tests, so a build in another job can starve this one for seconds. Ten seconds
+    // was not enough - this failed once in three workspace runs, with the suite
+    // taking exactly the deadline and passing on the next run unchanged.
     let mut drained = false;
-    for _ in 0..200 {
+    for _ in 0..1200 {
         if store.counts().unwrap().done == 1 {
             drained = true;
             break;

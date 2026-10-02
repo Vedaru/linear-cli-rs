@@ -98,6 +98,25 @@ pub struct ReconcileHandler {
     store: Box<dyn Store>,
 }
 
+/// The pair a step is about, in the terms carrying it out needs.
+struct Pair<'a> {
+    /// The mapping's name, for the log an operator reads.
+    mapping: &'a str,
+    /// The end being written to.
+    there: &'a Endpoint,
+    /// That end's state vocabulary.
+    names_there: &'a StateNames,
+    /// The entity the step was decided from, with its scope filled in.
+    subject: &'a EntityRef,
+    /// The entity on the other end, when there is one yet.
+    counterpart: Option<&'a EntityRef>,
+    /// A comment's own pairing, when the step is about a comment.
+    comment: Option<&'a EntityRef>,
+    comment_link: Option<&'a Link>,
+    /// The other end's state as the platform reports it, for the recorded revision.
+    counterpart_state: Option<&'a str>,
+}
+
 impl ReconcileHandler {
     /// Build the handler, refusing a mapping it could never carry out.
     ///
@@ -277,6 +296,27 @@ impl ReconcileHandler {
             );
         }
 
+        self.carry_out(
+            &Pair {
+                mapping: &mapping.name,
+                there: &there,
+                names_there,
+                subject: &subject,
+                counterpart: counterpart_ref.as_ref(),
+                comment: comment_ref.as_ref(),
+                comment_link: comment_link.as_ref(),
+                counterpart_state: counterpart.state.as_deref(),
+            },
+            step,
+        )
+    }
+
+    /// Carry out one pair's step.
+    ///
+    /// A delivery and a sweep arrive at their steps differently - one from an event,
+    /// the other from comparing both sides against what was last written across the
+    /// link - and everything after that point is the same, so it happens here once.
+    fn carry_out(&mut self, pair: &Pair<'_>, step: Step) -> Result<()> {
         match step {
             Step::Nothing(_) => unreachable!("returned above"),
             Step::Create {
@@ -284,31 +324,33 @@ impl ReconcileHandler {
                 state,
                 skipped,
             } => {
-                self.report_skipped(&mapping.name, &skipped);
-                let sink = self.sink(&there.connector)?;
-                let created = sink.create_issue(&there.scope, &fields, state.as_deref())?;
+                self.report_skipped(pair.mapping, &skipped);
+                let sink = self.sink(&pair.there.connector)?;
+                let created = sink.create_issue(&pair.there.scope, &fields, state.as_deref())?;
                 let created_ref = EntityRef {
-                    connector: there.connector.clone(),
+                    connector: pair.there.connector.clone(),
                     kind: EntityKind::Issue,
-                    scope: Some(there.scope.clone()),
+                    scope: Some(pair.there.scope.clone()),
                     native_id: created.id.clone(),
                     url: created.url.clone(),
                 };
                 // What the far side will hold once this settles: the fields we sent
                 // and the state it ended up in - which is the state we asked for, or
                 // the one a fresh issue starts in when we asked for none.
-                let effective = state
-                    .clone()
-                    .or_else(|| names_there.name_for(Openness::Open).map(str::to_string));
-                let hash = content_key(&fields, effective.as_deref(), names_there);
+                let effective = state.clone().or_else(|| {
+                    pair.names_there
+                        .name_for(Openness::Open)
+                        .map(str::to_string)
+                });
+                let hash = content_key(&fields, effective.as_deref(), pair.names_there);
                 self.store
-                    .upsert_link(&Link::new(event.subject.clone(), created_ref).with_hash(hash))?;
+                    .upsert_link(&Link::new(pair.subject.clone(), created_ref).with_hash(hash))?;
                 log::info!(
                     "created {} {} for {} {}",
-                    there.connector,
+                    pair.there.connector,
                     created.id,
-                    event.connector,
-                    event.subject.native_id
+                    pair.subject.connector,
+                    pair.subject.native_id
                 );
             }
             Step::Update {
@@ -317,45 +359,53 @@ impl ReconcileHandler {
                 state,
                 skipped,
             } => {
-                let Some(reference) = counterpart_ref.clone() else {
+                let Some(reference) = pair.counterpart.cloned() else {
                     return Ok(());
                 };
-                self.report_skipped(&mapping.name, &skipped);
+                self.report_skipped(pair.mapping, &skipped);
                 let touched = patch.touched().join(", ");
-                let sink = self.sink(&there.connector)?;
-                sink.update_issue(&there.scope, &reference.native_id, &patch, state.as_deref())?;
+                let sink = self.sink(&pair.there.connector)?;
+                sink.update_issue(
+                    &pair.there.scope,
+                    &reference.native_id,
+                    &patch,
+                    state.as_deref(),
+                )?;
                 // The link records the revision the target now holds - the projected
                 // fields, not the raw ones. Recording the source's own truth is how a
                 // field the target cannot hold turns into a difference forever.
-                let effective = state.clone().or_else(|| counterpart.state.clone());
-                let hash = content_key(&fields, effective.as_deref(), names_there);
-                self.store
-                    .upsert_link(&Link::new(subject.clone(), reference.clone()).with_hash(hash))?;
+                let effective = state
+                    .clone()
+                    .or_else(|| pair.counterpart_state.map(str::to_string));
+                let hash = content_key(&fields, effective.as_deref(), pair.names_there);
+                self.store.upsert_link(
+                    &Link::new(pair.subject.clone(), reference.clone()).with_hash(hash),
+                )?;
                 log::info!(
                     "updated {} {} from {} {} ({})",
-                    there.connector,
+                    pair.there.connector,
                     reference.native_id,
-                    event.connector,
-                    event.subject.native_id,
+                    pair.subject.connector,
+                    pair.subject.native_id,
                     touched
                 );
             }
             Step::Comment { body } => {
-                let Some(reference) = counterpart_ref.clone() else {
+                let Some(reference) = pair.counterpart.cloned() else {
                     return Ok(());
                 };
-                let sink = self.sink(&there.connector)?;
-                let created = sink.comment(&there.scope, &reference.native_id, &body)?;
+                let sink = self.sink(&pair.there.connector)?;
+                let created = sink.comment(&pair.there.scope, &reference.native_id, &body)?;
                 // The comment gets its own pairing, and deliberately no content key:
                 // a comment is not part of the issue's revision, so recording it as
                 // one would make the next issue edit look like a change. What the
                 // pairing buys is the next event about *this comment*: its edit has
                 // somewhere to go, and its deletion something to remove.
-                if let Some(comment) = &comment_ref {
+                if let Some(comment) = pair.comment {
                     let mirrored = EntityRef {
-                        connector: there.connector.clone(),
+                        connector: pair.there.connector.clone(),
                         kind: EntityKind::Comment,
-                        scope: Some(there.scope.clone()),
+                        scope: Some(pair.there.scope.clone()),
                         native_id: created.id.clone(),
                         url: created.url.clone(),
                     };
@@ -364,68 +414,68 @@ impl ReconcileHandler {
                 }
                 log::info!(
                     "mirrored comment {} -> {} {}",
-                    event.subject.native_id,
-                    there.connector,
+                    pair.subject.native_id,
+                    pair.there.connector,
                     created.id
                 );
             }
             Step::UpdateComment { body } => {
-                let Some(mirrored) = self.mirrored_comment(&comment_link, &comment_ref) else {
+                let Some(mirrored) = self.mirrored_comment(pair.comment_link, pair.comment) else {
                     return Ok(());
                 };
-                let sink = self.sink(&there.connector)?;
-                sink.update_comment(&there.scope, &mirrored.native_id, &body)?;
+                let sink = self.sink(&pair.there.connector)?;
+                sink.update_comment(&pair.there.scope, &mirrored.native_id, &body)?;
                 log::info!(
                     "mirrored comment edit {} -> {} {}",
-                    event.subject.native_id,
-                    there.connector,
+                    pair.subject.native_id,
+                    pair.there.connector,
                     mirrored.native_id
                 );
             }
             Step::DeleteComment => {
-                if let Some(mirrored) = self.mirrored_comment(&comment_link, &comment_ref) {
-                    let sink = self.sink(&there.connector)?;
-                    sink.delete_comment(&there.scope, &mirrored.native_id)?;
+                if let Some(mirrored) = self.mirrored_comment(pair.comment_link, pair.comment) {
+                    let sink = self.sink(&pair.there.connector)?;
+                    sink.delete_comment(&pair.there.scope, &mirrored.native_id)?;
                     log::info!(
                         "deleted {} comment {} (mirroring {} {})",
-                        there.connector,
+                        pair.there.connector,
                         mirrored.native_id,
-                        event.connector,
-                        event.subject.native_id
+                        pair.subject.connector,
+                        pair.subject.native_id
                     );
                 }
-                if let Some(comment) = &comment_ref {
+                if let Some(comment) = pair.comment {
                     // The copy is gone, so the pairing is: keeping it would make a
-                    // later comment with the same id edit something that is not there.
+                    // later comment with the same id edit something that is not pair.there.
                     self.store.delete_links(comment)?;
                 }
             }
             Step::Delete => {
-                if let Some(reference) = &counterpart_ref {
-                    let sink = self.sink(&there.connector)?;
-                    sink.delete_issue(&there.scope, &reference.native_id)?;
+                if let Some(reference) = pair.counterpart {
+                    let sink = self.sink(&pair.there.connector)?;
+                    sink.delete_issue(&pair.there.scope, &reference.native_id)?;
                     log::info!(
                         "deleted {} {} (mirroring {} {})",
-                        there.connector,
+                        pair.there.connector,
                         reference.native_id,
-                        event.connector,
-                        event.subject.native_id
+                        pair.subject.connector,
+                        pair.subject.native_id
                     );
                 }
                 // The pairing is gone with the entity: keeping it would make a later
                 // re-creation resume a stale pairing instead of starting clean.
-                self.store.delete_links(&subject)?;
+                self.store.delete_links(pair.subject)?;
             }
             Step::Attach { url, title } => {
-                let Some(reference) = counterpart_ref.clone() else {
+                let Some(reference) = pair.counterpart.cloned() else {
                     return Ok(());
                 };
-                let sink = self.sink(&there.connector)?;
-                sink.attach(&there.scope, &reference.native_id, &url, &title)?;
+                let sink = self.sink(&pair.there.connector)?;
+                sink.attach(&pair.there.scope, &reference.native_id, &url, &title)?;
                 log::info!(
                     "attached {} to {} {}",
                     url,
-                    there.connector,
+                    pair.there.connector,
                     reference.native_id
                 );
             }
@@ -440,13 +490,12 @@ impl ReconcileHandler {
     /// to be assembled from both.
     fn mirrored_comment(
         &self,
-        link: &Option<Link>,
-        comment: &Option<EntityRef>,
+        link: Option<&Link>,
+        comment: Option<&EntityRef>,
     ) -> Option<EntityRef> {
-        link.as_ref()?.counterpart(comment.as_ref()?).cloned()
+        link?.counterpart(comment?).cloned()
     }
 
-    /// One end's current state, as the platform reports it.
     /// Say what did not travel, once per delivery, at a level an operator sees.
     ///
     /// Not an error - the mapping is still doing what it can - but never silent
@@ -457,6 +506,7 @@ impl ReconcileHandler {
         }
     }
 
+    /// One end's current state, as the platform reports it.
     fn snapshot(&self, connector: &ConnectorId, scope: &str, id: &str) -> Result<Snapshot> {
         let sink = self.sink(connector)?;
         Ok(match sink.fetch_issue(scope, id)? {

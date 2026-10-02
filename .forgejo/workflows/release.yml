@@ -106,7 +106,7 @@ jobs:
             fi
           }
           check "cargo build --workspace --locked" cargo build --workspace --locked
-          check "cargo test --workspace --locked" cargo test --workspace --locked
+          check "cargo test --workspace --locked" cargo test --workspace --locked -- --test-threads=4
           check "cargo clippy --workspace --all-targets --locked -- -D warnings" \
                 cargo clippy --workspace --all-targets --locked -- -D warnings
           check "cargo build --release --workspace --locked" cargo build --release --workspace --locked

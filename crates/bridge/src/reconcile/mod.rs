@@ -23,6 +23,7 @@
 
 pub mod handler;
 pub mod projection;
+pub mod sweep;
 
 use crate::domain::{
     markers, Actor, Capabilities, Change, ConnectorId, EntityKind, Event, EventDetail, IssueFields,
@@ -390,26 +391,76 @@ fn plan_issue(context: &Context<'_>) -> Step {
 }
 
 fn plan_change(context: &Context<'_>) -> Step {
-    let policy = context.policy;
     let Some(link) = context.link else {
         return Step::Nothing(Nothing::Unpaired);
     };
     if !context.counterpart.exists() {
         // The pair is broken: the other side lost the entity (deleted by hand, or
         // before this bridge existed). Re-creating it from an *edit* is how a
-        // mirror resurrects things, so it does not happen here.
+        // mirror resurrects things, so it does not happen here - a sweep may, since
+        // making the two sides agree is the whole of what it was asked to do.
         return Step::Nothing(Nothing::Unpaired);
     }
+    change_step(
+        &Pairwise {
+            side: context.side,
+            policy: context.policy,
+            observed: context.observed,
+            counterpart: context.counterpart,
+            expected: context.expected,
+            target: context.target,
+        },
+        link,
+    )
+}
 
+/// The pair a convergence question is asked about.
+///
+/// A delivery reaches this through an event; a sweep has no event at all, so this is
+/// where the two meet: after the event, before any I/O.
+pub struct Pairwise<'a> {
+    /// The side whose revision wins.
+    pub side: Side,
+    pub policy: &'a Policy,
+    pub observed: &'a Snapshot,
+    pub counterpart: &'a Snapshot,
+    /// The winner's fields as the *other* side will hold them.
+    pub expected: &'a Projected,
+    /// What the other side can hold.
+    pub target: &'a Capabilities,
+}
+
+/// What converging one pair does - the sweep's entry point.
+///
+/// The difference from a delivery is the missing counterpart: a delivery refuses to
+/// re-create what the other side deleted, and a sweep does it, because "these two
+/// should agree" is exactly what it was asked.
+pub fn converge(pair: &Pairwise<'_>, link: &Link) -> Step {
+    if !pair.observed.exists() {
+        return Step::Nothing(Nothing::Unpaired);
+    }
+    if !pair.counterpart.exists() {
+        return Step::Create {
+            fields: pair.expected.fields.clone(),
+            state: pair.policy.names.of(pair.side.other()).initial.clone(),
+            skipped: pair.expected.skipped.clone(),
+        };
+    }
+    change_step(pair, link)
+}
+
+/// What to change on the other side, given a pair that exists on both.
+fn change_step(pair: &Pairwise<'_>, link: &Link) -> Step {
+    let policy = pair.policy;
     // The key is taken through the projection, in the *target's* openness: what
     // matters is not what the source says but what the target can be brought to
     // say. Compared raw, a field the target cannot hold (an unmapped assignee, a
     // due date on a platform without them) differs on every single delivery - the
     // bridge rewriting the same content forever is what that looks like.
-    let ours = policy.names.of(context.side);
+    let ours = policy.names.of(pair.side);
     let expected_key = content_key_with(
-        &context.expected.fields,
-        ours.openness(context.observed.state.as_deref()),
+        &pair.expected.fields,
+        ours.openness(pair.observed.state.as_deref()),
     );
     if link.last_synced_hash.as_deref() == Some(expected_key.as_str()) {
         // What the source holds is exactly what we last wrote across this link:
@@ -418,29 +469,27 @@ fn plan_change(context: &Context<'_>) -> Step {
         return Step::Nothing(Nothing::Echo);
     }
 
-    let counterpart_key = context
-        .counterpart
-        .key(policy.names.of(context.side.other()));
+    let counterpart_key = pair.counterpart.key(policy.names.of(pair.side.other()));
     if counterpart_key.as_deref() == Some(expected_key.as_str()) {
         // Both sides already read the same, through the vocabulary they share.
         return Step::Nothing(Nothing::AlreadyEqual);
     }
 
-    let counterpart_fields = context
+    let counterpart_fields = pair
         .counterpart
         .fields
         .clone()
         .expect("checked that the counterpart exists");
-    let mut patch = context.expected.fields.diff(&counterpart_fields);
-    if !context.target.priorities && !patch.priority.is_leave() {
+    let mut patch = pair.expected.fields.diff(&counterpart_fields);
+    if !pair.target.priorities && !patch.priority.is_leave() {
         // The priority lives in the label set on this platform, so a new priority is
         // a new label set. Sending the patches separately would leave the labels
         // alone and drop the priority label with them.
-        patch.labels = Change::Set(context.expected.fields.canonical_labels());
+        patch.labels = Change::Set(pair.expected.fields.canonical_labels());
     }
     // The state is a separate question from the fields: a close with no text change
     // has nothing to patch and still has to travel.
-    let state = state_to_write(context);
+    let state = state_to_write(pair);
     if patch.is_empty() && state.is_none() {
         // Nothing the target can hold differs, whatever the raw comparison said.
         return Step::Nothing(Nothing::AlreadyEqual);
@@ -448,18 +497,18 @@ fn plan_change(context: &Context<'_>) -> Step {
 
     Step::Update {
         patch,
-        fields: context.expected.fields.clone(),
+        fields: pair.expected.fields.clone(),
         state,
-        skipped: context.expected.skipped.clone(),
+        skipped: pair.expected.skipped.clone(),
     }
 }
 
 /// The state to write on the other side, or `None` to leave it alone.
-fn state_to_write(context: &Context<'_>) -> Option<String> {
-    let ours = context.policy.names.of(context.side);
-    let theirs = context.policy.names.of(context.side.other());
-    let target = ours.openness(context.observed.state.as_deref());
-    let current = theirs.openness(context.counterpart.state.as_deref());
+fn state_to_write(pair: &Pairwise<'_>) -> Option<String> {
+    let ours = pair.policy.names.of(pair.side);
+    let theirs = pair.policy.names.of(pair.side.other());
+    let target = ours.openness(pair.observed.state.as_deref());
+    let current = theirs.openness(pair.counterpart.state.as_deref());
     if current == target {
         // Already in the right kind of state: naming a specific one would move an
         // issue through the other platform's workflow for no reason.
