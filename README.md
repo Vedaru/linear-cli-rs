@@ -207,6 +207,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 ```
 
 ```sh
+linear config service             # print the sections above, for a linear.toml you already have
 LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... linear webhook serve
 linear webhook serve --check      # resolve the config, print it, do not bind
 linear webhook replay 41          # run a stored delivery again, as the provider sent it
@@ -228,6 +229,13 @@ drained or filled, which look identical from outside because both answer a webho
 and neither writes anything. It reads the same store the service writes, prints the queue and
 the mappings, and lists the deliveries the queue gave up on with the error that stopped each
 one. A store it cannot read is a failure, not a zero.
+
+`linear config service` prints those sections rather than asking questions: one file holds both
+halves - the CLI's settings and the bridge's - which is the design rather than a coincidence,
+because both read the same `linear.toml` with the same precedence. It never writes a secret: the
+file names the environment variable and the environment holds the value, so a config is safe to
+commit. What it cannot know from its arguments or the working directory it leaves as an obvious
+placeholder rather than a guess.
 
 `linear sync link` is the one statement the engine cannot make for itself. It pairs two entities
 by hand, which matters for a pair that already existed on both sides before anyone started

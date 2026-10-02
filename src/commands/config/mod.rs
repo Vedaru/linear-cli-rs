@@ -22,8 +22,19 @@ use crate::output;
 use crate::proc::{self, RunOptions, DEFAULT_TIMEOUT};
 use crate::prompt;
 
+mod service;
+
 #[derive(clap::Args, Debug)]
-pub struct ConfigArgs {}
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: Option<ConfigCommand>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum ConfigCommand {
+    /// Print the sections the bridge reads, for appending to this same file
+    Service(service::ServiceArgs),
+}
 
 const CONFIG_QUERY: &str = r#"query Config {
   viewer {
@@ -47,7 +58,13 @@ const BANNER: &str = "\
 ██      ██ ██  ██ ██ ██      ██   ██ ██   ██    ██      ██      ██
 ███████ ██ ██   ████ ███████ ██   ██ ██   ██     ██████ ███████ ██";
 
-pub fn run(_args: ConfigArgs) -> Result<()> {
+pub fn run(args: ConfigArgs) -> Result<()> {
+    // The interactive generator is what plain `linear config` has always meant; the service
+    // sections are a second thing the same file holds, and they are printed rather than asked
+    // for, because they are the same in every deployment and worth being scriptable.
+    if let Some(ConfigCommand::Service(args)) = args.command {
+        return service::run(args);
+    }
     run_inner().map_err(|error| error.with_context("Failed to generate configuration"))
 }
 

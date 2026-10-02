@@ -135,7 +135,6 @@ pub fn parse_entity_address(value: &str) -> Result<EntityRef, String> {
     Ok(entity)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

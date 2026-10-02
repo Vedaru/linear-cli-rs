@@ -259,9 +259,14 @@ impl BridgeConfig {
 
         Ok(Self {
             bind,
-            store_path: bridge
-                .store
-                .unwrap_or_else(|| "linear-bridge.db".to_string()),
+            // A leading `~` is expanded here rather than left to the shell, because the file
+            // is read by a service that has no shell: a config saying `~/…` would otherwise
+            // create a directory literally called `~`, next to wherever it happened to start.
+            store_path: expand_tilde(
+                &bridge
+                    .store
+                    .unwrap_or_else(|| "linear-bridge.db".to_string()),
+            ),
             body_limit: bridge.body_limit.unwrap_or(DEFAULT_BODY_LIMIT),
             http_threads: bridge.http_threads.unwrap_or(4).max(1),
             worker_threads: bridge.worker_threads.unwrap_or(2).max(1),
@@ -716,6 +721,18 @@ struct MappingSection {
 
 fn default_true() -> bool {
     true
+}
+
+/// `~/…` against the current `HOME`, when there is one. Anything else is left exactly as it is:
+/// a path this does not understand is the operator's, not ours to rewrite.
+fn expand_tilde(path: &str) -> String {
+    let Some(rest) = path.strip_prefix("~/") else {
+        return path.to_string();
+    };
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => format!("{}/{}", home.trim_end_matches('/'), rest),
+        _ => path.to_string(),
+    }
 }
 
 #[cfg(test)]
