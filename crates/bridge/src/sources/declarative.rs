@@ -371,13 +371,18 @@ impl SourceSpec {
 /// A connector built from a [`SourceSpec`].
 pub struct DeclarativeSource {
     id: ConnectorId,
-    secret: Secret,
+    /// Absent when this deployment has no webhook secret for this platform.
+    secret: Option<Secret>,
     scheme: SignatureScheme,
     spec: SourceSpec,
 }
 
 impl DeclarativeSource {
-    pub fn new(id: impl Into<ConnectorId>, secret: Secret, spec: SourceSpec) -> Self {
+    pub fn new(
+        id: impl Into<ConnectorId>,
+        secret: impl Into<Option<Secret>>,
+        spec: SourceSpec,
+    ) -> Self {
         let scheme = SignatureScheme {
             headers: spec.signature.headers.clone(),
             algorithm: spec.signature.algorithm,
@@ -385,7 +390,7 @@ impl DeclarativeSource {
         };
         Self {
             id: id.into(),
-            secret,
+            secret: secret.into(),
             scheme,
             spec,
         }
@@ -535,8 +540,8 @@ impl Source for DeclarativeSource {
         self.scheme.clone()
     }
 
-    fn secret(&self) -> &Secret {
-        &self.secret
+    fn secret(&self) -> Option<&Secret> {
+        self.secret.as_ref()
     }
 
     fn parse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject> {

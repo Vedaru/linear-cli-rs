@@ -17,7 +17,7 @@
 //!
 //! [platform.linear]
 //! type = "linear"
-//! secret_env = "LINEAR_WEBHOOK_SECRET"
+//! secret_env = "LINEAR_WEBHOOK_SECRET"   # only needed to *receive* from this platform
 //! token_env = "LINEAR_API_KEY"
 //! closed_state = ["Done", "Canceled"]
 //! open_state = "In Progress"
@@ -83,7 +83,14 @@ pub struct PlatformConfig {
     /// The configured `type`, kept for logs and `--check` output.
     pub declared_type: String,
     /// What the platform signs its deliveries with (inbound).
-    pub secret: Secret,
+    ///
+    /// Optional, because receiving is not the only thing this bridge does: a
+    /// deployment that only ever *pushes* with `sync` needs no webhook secret at
+    /// all, and requiring one would mean carrying service configuration to use a
+    /// command that has no service. The requirement lives where it belongs - the
+    /// moment a webhook source is built - so a config that is valid for `sync` is
+    /// valid, and `webhook serve` says exactly which platform it is missing.
+    pub secret: Option<Secret>,
     /// What this bridge authenticates with when it reads or writes the platform's
     /// API. Absent means the platform can only be a *source* of events: a
     /// deployment that only receives webhooks has no reason to hold a token.
@@ -266,9 +273,8 @@ impl BridgeConfig {
 
     /// The webhook sources these platforms produce. All of them are the same
     /// engine, configured differently.
-    pub fn sources(&self) -> Result<Vec<Arc<dyn Source>>> {
-        Ok(self
-            .platforms
+    pub fn sources(&self) -> Vec<Arc<dyn Source>> {
+        self.platforms
             .iter()
             .map(|platform| {
                 Arc::new(DeclarativeSource::new(
@@ -277,7 +283,32 @@ impl BridgeConfig {
                     platform.spec.clone(),
                 )) as Arc<dyn Source>
             })
-            .collect())
+            .collect()
+    }
+
+    /// The sources a webhook endpoint may be served from: these platforms are asked to
+    /// *receive*, so each one needs a secret to verify deliveries with.
+    ///
+    /// This is the only place the requirement belongs, and it is `serve`'s question, not
+    /// the file's: `linear sync` pushes changes through the same connectors, never
+    /// verifies a delivery, and so is never asked for a secret.
+    pub fn receiving_sources(&self) -> Result<Vec<Arc<dyn Source>>> {
+        self.platforms
+            .iter()
+            .map(|platform| {
+                let name = platform.name.as_str().to_string();
+                if platform.secret.is_none() {
+                    return Err(Error::Config(format!(
+                        "[platform.{name}] would receive deliveries, but it has no webhook secret: set `secret_env`. If this deployment should only push changes, use `linear sync`, which needs no secret."
+                    )));
+                }
+                Ok(Arc::new(DeclarativeSource::new(
+                    platform.name.clone(),
+                    platform.secret.clone(),
+                    platform.spec.clone(),
+                )) as Arc<dyn Source>)
+            })
+            .collect()
     }
 
     /// The write halves this deployment can use, one per platform that has an API
@@ -439,7 +470,7 @@ fn resolve_secret(
     name: &str,
     section: &PlatformSection,
     env: &dyn Fn(&str) -> Option<String>,
-) -> Result<Secret> {
+) -> Result<Option<Secret>> {
     let secret = match (&section.secret_env, &section.secret) {
         (Some(variable), None) => {
             let value = env(variable).ok_or_else(|| {
@@ -460,11 +491,10 @@ fn resolve_secret(
                 "[platform.{name}] sets both `secret` and `secret_env`; keep one"
             )))
         }
-        (None, None) => {
-            return Err(Error::Config(format!(
-                "[platform.{name}] has no webhook secret; set `secret_env`"
-            )))
-        }
+        // No secret *declared* is a shape, not a mistake: it is what a config for
+        // `linear sync` looks like. A declared variable that is not set is still an
+        // error - the deployment said where to find the secret and it was not there.
+        (None, None) => return Ok(None),
     };
 
     if secret.len() < MIN_SECRET_LEN {
@@ -473,7 +503,7 @@ fn resolve_secret(
             secret.len()
         )));
     }
-    Ok(secret)
+    Ok(Some(secret))
 }
 
 /// The API credential for the write path, if this deployment configured one.
@@ -811,7 +841,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
         assert_eq!(config.mappings[0].source, "linear:VED");
         assert!(config.mappings[0].sync_issues);
         assert!(!config.mappings[0].delete_sync);
-        assert_eq!(config.sources().unwrap().len(), 2);
+        assert_eq!(config.sources().len(), 2);
     }
 
     #[test]
@@ -889,11 +919,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
         // Intake needs no credential, so a read-only platform is a valid deployment;
         // it simply cannot take part in a mapping.
         let config = parse(&document_without_mapping()).unwrap();
-        assert_eq!(
-            config.sources().unwrap().len(),
-            2,
-            "both still accept webhooks"
-        );
+        assert_eq!(config.sources().len(), 2, "both still accept webhooks");
         assert_eq!(config.sinks().len(), 2, "and both have a token here");
 
         let text = document_without_mapping().replace(
@@ -986,7 +1012,7 @@ id = "/ticket/id"
         );
         assert_eq!(internal.spec.event.rules.len(), 1);
         // And it is a usable source, built by the same engine as the presets.
-        assert_eq!(config.sources().unwrap().len(), 3);
+        assert_eq!(config.sources().len(), 3);
     }
 
     #[test]
@@ -1025,6 +1051,66 @@ id = "/ticket/id"
         let text = document("").replace("secret = \"0123456789abcdef\"", "secret = \"short\"");
         let error = parse(&text).unwrap_err().to_string();
         assert!(error.contains("at least 16"), "{error}");
+    }
+
+    /// Why a config was refused as a webhook receiver, or a panic saying it was not.
+    fn source_refusal(config: &BridgeConfig) -> String {
+        match config.receiving_sources() {
+            Ok(sources) => panic!("a config with no secret built {} sources", sources.len()),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    /// Strip the secret lines from the fixture, leaving its credentials.
+    fn cli_only(document: &str) -> String {
+        document
+            .lines()
+            .filter(|line| !line.starts_with("secret"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_config_with_no_secrets_is_valid_for_a_sweep() {
+        // A deployment that only pushes changes has no use for a webhook secret: no
+        // service, nothing to verify a delivery against, nothing to configure. The
+        // file has to load, and its mappings have to resolve, with none.
+        let config = parse(&cli_only(&document(""))).expect("a CLI-only config loads");
+
+        assert_eq!(
+            config.sinks().len(),
+            2,
+            "credentials are everything the write path needs"
+        );
+        assert_eq!(
+            config
+                .reconcile_mappings()
+                .expect("the mapping resolves")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn asking_a_cli_only_config_to_receive_names_the_platform() {
+        // The requirement lives where it belongs - building a webhook source, which is
+        // what `webhook serve` does and `linear sync` does not.
+        let both = parse(&cli_only(&document(""))).expect("the config loads");
+        let error = source_refusal(&both);
+        assert!(error.contains("[platform.forgejo]"), "{error}");
+        assert!(error.contains("no webhook secret"), "{error}");
+        assert!(error.contains("secret_env"), "the remedy: {error}");
+        assert!(
+            error.contains("linear sync"),
+            "and the way that needs no secret: {error}"
+        );
+
+        // Per platform, not per file: the one that is missing a secret is the one named.
+        let one = parse(&document("").replace("secret = \"0123456789abcdef\"\n", ""))
+            .expect("the config loads");
+        let error = source_refusal(&one);
+        assert!(error.contains("[platform.linear]"), "{error}");
+        assert!(!error.contains("[platform.forgejo]"), "{error}");
     }
 
     #[test]

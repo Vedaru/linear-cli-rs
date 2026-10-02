@@ -64,6 +64,46 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 direction = "both"                      # or `oneway`
 ```
 
+### Without a service
+
+A deployment that only pushes changes holds no webhook secret at all - just the
+credential it writes with, and a store to remember what it has already paired:
+
+```toml
+# cli-only.toml - no `bind`, because nothing is served
+[bridge]
+store = "linear-bridge.db"
+
+[platform.linear]
+type = "linear"
+token_env = "LINEAR_API_KEY"
+closed_state = ["Done", "Canceled"]
+open_state = "In Progress"
+initial_state = "Todo"
+
+[platform.forgejo]
+type = "forgejo"
+token_env = "FORGEJO_TOKEN"
+closed_state = ["closed"]
+open_state = "open"
+
+[[mapping]]
+name = "linear-cli-rs"
+source = "linear:VED"
+sink = "forgejo:Vedaru/linear-cli-rs"
+```
+
+```sh
+linear sync --config cli-only.toml            # dry run: print the plan, write nothing
+linear sync --config cli-only.toml --apply    # bring the two ends into agreement
+```
+
+The same file drives both halves of the engine, so a sweep and a delivery can never
+disagree about what to write. Hand *this* file to `webhook serve` and it refuses,
+naming the platform and the variable it is missing: a secret is what an endpoint
+*verifies* a delivery with, and a sweep verifies nothing. `secret_env` is required
+exactly where a platform is asked to receive.
+
 Two credentials per platform, and they are not interchangeable: `secret_env` is what
 the platform signs *its* deliveries with (verified before anything is stored), and
 `token_env` is what this bridge authenticates *to* the platform with (what it reads

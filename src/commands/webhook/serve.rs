@@ -72,7 +72,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
     // connectors.
     let sources: Arc<Vec<Arc<dyn Source>>> = Arc::new(
         service
-            .sources()
+            .receiving_sources()
             .map_err(|error| CliError::validation(error.to_string()))?,
     );
     let intake = Arc::new(
@@ -216,6 +216,13 @@ pub(crate) fn config_source(explicit: Option<&std::path::Path>) -> Result<(PathB
 /// `--check`: print what the service would do, with secrets redacted (the
 /// `Secret` type's `Debug` impl makes that automatic).
 fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> {
+    // Proof that this config could serve, not just that it parsed: a `--check` that
+    // passes on a config the service then refuses is worse than no check at all. This
+    // is where "you asked me to receive here but configured no webhook secret" belongs.
+    service
+        .receiving_sources()
+        .map_err(|error| CliError::validation(error.to_string()))?;
+
     let platforms: Vec<_> = service
         .platforms
         .iter()
@@ -223,7 +230,14 @@ fn print_resolved(path: &std::path::Path, service: &BridgeConfig) -> Result<()> 
             json!({
                 "name": platform.name.as_str(),
                 "type": platform.declared_type,
-                "secret": format!("{:?}", platform.secret),
+                // Redacted by the `Secret` type, never printed. "Absent" is not a
+                // redaction: it means this platform receives nothing, which is fine
+                // for `sync` and the reason `serve` will refuse the file.
+                "secret": platform
+                    .secret
+                    .as_ref()
+                    .map(|_| "redacted".to_string())
+                    .unwrap_or_else(|| "absent (CLI-only)".to_string()),
                 "token": platform.token.as_ref().map(|_| "set").unwrap_or("none"),
                 "api_url": platform.sink_spec().map(|spec| spec.base_url),
                 "states": {

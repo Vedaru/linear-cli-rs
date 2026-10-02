@@ -186,6 +186,38 @@ fn a_mapping_whose_platform_has_no_credential_is_refused_at_startup() {
 }
 
 #[test]
+fn a_cli_only_config_is_refused_by_serve_and_names_the_platform() {
+    // No webhook secrets at all: a deployment that only ever pushes with `sync`. The
+    // credentials for the write path are all it has, and all it should need - but the
+    // moment this file is handed to the service, the service says what is missing
+    // rather than serving an endpoint that could not verify anything.
+    let without_secrets: String = DOCUMENT
+        .lines()
+        .filter(|line| !line.starts_with("secret_env"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let config = Config::new("cli-only", &without_secrets);
+    let (env, remove) = service_env();
+    let output = check(&config, &env, &remove);
+
+    assert_ne!(
+        output.code,
+        Some(0),
+        "the service must refuse a config it cannot receive with: {}",
+        output.stdout
+    );
+    let complaint = format!("{}{}", output.stdout, output.stderr);
+    // The first platform in the file is the one named; fixing it surfaces the next.
+    assert!(complaint.contains("[platform.forgejo]"), "{complaint}");
+    assert!(complaint.contains("no webhook secret"), "{complaint}");
+    assert!(complaint.contains("secret_env"), "{complaint}");
+    assert!(
+        complaint.contains("linear sync"),
+        "and it offers the way that needs no secret: {complaint}"
+    );
+}
+
+#[test]
 fn a_newly_created_issue_lands_in_the_state_the_platform_declares() {
     // The initial state is a fact about the *destination* platform, so it comes from
     // that platform's own section - and `--check` proves the reconciler received it.

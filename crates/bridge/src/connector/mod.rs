@@ -112,12 +112,17 @@ pub enum Reject {
     Stale,
     #[error("malformed payload: {0}")]
     Malformed(String),
+    /// The platform was configured without a webhook secret, so nothing can be
+    /// verified for it. Reaching this means a delivery arrived at an endpoint that
+    /// was never meant to accept one.
+    #[error("no webhook secret is configured for this platform")]
+    NoSecret,
 }
 
 impl Reject {
     pub fn status(&self) -> u16 {
         match self {
-            Reject::BadSignature => 401,
+            Reject::BadSignature | Reject::NoSecret => 401,
             Reject::MissingHeader(_) | Reject::Stale | Reject::Malformed(_) => 400,
         }
     }
@@ -127,7 +132,9 @@ impl Reject {
     /// signature" is free help to an attacker.
     pub fn public_message(&self) -> &'static str {
         match self {
-            Reject::BadSignature => "invalid signature",
+            // A platform with no secret was never meant to accept deliveries at all;
+            // it answers exactly like a wrong signature, for the same reason.
+            Reject::BadSignature | Reject::NoSecret => "invalid signature",
             Reject::MissingHeader(_) => "missing required header",
             Reject::Stale => "stale or missing timestamp",
             Reject::Malformed(_) => "malformed payload",
@@ -142,7 +149,14 @@ pub trait Source: Send + Sync {
 
     fn signature(&self) -> SignatureScheme;
 
-    fn secret(&self) -> &Secret;
+    /// What this platform signs its deliveries with, if this deployment has one.
+    ///
+    /// A secret is what an endpoint *verifies* with, and a connector that was never
+    /// asked to verify anything is still a perfectly good translator: `sync` uses the
+    /// same connectors to read and write a platform without receiving a single
+    /// delivery. Requiring one here would mean a deployment that only pushes changes
+    /// carrying webhook configuration it has no use for.
+    fn secret(&self) -> Option<&Secret>;
 
     /// Verify the delivery signature against the *raw* body.
     ///
@@ -150,7 +164,8 @@ pub trait Source: Send + Sync {
     /// the check: a connector with an unusual scheme overrides this, and that
     /// override is then visible in review.
     fn authenticate(&self, headers: &HeaderMap, body: &[u8]) -> Result<(), Reject> {
-        crate::verify::verify(self.secret(), &self.signature(), headers, body)
+        let secret = self.secret().ok_or(Reject::NoSecret)?;
+        crate::verify::verify(secret, &self.signature(), headers, body)
     }
 
     /// Translate a verified delivery into zero or more events.

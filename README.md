@@ -220,6 +220,10 @@ recorded, and writes the difference. It is a **dry run** unless `--apply` is giv
 sweep can create, so the safe default is to look first, and the plan it prints is the
 plan that runs.
 
+A config for this shape needs no webhook secrets at all - just the credentials it writes
+with - because a sweep never verifies a delivery. The same file is still refused by
+`webhook serve`, which says which platform would need one.
+
 `POST /webhooks/<platform>` verifies the signature against the raw body, stores the delivery
 and answers `202`; the work happens off the request path. `GET /healthz` reports store
 liveness and delivery counts.

@@ -76,9 +76,9 @@ pub fn run(args: SyncArgs) -> Result<()> {
             .map_err(|error| CliError::cli(format!("The store could not be opened: {error}")))?,
     );
     let mut handler = ReconcileHandler::new(
-        config
-            .sources()
-            .map_err(|error| CliError::validation(error.to_string()))?,
+        // Not `receiving_sources`: a sweep translates, it never verifies a delivery,
+        // so it has no business demanding a webhook secret.
+        config.sources(),
         config.sinks(),
         mappings,
         store,
