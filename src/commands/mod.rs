@@ -16,6 +16,7 @@ pub mod milestone;
 pub mod project;
 pub mod project_update;
 pub mod schema;
+pub mod sync;
 pub mod team;
 pub mod template;
 pub mod user;
@@ -52,5 +53,6 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Markdown(args)) => markdown::run(args),
         Some(Command::Completions(args)) => completions::run(args),
         Some(Command::Webhook(args)) => webhook::run(args),
+        Some(Command::Sync(args)) => sync::run(args),
     }
 }

@@ -9,13 +9,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::connector::Source;
-use crate::domain::{parse_connector_ref, ConnectorId, EntityKind, EntityRef, Event, UserMap};
+use crate::domain::{
+    markers, parse_connector_ref, Capabilities, Change, ConnectorId, EntityKind, EntityRef, Event,
+    IssueFields, Patch, UserMap,
+};
 use crate::error::{Error, Result};
 use crate::queue::Handler;
 use crate::reconcile::projection::{Projected, Projection, Skipped};
+use crate::reconcile::survey::{Action, Entry, Survey};
+use crate::reconcile::sweep::{self, Found};
 use crate::reconcile::{
-    content_key, plan, Context, Direction, Nothing, Openness, Policy, Side, Sides, Snapshot,
-    StateNames, Step,
+    content_key, converge, plan, Context, Direction, Nothing, Openness, Pairwise, Policy, Side,
+    Sides, Snapshot, StateNames, Step,
 };
 use crate::sink::{RemoteIssue, Sink};
 use crate::store::{Delivery, Link, Store};
@@ -324,6 +329,7 @@ impl ReconcileHandler {
                 state,
                 skipped,
             } => {
+                let fields = stamped(fields, pair.subject);
                 self.report_skipped(pair.mapping, &skipped);
                 let sink = self.sink(&pair.there.connector)?;
                 let created = sink.create_issue(&pair.there.scope, &fields, state.as_deref())?;
@@ -359,6 +365,7 @@ impl ReconcileHandler {
                 state,
                 skipped,
             } => {
+                let patch = stamped_patch(patch, pair.subject);
                 let Some(reference) = pair.counterpart.cloned() else {
                     return Ok(());
                 };
@@ -496,6 +503,239 @@ impl ReconcileHandler {
         link?.counterpart(comment?).cloned()
     }
 
+    /// Read both ends of a mapping and work out what a sweep would do.
+    ///
+    /// Reads only. Every decision belongs to `sweep` and the reconciler's own planner,
+    /// which are pure - so the plan an operator reads is the plan that would run, and
+    /// carrying it out is not a second decision. That is what makes a dry run worth
+    /// trusting.
+    pub fn survey(&mut self, index: usize) -> Result<Survey> {
+        let mapping = self.mappings[index].clone();
+        let source = self.list_end(&mapping.source)?;
+        let sink = self.list_end(&mapping.sink)?;
+        let links = self.links_among(&source, &sink)?;
+        let source_caps = self.sink(&mapping.source.connector)?.capabilities();
+        let sink_caps = self.sink(&mapping.sink.connector)?.capabilities();
+
+        let mut survey = Survey {
+            mapping: mapping.name.clone(),
+            source: describe_end(&mapping.source),
+            sink: describe_end(&mapping.sink),
+            entries: Vec::new(),
+        };
+        for pairing in sweep::pair_up(&source, &sink, &mapping.sink.connector, &links) {
+            survey
+                .entries
+                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps));
+        }
+        Ok(survey)
+    }
+
+    /// Carry out a survey. The only place a sweep writes anything.
+    pub fn apply_survey(&mut self, index: usize, survey: &Survey) -> Result<usize> {
+        let mapping = self.mappings[index].clone();
+        let mut written = 0;
+        for entry in &survey.entries {
+            match &entry.step {
+                Some(step) => {
+                    let there = match entry.side {
+                        Side::Source => &mapping.sink,
+                        Side::Sink => &mapping.source,
+                    };
+                    self.carry_out(
+                        &Pair {
+                            mapping: &mapping.name,
+                            there,
+                            names_there: mapping.policy.names.of(entry.side.other()),
+                            subject: &entry.subject,
+                            counterpart: entry.counterpart.as_ref(),
+                            comment: None,
+                            comment_link: None,
+                            counterpart_state: entry.counterpart_state.as_deref(),
+                        },
+                        step.clone(),
+                    )?;
+                    written += 1;
+                }
+                // Nothing to write - but a pair adopted by its marker still gets a
+                // record, so the next sweep has a baseline instead of asking "who
+                // moved?" about two sides it cannot date.
+                None => {
+                    if let (Some(counterpart), Some(record)) = (&entry.counterpart, &entry.record) {
+                        self.store.upsert_link(
+                            &Link::new(entry.subject.clone(), counterpart.clone())
+                                .with_hash(record.clone()),
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// Everything one end of a mapping holds.
+    fn list_end(&self, end: &Endpoint) -> Result<Vec<Found>> {
+        let sink = self.sink(&end.connector)?;
+        Ok(sink
+            .list_issues(&end.scope)?
+            .into_iter()
+            .map(|issue| {
+                Found::new(
+                    EntityRef {
+                        connector: end.connector.clone(),
+                        kind: EntityKind::Issue,
+                        scope: Some(end.scope.clone()),
+                        native_id: issue.reference.id.clone(),
+                        url: issue.reference.url.clone(),
+                    },
+                    issue.fields,
+                    issue.state,
+                )
+            })
+            .collect())
+    }
+
+    /// Every pairing the store knows about among these entities.
+    fn links_among(&mut self, source: &[Found], sink: &[Found]) -> Result<Vec<Link>> {
+        let mut links: Vec<Link> = Vec::new();
+        for found in source.iter().chain(sink.iter()) {
+            for link in self.store.find_links(&found.reference)? {
+                let known = links
+                    .iter()
+                    .any(|seen| seen.pairs(&link.left, &link.right.connector));
+                if !known {
+                    links.push(link);
+                }
+            }
+        }
+        Ok(links)
+    }
+
+    /// What a sweep should do about one pairing.
+    fn judge(
+        &self,
+        mapping: &Mapping,
+        pairing: &sweep::Pairing,
+        source_caps: &Capabilities,
+        sink_caps: &Capabilities,
+    ) -> Entry {
+        match (pairing.source.as_ref(), pairing.sink.as_ref()) {
+            (Some(source), Some(sink)) => {
+                self.judge_pair(mapping, pairing, source, sink, source_caps, sink_caps)
+            }
+            (Some(source), None) => {
+                self.judge_single(mapping, source, Side::Source, source_caps, sink_caps)
+            }
+            (None, Some(sink)) => {
+                self.judge_single(mapping, sink, Side::Sink, source_caps, sink_caps)
+            }
+            (None, None) => unreachable!("a pairing names at least one entity"),
+        }
+    }
+
+    /// Both ends present: who moved, and what the other end gets.
+    fn judge_pair(
+        &self,
+        mapping: &Mapping,
+        pairing: &sweep::Pairing,
+        source: &Found,
+        sink: &Found,
+        source_caps: &Capabilities,
+        sink_caps: &Capabilities,
+    ) -> Entry {
+        let source_names = mapping.policy.names.of(Side::Source);
+        let sink_names = mapping.policy.names.of(Side::Sink);
+        let onto_sink = Projection::new(sink_caps, &mapping.users);
+        let onto_source = Projection::new(source_caps, &mapping.users);
+        let source_as_sink = onto_sink.of(
+            &source.fields,
+            &mapping.source.connector,
+            &mapping.sink.connector,
+        );
+        let sink_as_source = onto_source.of(
+            &sink.fields,
+            &mapping.sink.connector,
+            &mapping.source.connector,
+        );
+        let recorded = pairing
+            .link
+            .as_ref()
+            .and_then(|link| link.last_synced_hash.clone());
+
+        // A pair with no record - adopted by its marker, or held without one - keeps the
+        // source's revision, because that is what "source" means in the mapping.
+        let winner = match (&pairing.link, recorded.as_deref()) {
+            (Some(link), Some(_)) => match sweep::verdict(
+                link,
+                sweep::View {
+                    found: source,
+                    fields: &source_as_sink.fields,
+                    names: source_names,
+                },
+                sweep::View {
+                    found: sink,
+                    fields: &sink.fields,
+                    names: sink_names,
+                },
+            ) {
+                sweep::Verdict::InStep => {
+                    return in_step(source, sink, &source_as_sink.fields, sink_names)
+                }
+                sweep::Verdict::Conflict => return conflict(source, sink),
+                sweep::Verdict::Moved(side) => side,
+                sweep::Verdict::Adopted => Side::Source,
+            },
+            _ => Side::Source,
+        };
+
+        let (observed, counterpart, expected, target) = match winner {
+            Side::Source => (source, sink, &source_as_sink, sink_caps),
+            Side::Sink => (sink, source, &sink_as_source, source_caps),
+        };
+        decide(
+            mapping,
+            winner,
+            observed,
+            Some(counterpart),
+            expected,
+            target,
+            recorded.as_deref(),
+        )
+    }
+
+    /// One end present: mirror it, or say why the mapping does not.
+    fn judge_single(
+        &self,
+        mapping: &Mapping,
+        found: &Found,
+        side: Side,
+        source_caps: &Capabilities,
+        sink_caps: &Capabilities,
+    ) -> Entry {
+        let not_mirrored = |why: &str| Entry {
+            subject: found.reference.clone(),
+            side,
+            counterpart: None,
+            counterpart_state: None,
+            action: Action::NotMirrored {
+                why: why.to_string(),
+            },
+            step: None,
+            record: None,
+        };
+        if !mapping.policy.direction.allows(side) {
+            return not_mirrored("the mapping only mirrors the other way");
+        }
+
+        let (target_caps, target_connector) = match side {
+            Side::Source => (sink_caps, &mapping.sink.connector),
+            Side::Sink => (source_caps, &mapping.source.connector),
+        };
+        let projection = Projection::new(target_caps, &mapping.users);
+        let expected = projection.of(&found.fields, &found.reference.connector, target_connector);
+        decide(mapping, side, found, None, &expected, target_caps, None)
+    }
+
     /// Say what did not travel, once per delivery, at a level an operator sees.
     ///
     /// Not an error - the mapping is still doing what it can - but never silent
@@ -603,6 +843,143 @@ fn describe_nothing(reason: Nothing) -> &'static str {
         Nothing::Empty => "nothing to do: nothing to carry",
         Nothing::Unsupported => "nothing to do: the far platform cannot do this",
     }
+}
+
+/// The entry for a pair that needs no write.
+///
+/// It still records a revision, so the next sweep has a baseline rather than asking
+/// "who moved?" about two sides it cannot date.
+fn in_step(source: &Found, sink: &Found, expected: &IssueFields, sink_names: &StateNames) -> Entry {
+    Entry {
+        subject: source.reference.clone(),
+        side: Side::Source,
+        counterpart: Some(sink.reference.clone()),
+        counterpart_state: sink.state.clone(),
+        action: Action::InStep,
+        step: None,
+        record: Some(content_key(expected, sink.state.as_deref(), sink_names)),
+    }
+}
+
+/// Both ends changed since the bridge last wrote: reported, never resolved.
+fn conflict(source: &Found, sink: &Found) -> Entry {
+    Entry {
+        subject: source.reference.clone(),
+        side: Side::Source,
+        counterpart: Some(sink.reference.clone()),
+        counterpart_state: sink.state.clone(),
+        action: Action::Conflict,
+        step: None,
+        record: None,
+    }
+}
+
+/// The step for a pair whose winner is known, and the entry that describes it.
+fn decide(
+    mapping: &Mapping,
+    winner: Side,
+    observed: &Found,
+    counterpart: Option<&Found>,
+    expected: &Projected,
+    target: &Capabilities,
+    recorded: Option<&str>,
+) -> Entry {
+    let counterpart_state = counterpart.and_then(|found| found.state.clone());
+    let counterpart_snapshot = match counterpart {
+        Some(found) => Snapshot::present(found.fields.clone(), found.state.clone()),
+        None => Snapshot::gone(),
+    };
+    let step = converge(
+        &Pairwise {
+            side: winner,
+            policy: &mapping.policy,
+            observed: &Snapshot::present(observed.fields.clone(), observed.state.clone()),
+            counterpart: &counterpart_snapshot,
+            expected,
+            target,
+        },
+        recorded,
+    );
+
+    let (action, record) = match &step {
+        Step::Create { .. } => (Action::Create, None),
+        Step::Update { patch, state, .. } => {
+            let mut touched: Vec<String> = patch
+                .touched()
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect();
+            if state.is_some() {
+                touched.push("state".into());
+            }
+            (Action::Write { touched }, None)
+        }
+        Step::Nothing(reason) => match reason {
+            Nothing::Echo | Nothing::AlreadyEqual | Nothing::Empty => (
+                Action::InStep,
+                Some(content_key(
+                    &expected.fields,
+                    counterpart_state.as_deref(),
+                    mapping.policy.names.of(winner.other()),
+                )),
+            ),
+            other => (
+                Action::NotMirrored {
+                    why: describe_nothing(*other).to_string(),
+                },
+                None,
+            ),
+        },
+        // Unreachable in practice: a sweep never reaches for a comment, an attachment
+        // or a deletion - those come from deliveries, where an event says what happened.
+        other => (
+            Action::Write {
+                touched: vec![format!("{other:?}")],
+            },
+            None,
+        ),
+    };
+
+    Entry {
+        subject: observed.reference.clone(),
+        side: winner,
+        counterpart: counterpart.map(|found| found.reference.clone()),
+        counterpart_state,
+        action,
+        step: (!matches!(step, Step::Nothing(_))).then_some(step),
+        record,
+    }
+}
+
+/// A body that carries our marker.
+///
+/// The marker is how a copy is recognised *without* the store - a scope can be swept,
+/// and a lost link table does not mean losing every pairing. Both the content signature
+/// and the field diff ignore it, so stamping changes nothing about what the two sides
+/// compare, and a body is never re-sent because of it.
+fn stamped(mut fields: IssueFields, subject: &EntityRef) -> IssueFields {
+    fields.body = with_marker(&fields.body, subject);
+    fields
+}
+
+/// The same for the body a patch carries, when it carries one.
+fn stamped_patch(mut patch: Patch, subject: &EntityRef) -> Patch {
+    if let Change::Set(body) = patch.body {
+        patch.body = Change::Set(with_marker(&body, subject));
+    }
+    patch
+}
+
+fn with_marker(body: &str, subject: &EntityRef) -> String {
+    markers::with_marker(
+        body,
+        &markers::OriginMarker::new(subject.connector.as_str(), subject.native_id.clone()),
+    )
+}
+
+/// `connector:scope`, as the report and the config both write an endpoint.
+fn describe_end(end: &Endpoint) -> String {
+    format!("{}:{}", end.connector, end.scope)
 }
 
 #[cfg(test)]

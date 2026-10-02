@@ -562,7 +562,11 @@ fn a_new_issue_appears_once_on_the_other_platform() {
 
     let created = harness.the_create();
     assert_eq!(created["title"], "Mirror the thing");
-    assert_eq!(created["body"], "why it matters");
+    // The copy carries our marker: that is how it is recognised later *without* the
+    // store, and why comparing content strips markers first.
+    let copied = created["body"].as_str().expect("a body");
+    assert!(copied.starts_with("why it matters"), "{copied}");
+    assert!(copied.contains("linear-bridge:linear:issue-1"), "{copied}");
     assert_eq!(created["labels"], json!([3]));
 
     // The pairing is recorded, with the content key of what was written - which is

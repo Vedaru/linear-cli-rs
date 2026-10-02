@@ -199,7 +199,7 @@ fn describe_direction(direction: Direction) -> &'static str {
 
 /// Where the service config comes from: an explicit `--config`, else the same
 /// project-over-global lookup the CLI uses for everything else.
-fn config_source(explicit: Option<&std::path::Path>) -> Result<(PathBuf, String)> {
+pub(crate) fn config_source(explicit: Option<&std::path::Path>) -> Result<(PathBuf, String)> {
     if let Some(path) = explicit {
         let text = std::fs::read_to_string(path).map_err(|error| {
             CliError::validation(format!("cannot read {}: {error}", path.display()))

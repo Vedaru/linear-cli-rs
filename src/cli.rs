@@ -84,6 +84,8 @@ pub enum Command {
     Completions(crate::commands::completions::CompletionsArgs),
     /// Run and inspect the webhook bridge service
     Webhook(crate::commands::webhook::WebhookArgs),
+    /// Bring a mapping's two platforms into agreement, once (dry run by default)
+    Sync(crate::commands::sync::SyncArgs),
 }
 
 /// `linear auth` — manage workspace credentials.

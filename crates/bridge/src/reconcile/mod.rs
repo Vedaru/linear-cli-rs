@@ -23,7 +23,10 @@
 
 pub mod handler;
 pub mod projection;
+pub mod survey;
 pub mod sweep;
+
+pub use survey::{Action, Entry, Survey};
 
 use crate::domain::{
     markers, Actor, Capabilities, Change, ConnectorId, EntityKind, Event, EventDetail, IssueFields,
@@ -410,7 +413,7 @@ fn plan_change(context: &Context<'_>) -> Step {
             expected: context.expected,
             target: context.target,
         },
-        link,
+        link.last_synced_hash.as_deref(),
     )
 }
 
@@ -435,7 +438,7 @@ pub struct Pairwise<'a> {
 /// The difference from a delivery is the missing counterpart: a delivery refuses to
 /// re-create what the other side deleted, and a sweep does it, because "these two
 /// should agree" is exactly what it was asked.
-pub fn converge(pair: &Pairwise<'_>, link: &Link) -> Step {
+pub fn converge(pair: &Pairwise<'_>, recorded: Option<&str>) -> Step {
     if !pair.observed.exists() {
         return Step::Nothing(Nothing::Unpaired);
     }
@@ -446,11 +449,14 @@ pub fn converge(pair: &Pairwise<'_>, link: &Link) -> Step {
             skipped: pair.expected.skipped.clone(),
         };
     }
-    change_step(pair, link)
+    // `recorded` is `None` for a pair adopted by its marker: nothing was ever written
+    // across it, so no side can be "the echo of our own write" and the two are compared
+    // on their content alone.
+    change_step(pair, recorded)
 }
 
 /// What to change on the other side, given a pair that exists on both.
-fn change_step(pair: &Pairwise<'_>, link: &Link) -> Step {
+fn change_step(pair: &Pairwise<'_>, recorded: Option<&str>) -> Step {
     let policy = pair.policy;
     // The key is taken through the projection, in the *target's* openness: what
     // matters is not what the source says but what the target can be brought to
@@ -462,7 +468,7 @@ fn change_step(pair: &Pairwise<'_>, link: &Link) -> Step {
         &pair.expected.fields,
         ours.openness(pair.observed.state.as_deref()),
     );
-    if link.last_synced_hash.as_deref() == Some(expected_key.as_str()) {
+    if recorded == Some(expected_key.as_str()) {
         // What the source holds is exactly what we last wrote across this link:
         // this event is our own write coming back, or an edit that changed nothing
         // we mirror.

@@ -39,17 +39,21 @@ impl Found {
 
 /// One side of a pair, as it takes part in the comparison.
 ///
+/// Named a *view* rather than a side because a side is which end of the mapping this is,
+/// and this is what that end looks like to the comparison: projected fields and a
+/// vocabulary, not the entity itself.
+///
 /// The fields are deliberately separate from `found`: the side being *written* is
 /// compared in the form a write leaves behind - projected onto the other platform,
 /// which is the form the record holds - while the other side is compared as it is,
 /// because the record describes it and not a projection of it.
-pub struct Side<'a> {
+pub struct View<'a> {
     pub found: &'a Found,
     pub fields: &'a IssueFields,
     pub names: &'a StateNames,
 }
 
-impl Side<'_> {
+impl View<'_> {
     fn key(&self) -> String {
         content_key_with(
             self.fields,
@@ -73,7 +77,7 @@ pub enum Verdict {
 }
 
 /// Who moved since the bridge last wrote across this link.
-pub fn verdict(link: &Link, source: Side<'_>, sink: Side<'_>) -> Verdict {
+pub fn verdict(link: &Link, source: View<'_>, sink: View<'_>) -> Verdict {
     let source_key = source.key();
     let sink_key = sink.key();
     if source_key == sink_key {
@@ -391,8 +395,8 @@ mod tests {
         );
     }
 
-    fn side<'a>(found: &'a Found, fields: &'a IssueFields, names: &'a StateNames) -> Side<'a> {
-        Side {
+    fn view<'a>(found: &'a Found, fields: &'a IssueFields, names: &'a StateNames) -> View<'a> {
+        View {
             found,
             fields,
             names,
@@ -418,8 +422,8 @@ mod tests {
 
         let verdict = verdict(
             &link,
-            side(&source, &source.fields, &source_names),
-            side(&sink, &sink.fields, &sink_names),
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::Moved(WhichSide::Sink));
     }
@@ -436,8 +440,8 @@ mod tests {
 
         let verdict = verdict(
             &link,
-            side(&source, &source.fields, &source_names),
-            side(&sink, &sink.fields, &sink_names),
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::Moved(WhichSide::Source));
     }
@@ -454,8 +458,8 @@ mod tests {
 
         let verdict = verdict(
             &link,
-            side(&source, &source.fields, &source_names),
-            side(&sink, &sink.fields, &sink_names),
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::Conflict);
     }
@@ -469,8 +473,8 @@ mod tests {
 
         let verdict = verdict(
             &link(),
-            side(&source, &source.fields, &source_names),
-            side(&sink, &sink.fields, &sink_names),
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::InStep);
     }
@@ -490,8 +494,8 @@ mod tests {
 
         let verdict = verdict(
             &link(),
-            side(&source, &source.fields, &source_names),
-            side(&sink, &sink.fields, &sink_names),
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::Adopted);
     }

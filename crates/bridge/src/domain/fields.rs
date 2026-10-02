@@ -164,12 +164,22 @@ pub fn diff(source: &IssueFields, target: &IssueFields) -> Patch {
 
     let source_labels = source.canonical_labels();
     let target_labels = target.canonical_labels();
+    // Bodies are compared with our own markers stripped *and* the same trailing
+    // whitespace rule the content signature uses. A marker is the bridge's bookkeeping,
+    // and stripping one leaves a blank line behind: compared raw, every stamped copy
+    // would look like a body change and be re-sent on every edit.
+    let source_body = crate::domain::markers::strip(&source.body)
+        .trim_end()
+        .to_string();
+    let target_body = crate::domain::markers::strip(&target.body)
+        .trim_end()
+        .to_string();
     Patch {
         title: change(
             Some(&source.title.trim().to_string()),
             Some(&target.title.trim().to_string()),
         ),
-        body: change(Some(&source.body), Some(&target.body)),
+        body: change(Some(&source_body), Some(&target_body)),
         labels: change(Some(&source_labels), Some(&target_labels)),
         priority: change(Some(&source.priority), Some(&target.priority)),
         due_date: change(source.due_date.as_ref(), target.due_date.as_ref()),
