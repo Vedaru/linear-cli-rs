@@ -27,6 +27,14 @@ services:
     container_name: linear-bridge
     restart: unless-stopped
     network_mode: host
+    # The unit's logs go to the journal, which rotates them; a container's default `json-file`
+    # driver never does, and this machine also runs the forge and the CI runners. Name the
+    # ceiling rather than discovering it as a full disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     env_file:
       # LINEAR_API_KEY, FORGEJO_TOKEN, FORGEJO_WEBHOOK_SECRET, LINEAR_WEBHOOK_SECRET.
       - ${SECRETS_FILE:-/etc/linear-bridge/secrets.env}
@@ -42,6 +50,13 @@ services:
     image: linear-bridge
     restart: unless-stopped
     network_mode: host
+    logging:
+      # A five-minute loop, so this one is quieter than the service - but it is the same
+      # unbounded default without it.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     env_file:
       - ${SECRETS_FILE:-/etc/linear-bridge/secrets.env}
     volumes:

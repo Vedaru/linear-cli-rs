@@ -54,15 +54,44 @@ Then, in order, the three things that actually decide whether it works:
 **1. The route must not be behind the login page.** A webhook arrives as an unauthenticated POST,
 so any gateway in front of it has to pass that path through. Measured on this deployment's hosts:
 a webhook-shaped path on `git.vedaru.cn` and `monitor.vedaru.cn` answers **302 to an SSO login
-page**, while `git.vedaru.cn/api/...` reaches Forgejo itself (a real `404` from the forge). A
-platform posting to a 302'd route can record a *successful* delivery while nothing happened - it
+page**, while `git.vedaru.cn/api/...` reaches Forgejo itself (a real `404` from the forge). The
+redirect is the origin's own nginx (`nginx/1.30.4` in the 302's body, `location:
+https://auth.vedaru.cn/?rd=<the original URL>`), it is issued for *every* path except `/api/`, and
+that is the whole exemption boundary as measured from outside: `/api/` passes, `/webhooks/`,
+`/healthz`, `/.well-known/` and the rest do not.
+
+A platform posting to a 302'd route can record a *successful* delivery while nothing happened - it
 followed the redirect, got a `200` and an HTML login page - so this must be checked **from
 outside**, with `curl -i`, on the exact path Linear will use, and it must answer from the bridge
 (`/healthz` returns the service's own body, not an HTML redirect).
 
 ```sh
-curl -i https://<the bridge's host>/healthz          # must NOT be 302 to a login page
+deploy/check-route.sh https://<the bridge's host>    # exits non-zero unless the bridge answers
 ```
+
+That script is the check worth keeping: it fails on a `3xx`, and on a `200` whose body is not the
+service's JSON, and it POSTs an unsigned body to `/webhooks/linear` expecting the *rejection* the
+bridge itself sends - so an answer that is merely "something replied" does not pass.
+
+**What the exemption is, on an nginx origin like this one.** The redirect comes from the server
+block, so the bridge needs a location the auth logic does not cover, pointing at the service:
+
+```nginx
+location ^~ /webhooks/ {
+    # Only if the gateway enforces the login with `auth_request`; drop it otherwise.
+    auth_request off;
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+One caveat that decides it: a `location` can be exempted from `auth_request`, but **not** from a
+server-level `if (...) { return 302 ...; }` or `error_page` rewrite - if the redirect is issued that
+way, the condition has to be narrowed so this location escapes it (or the bridge gets its own
+hostname with no auth block). Exempt the *whole* `/webhooks/` prefix rather than the two exact
+paths, since Linear and Forgejo differ (`/webhooks/linear`, `/webhooks/forgejo`) and a typo in one
+of them is invisible until a delivery does nothing.
 
 **2. Forgejo first, Linear second.** Local Forgejo can post straight to
 `http://127.0.0.1:8787/webhooks/forgejo` with no gateway in the way, which makes it the end-to-end
@@ -115,6 +144,10 @@ The image is `debian:bookworm-slim` with the binary and `ca-certificates` in it,
 non-root user, with the store on a named volume (`linear-bridge-store`). Its `HEALTHCHECK` is
 `linear sync status`: a container that cannot read its own queue is not healthy, however well the
 process answers.
+
+The container's logs are the one thing the unit gets for free and a container does not: the journal
+rotates, a container's `json-file` driver does not. `deploy/compose.yaml` sets `max-size`/`max-file`
+on both services for that reason - see "What the unit already handles" below.
 
 ## Setting up the webhooks
 
@@ -180,8 +213,11 @@ linear webhook replay <id>                                   # re-run one, on th
 
 - **Restarts.** `Restart=always`: the process is stateless between deliveries, and the queue is in
   the store, so a restart resumes rather than repeats.
-- **Log rotation.** Logs go to the journal, which rotates them; nothing in the service writes a
-  file that grows.
+- **Log rotation.** Under the unit, logs go to the journal, which rotates them; nothing in the
+  service writes a file that grows. Under the container recipe, `deploy/compose.yaml` caps the
+  `json-file` driver (`max-size: 10m`, `max-file: 5`) because a container's default is *no*
+  rotation at all - the one place where the container differs from the unit in a way that only
+  shows up weeks later.
 - **A network that comes and goes.** Deliveries are stored before they are worked on and an intake
   is idempotent by delivery id, so a provider retry - Linear retries, and so does a forge - is a
   no-op insert rather than a duplicate mirror.
