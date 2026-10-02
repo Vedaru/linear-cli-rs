@@ -327,6 +327,8 @@ impl Harness {
             users: UserMap::default(),
             source: Endpoint::parse("linear:VED").unwrap(),
             sink: Endpoint::parse("forgejo:Vedaru/linear-cli-rs").unwrap(),
+            routes: Default::default(),
+            sink_location: Default::default(),
             policy,
         };
 

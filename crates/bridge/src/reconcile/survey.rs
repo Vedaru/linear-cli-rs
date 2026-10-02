@@ -38,6 +38,16 @@ pub struct Entry {
     /// baseline to compare against. Without it, a pair that is merely *in step* would
     /// never become known and every sweep would compare two sides it cannot date.
     pub record: Option<String>,
+    /// The sink scope this entry is judged and written in. A sweep lists every scope
+    /// its entities resolve to, so an entry carries its own - not the mapping's
+    /// default - or a routed issue would be written to the wrong repository.
+    pub sink_scope: String,
+    /// The source project this entry's issue names, when it is an issue being
+    /// mirrored source-to-sink. A sweep cannot always resolve it to the sink's own
+    /// project id when the plan is made - a project the same sweep creates has no id
+    /// yet - so the id travels here and the write resolves it once the project is
+    /// paired, which is what lets the issue land on its board in the same pass.
+    pub source_project: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

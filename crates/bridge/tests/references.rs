@@ -146,6 +146,8 @@ impl Fixture {
             source: Endpoint::parse(&format!("forgejo:{SCOPE}")).expect("an endpoint"),
             sink: Endpoint::parse("linear:VED").expect("an endpoint"),
             users: UserMap::default(),
+            routes: Default::default(),
+            sink_location: Default::default(),
             policy: policy(),
         };
 
@@ -338,6 +340,8 @@ fn the_side_the_reference_arrives_from_does_not_change_where_it_goes() {
         source: Endpoint::parse("linear:VED").expect("an endpoint"),
         sink: Endpoint::parse(&format!("forgejo:{SCOPE}")).expect("an endpoint"),
         users: UserMap::default(),
+        routes: Default::default(),
+        sink_location: Default::default(),
         policy,
     };
     let path = std::env::temp_dir().join(format!(

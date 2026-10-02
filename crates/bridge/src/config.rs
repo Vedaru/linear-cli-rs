@@ -64,6 +64,7 @@ use crate::domain::{parse_connector_ref, ConnectorId, Identity, Secret, UserMap}
 use crate::error::{Error, Result};
 use crate::queue::WorkerConfig;
 use crate::reconcile::handler::{Endpoint, Mapping};
+use crate::reconcile::route::{Location, Route, Routes};
 use crate::reconcile::{Direction, Sides, StateNames};
 use crate::sink::spec::SinkSpec;
 use crate::sink::Sink;
@@ -163,6 +164,37 @@ pub struct MappingConfig {
     /// rather than guessed at - a login from one platform sent to another is worse
     /// than a field that stays behind, and the log says which it was.
     pub identity: Vec<BTreeMap<String, String>>,
+    /// `[[mapping.route]]`: which sink scope an entity's mirror lives in.
+    ///
+    /// ```toml
+    /// [[mapping.route]]
+    /// project = "project-uuid"      # a project by id, slug or name - and its issues
+    /// scope = "Vedaru/kuro"
+    ///
+    /// [[mapping.route]]
+    /// issue = "VED-119"             # one issue, by the identifier a person sees
+    /// scope = "Vedaru/kuro"
+    ///
+    /// [[mapping.route]]
+    /// label = "urgent"              # any issue carrying this label
+    /// scope = "Vedaru/hotfix"
+    /// ```
+    ///
+    /// At least one of `project`, `issue` or `label` is required, and `scope` names a
+    /// container on the mapping's *sink* connector - a scope on another connector is
+    /// refused at load time.
+    ///
+    /// The order an entity's scope is decided in, first match wins:
+    ///
+    /// 1. an explicit rule - `project` for a project (and, by inheritance, its
+    ///    issues), then `issue`, then `label` for an issue;
+    /// 2. a location the entity's project *declares*, when it points at the sink
+    ///    platform (a link to the repository, recognised by the sink preset's URL
+    ///    shape);
+    /// 3. the mapping's own sink scope.
+    ///
+    /// Empty means every entity falls through to step 2 or 3.
+    pub route: Vec<Route>,
 }
 
 impl MappingConfig {
@@ -367,6 +399,15 @@ impl BridgeConfig {
                     sink: Endpoint::parse(&mapping.sink)?,
                     policy: mapping.policy(source, sink),
                     users,
+                    routes: Routes::new(mapping.route.clone()),
+                    sink_location: sink.sink_spec().and_then(|spec| {
+                        let location = spec.location?;
+                        // The connector's *effective* address: the deployment's `api_url`
+                        // when it declares one, the preset's own default otherwise. Reading
+                        // only the override would leave a deployment that never set it with
+                        // no URL shape at all, and the link rule silently dead.
+                        resolve_location(&location.url, Some(spec.base_url.as_str()))
+                    }),
                 })
             })
             .collect()
@@ -419,6 +460,24 @@ fn build_platforms(
             })
         })
         .collect()
+}
+
+/// A preset's URL shape, made absolute against the platform it belongs to.
+///
+/// A preset must not name one deployment's host. `/{scope}` says "a repository of this platform
+/// lives at this instance's root plus its scope", and the instance's address is where every
+/// other call already goes: the connector's base URL. An absolute pattern is left alone, so a
+/// preset can still spell out a host that is not the API's.
+///
+/// Only the origin is taken from the base URL - it carries the API prefix (`/api/v1`), which a
+/// repository URL does not have.
+fn resolve_location(pattern: &str, base_url: Option<&str>) -> Option<Location> {
+    if pattern.contains("://") {
+        return Location::parse(pattern);
+    }
+    let (scheme, rest) = base_url?.split_once("://")?;
+    let host = rest.split('/').next()?;
+    Location::parse(&format!("{scheme}://{host}{pattern}"))
 }
 
 /// The spec for a platform: a preset by name, or one written in the config.
@@ -604,6 +663,16 @@ fn build_mappings(
                     )));
                 }
             }
+            // A route may only name a scope on the mapping's *sink* connector: the sink
+            // is what an entity is mirrored into, and the connector is already fixed.
+            let (sink_connector, _) = parse_connector_ref(&section.sink)
+                .map_err(|error| Error::Config(format!("mapping `{label}`: {error}")))?;
+            let routes: Vec<Route> = section
+                .route
+                .iter()
+                .enumerate()
+                .map(|(index, route)| build_route(&label, index + 1, route, &sink_connector))
+                .collect::<Result<_>>()?;
             Ok(MappingConfig {
                 name: section.name,
                 source: section.source,
@@ -614,9 +683,73 @@ fn build_mappings(
                 git_automation: section.git_automation,
                 delete_sync: section.delete_sync,
                 identity: section.identity,
+                route: routes,
             })
         })
         .collect()
+}
+
+/// One `[[mapping.route]]`, validated against the mapping's sink connector.
+///
+/// A route names at least one key to match on and a *scope* - nothing else. The
+/// connector is the mapping's own, so an operator who writes `connector:scope` either
+/// means a scope on the sink (the prefix is accepted and stripped) or a scope on a
+/// platform this mapping does not write to - which is a mistake worth failing at
+/// startup over, not a request to the wrong platform at runtime.
+fn build_route(
+    label: &str,
+    position: usize,
+    route: &RouteSection,
+    sink: &ConnectorId,
+) -> Result<Route> {
+    // An empty string is the same as absent: a key that matches nothing is not a key.
+    let key = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let project = key(route.project.as_deref());
+    let issue = key(route.issue.as_deref());
+    let route_label = key(route.label.as_deref());
+    if project.is_none() && issue.is_none() && route_label.is_none() {
+        return Err(Error::Config(format!(
+            "mapping `{label}`: route {position} names no `project`, `issue` or `label` to match on"
+        )));
+    }
+    let named = project
+        .as_ref()
+        .map(|value| format!("project `{value}`"))
+        .or_else(|| issue.as_ref().map(|value| format!("issue `{value}`")))
+        .or_else(|| route_label.as_ref().map(|value| format!("label `{value}`")))
+        .unwrap_or_else(|| format!("route {position}"));
+
+    let scope = route.scope.trim();
+    if scope.is_empty() {
+        return Err(Error::Config(format!(
+            "mapping `{label}`: the route for {named} names no scope"
+        )));
+    }
+    let scope = match parse_connector_ref(scope) {
+        Ok((connector, inner)) if connector == *sink => inner,
+        Ok((connector, _)) => {
+            return Err(Error::Config(format!(
+                "mapping `{label}`: the route for {named} names a scope on connector `{connector}`, but this mapping writes to `{sink}`; a route may only name a scope on the mapping's sink connector"
+            )))
+        }
+        Err(_) if scope.contains(':') => {
+            return Err(Error::Config(format!(
+                "mapping `{label}`: the route for {named} has scope `{scope}`, which is not a valid scope"
+            )))
+        }
+        Err(_) => scope.to_string(),
+    };
+    Ok(Route {
+        project,
+        issue,
+        label: route_label,
+        scope,
+    })
 }
 
 // --- raw document shapes ----------------------------------------------------
@@ -718,6 +851,9 @@ struct MappingSection {
     /// pairs that disagree about who is the counterpart.
     #[serde(default)]
     identity: Vec<BTreeMap<String, String>>,
+    /// `[[mapping.route]]`: a project, and the sink scope its entities live in.
+    #[serde(default)]
+    route: Vec<RouteSection>,
     #[serde(default = "default_true")]
     sync_issues: bool,
     /// Projects are opt-in: absent means off.
@@ -731,6 +867,23 @@ struct MappingSection {
 
 fn default_true() -> bool {
     true
+}
+
+/// One `[[mapping.route]]`: what it matches, and the sink scope its mirror lives in.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteSection {
+    /// A project by its id, slug or name. Matches the project and its issues.
+    #[serde(default)]
+    project: Option<String>,
+    /// One issue by its source identifier (e.g. `VED-119`).
+    #[serde(default)]
+    issue: Option<String>,
+    /// Any issue carrying this label.
+    #[serde(default)]
+    label: Option<String>,
+    /// The sink scope - a repository, a board - this route's entities live in.
+    scope: String,
 }
 
 /// `~/…` against the current `HOME`, when there is one. Anything else is left exactly as it is:
@@ -1276,5 +1429,120 @@ id = "/id"
         // And it reaches the policy the reconciler runs with, the same way the issue
         // switch does.
         assert!(config.mappings[0].policy(linear, forgejo).sync_projects);
+    }
+
+    #[test]
+    fn routes_reach_the_reconciler() {
+        let config = parse(&document(
+            "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"Vedaru/kuro\"\n\
+             \n[[mapping.route]]\nissue = \"VED-119\"\nscope = \"Vedaru/one-off\"\n\
+             \n[[mapping.route]]\nlabel = \"urgent\"\nscope = \"Vedaru/hotfix\"\n",
+        ))
+        .expect("the config loads");
+
+        let routes = &config.mappings[0].route;
+        assert_eq!(routes.len(), 3);
+        assert_eq!(routes[0].project.as_deref(), Some("project-uuid"));
+        assert_eq!(routes[0].scope, "Vedaru/kuro");
+        assert_eq!(routes[1].issue.as_deref(), Some("VED-119"));
+        assert_eq!(routes[2].label.as_deref(), Some("urgent"));
+
+        // And it reaches the mapping the reconciler runs with.
+        let mappings = config.reconcile_mappings().expect("the mapping resolves");
+        let routes = &mappings[0].routes;
+        assert_eq!(routes.len(), 3);
+        assert_eq!(
+            routes.scopes(),
+            vec!["Vedaru/kuro", "Vedaru/one-off", "Vedaru/hotfix"]
+        );
+    }
+
+    #[test]
+    fn a_route_naming_a_scope_on_another_connector_is_refused() {
+        let error = parse(&document(
+            "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"linear:VED\"\n",
+        ))
+        .expect_err("a route may only name a scope on the mapping's sink")
+        .to_string();
+        assert!(error.contains("connector `linear`"), "{error}");
+        assert!(error.contains("writes to `forgejo`"), "{error}");
+    }
+
+    #[test]
+    fn a_route_with_nothing_to_match_on_is_refused() {
+        let error = parse(&document("\n[[mapping.route]]\nscope = \"Vedaru/kuro\"\n"))
+            .expect_err("a route needs a key")
+            .to_string();
+        assert!(
+            error.contains("no `project`, `issue` or `label`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_route_may_repeat_the_mappings_own_sink_connector() {
+        let config = parse(&document(
+            "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"forgejo:Vedaru/kuro\"\n",
+        ))
+        .expect("the document loads");
+        // The prefix is the mapping's own sink; it is accepted and stripped.
+        assert_eq!(config.mappings[0].route[0].scope, "Vedaru/kuro");
+    }
+
+    #[test]
+    fn a_route_may_name_every_key_at_once() {
+        let config = parse(&document(
+            "\n[[mapping.route]]\nproject = \"p\"\nissue = \"VED-1\"\nlabel = \"urgent\"\nscope = \"Vedaru/kuro\"\n",
+        ))
+        .expect("the config loads");
+        let route = &config.mappings[0].route[0];
+        assert_eq!(route.project.as_deref(), Some("p"));
+        assert_eq!(route.issue.as_deref(), Some("VED-1"));
+        assert_eq!(route.label.as_deref(), Some("urgent"));
+    }
+
+    #[test]
+    fn a_relative_url_shape_follows_the_deployment_rather_than_the_preset() {
+        // A shipped preset must not name one deployment's host. `/{scope}` is resolved
+        // against the connector's own address, so the same preset serves any instance -
+        // and a link to whatever host the preset's default happens to name is no longer
+        // this deployment's repository.
+        let text = document("").replace(
+            "[platform.forgejo]",
+            "[platform.forgejo]\napi_url = \"http://127.0.0.1:4000/api/v1\"",
+        );
+        let config = parse(&text).expect("the config loads");
+        let mappings = config.reconcile_mappings().expect("the mapping resolves");
+        let location = mappings[0]
+            .sink_location
+            .as_ref()
+            .expect("forgejo declares its URL shape");
+        assert_eq!(
+            location.scope("http://127.0.0.1:4000/Vedaru/kuro"),
+            Some("Vedaru/kuro")
+        );
+        assert_eq!(location.scope("https://git.vedaru.cn/Vedaru/kuro"), None);
+    }
+
+    #[test]
+    fn a_presets_url_shape_reaches_the_mapping() {
+        // The forgejo preset declares how its own web URLs name a repository, so a
+        // project linking to one is routed there without an explicit route. The shape is
+        // relative, so it resolves against the address this deployment talks to - here the
+        // preset's own default.
+        let config = parse(&document("")).expect("the config loads");
+        let mappings = config.reconcile_mappings().expect("the mapping resolves");
+        let location = mappings[0]
+            .sink_location
+            .as_ref()
+            .expect("forgejo declares its URL shape");
+        assert_eq!(
+            location.scope("http://127.0.0.1:3000/Vedaru/kuro"),
+            Some("Vedaru/kuro")
+        );
+        assert_eq!(
+            location.scope("https://github.com/h-paetzold/linforge"),
+            None
+        );
     }
 }

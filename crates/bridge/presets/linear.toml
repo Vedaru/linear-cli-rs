@@ -185,6 +185,8 @@ priority = "/priority"
 labels = { path = "/labels/nodes", pick = "/name" }
 assignee = "/assignee/email"
 project = "/project/id"
+# The identifier a route may name an issue by (identity, not content).
+identifier = "/identifier"
 
 # Linear has no delete: `issueArchive` is how an issue is retired, and it keeps
 # the issue recoverable, which is the safe direction for a mirror.
@@ -245,6 +247,9 @@ assignee = "/data/issue/assignee/email"
 project = "/data/issue/project/id"
 id = "/data/issue/id"
 url = "/data/issue/url"
+# The identifier a person sees (`VED-119`), for a route that names an issue by it.
+# Identity, not content: it is never written to the other side.
+identifier = "/data/issue/identifier"
 
 # Name -> UUID. A human writes `VED` and `Done`; every Linear mutation wants a
 # UUID, so each name is resolved (and cached) through the same mechanism a forge
@@ -314,7 +319,7 @@ method = "POST"
 path = ""
 items = "/data/projects/nodes"
 [sink.project.list.request.body]
-query = "query Projects($after: String) { projects(first: 50, after: $after) { nodes { id slugId name description state url } pageInfo { hasNextPage endCursor } } }"
+query = "query Projects($after: String) { projects(first: 50, after: $after) { nodes { id slugId name description state url externalLinks { nodes { url label } } } pageInfo { hasNextPage endCursor } } }"
 variables = { after = "$cursor" }
 [sink.project.list.paginate.cursor]
 next = "/data/projects/pageInfo/endCursor"
@@ -325,12 +330,17 @@ id = "/id"
 url = "/url"
 title = "/name"
 body = "/description"
+# The alias a route may name this project by. Identity, not content: it is never
+# written to the other side.
+slug = "/slugId"
+# External links, for resolving a repository this project names. Identity, not content.
+links = { path = "/externalLinks/nodes", pick = "/url" }
 
 [sink.project.fetch]
 method = "POST"
 path = ""
 [sink.project.fetch.body]
-query = "query Project($id: String!) { project(id: $id) { id name description url } }"
+query = "query Project($id: String!) { project(id: $id) { id slugId name description url externalLinks { nodes { url label } } } }"
 variables = { id = "$id" }
 
 [sink.project.create]
@@ -354,3 +364,5 @@ title = "/data/project/name"
 body = "/data/project/description"
 id = "/data/project/id"
 url = "/data/project/url"
+slug = "/data/project/slugId"
+links = { path = "/data/project/externalLinks/nodes", pick = "/url" }

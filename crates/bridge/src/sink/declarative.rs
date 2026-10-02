@@ -583,6 +583,15 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // A forge that reports it nowhere yields `None`, and the reconciler falls
         // back to the project it recorded when it placed the issue.
         project: read_text(body, read.project.as_ref()),
+        // A container's alias, for routing only - not part of the content a mirror
+        // compares.
+        slug: read_text(body, read.slug.as_ref()),
+        // The identifier a person sees, likewise for routing only.
+        identifier: read_text(body, read.identifier.as_ref()),
+        // A list of URLs the entity declares elsewhere, for resolving a scope from a
+        // link that points at the sink platform. Read with the same path/pick shape a
+        // label list uses; identity, never content.
+        links: read_labels(body, read.links.as_ref()),
     }
 }
 
@@ -1094,6 +1103,7 @@ mod tests {
                 "forgejo",
                 SinkSpec {
                     base_url: "http://127.0.0.1:1".into(),
+                    location: None,
                     auth: None,
                     headers: Default::default(),
                     error_pointer: None,
@@ -1161,6 +1171,9 @@ mod tests {
             due_date: Some(ReadField::Pointer("/due_date".into())),
             assignee: Some(ReadField::Pointer("/assignees/0/login".into())),
             project: None,
+            slug: None,
+            identifier: None,
+            links: None,
             state: Some(ReadField::Pointer("/state".into())),
             id: Some("/number".into()),
             url: Some("/html_url".into()),

@@ -261,6 +261,8 @@ impl Harness {
             users: UserMap::default(),
             source: Endpoint::parse("linear:VED").unwrap(),
             sink: Endpoint::parse(&format!("forgejo:{SCOPE}")).unwrap(),
+            routes: Default::default(),
+            sink_location: Default::default(),
             policy,
         };
 

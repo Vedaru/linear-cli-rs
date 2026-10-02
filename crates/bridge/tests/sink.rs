@@ -30,6 +30,9 @@ fn fields() -> IssueFields {
         due_date: Some("2026-10-09".into()),
         assignee: Some("vedaru".into()),
         project: None,
+        slug: None,
+        identifier: None,
+        links: Vec::new(),
     }
 }
 
@@ -531,6 +534,9 @@ fn linear_fields() -> IssueFields {
         due_date: Some("2026-10-09".into()),
         assignee: Some("vedaru@example.com".into()),
         project: None,
+        slug: None,
+        identifier: None,
+        links: Vec::new(),
     }
 }
 

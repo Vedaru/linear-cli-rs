@@ -16,6 +16,7 @@ use crate::domain::{
 use crate::error::{Error, Result};
 use crate::queue::Handler;
 use crate::reconcile::projection::{Projected, Projection, Skipped};
+use crate::reconcile::route::{Identity, Location, Placement, Routes};
 use crate::reconcile::survey::{Action, Entry, Survey};
 use crate::reconcile::sweep::{self, Found};
 use crate::reconcile::{
@@ -59,6 +60,13 @@ pub struct Mapping {
     /// How a person is known on each platform. Empty is meaningful: it means the
     /// deployment has not said, so assignee sync is off rather than guessed.
     pub users: UserMap,
+    /// Declarative routes: which sink scope an entity's project's mirror lives in.
+    /// Empty means every entity stays in the mapping's own sink scope.
+    pub routes: Routes,
+    /// The sink platform's URL shape, when its preset declares one: a project that
+    /// links to a location in this shape is routed to the scope the URL names. `None`
+    /// means links are never consulted.
+    pub sink_location: Option<Location>,
 }
 
 impl Mapping {
@@ -67,24 +75,42 @@ impl Mapping {
     /// Scope matters as much as the connector: one Linear workspace and one forge
     /// can be paired several times over (per team, per repository), and a mapping
     /// that ignored the scope would mirror the wrong repository's issues.
+    ///
+    /// The sink side is matched against *every* scope this mapping writes through -
+    /// its default and each route's - because a routed repository is still this
+    /// mapping's, and an event from it must be claimed here rather than nowhere.
     pub fn side_of(&self, event: &Event) -> Option<Side> {
         // A scope the platform did not report is not a mismatch: a Linear comment
         // payload names the issue but not the team, and the link - not the scope -
         // is what disambiguates when several mappings share a connector.
-        let scope_matches = |endpoint: &Endpoint| {
+        let scope_matches = |scope: &str| {
             event
                 .subject
                 .scope
                 .as_deref()
-                .is_none_or(|scope| scope.eq_ignore_ascii_case(&endpoint.scope))
+                .is_none_or(|scope_on_event| scope_on_event.eq_ignore_ascii_case(scope))
         };
-        if event.connector == self.source.connector && scope_matches(&self.source) {
+        if event.connector == self.source.connector && scope_matches(&self.source.scope) {
             Some(Side::Source)
-        } else if event.connector == self.sink.connector && scope_matches(&self.sink) {
+        } else if event.connector == self.sink.connector
+            && self.sink_scopes().iter().any(|scope| scope_matches(scope))
+        {
             Some(Side::Sink)
         } else {
             None
         }
+    }
+
+    /// Every scope on the sink this mapping reads and writes through: its default
+    /// container, then each route's, distinct and in declaration order.
+    pub fn sink_scopes(&self) -> Vec<&str> {
+        let mut scopes = vec![self.sink.scope.as_str()];
+        for scope in self.routes.scopes() {
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+        }
+        scopes
     }
 
     fn endpoint(&self, side: Side) -> &Endpoint {
@@ -93,6 +119,32 @@ impl Mapping {
             Side::Sink => &self.sink,
         }
     }
+}
+
+/// A sweep's two ends: what each can hold, and the sink scope the entry is written
+/// in. One struct rather than separate references, so the judging functions do not
+/// grow a parameter every time an end is consulted.
+#[derive(Clone, Copy)]
+struct Ends<'a> {
+    source: &'a Capabilities,
+    sink: &'a Capabilities,
+    sink_scope: &'a str,
+}
+
+/// The routing facts about an entity's *container* (its project): the declared
+/// locations that may name a sink repository, and the slug and name that let a
+/// `project` route match the container by more than its id.
+///
+/// An issue inherits its project's scope, so it needs its container's whole
+/// identity - not just the id the issue names it by - or `project = "<slug>"` and
+/// `project = "<name>"` rules would apply to the project and not to its issues. A
+/// container whose slug and name could not be resolved carries neither and degrades
+/// to id-only, exactly as before.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ContainerFacts {
+    slug: Option<String>,
+    name: Option<String>,
+    links: Vec<String>,
 }
 
 /// The reconciler as the queue sees it: one delivery in, one outcome out.
@@ -217,24 +269,34 @@ impl ReconcileHandler {
 
     fn reconcile(&mut self, index: usize, side: Side, event: &Event) -> Result<()> {
         let mapping = self.mappings[index].clone();
-        let here = mapping.endpoint(side).clone();
-        let there = mapping.endpoint(side.other()).clone();
+        let endpoint = mapping.endpoint(side).clone();
+        // The container the event names, when it names one. On the sink that is the
+        // repository the entity already lives in - which a route never changes - and on
+        // the source it is the team key. A payload that names none (a Linear comment
+        // names its issue, not the team) falls back to the mapping's own endpoint.
+        let here = Endpoint {
+            connector: endpoint.connector,
+            scope: event
+                .subject
+                .scope
+                .clone()
+                .filter(|scope| !scope.is_empty())
+                .unwrap_or(endpoint.scope),
+        };
+        let there_connector = mapping.endpoint(side.other()).connector.clone();
 
         // A platform may not say which container the event came from (a Linear
         // comment payload names the issue but not the team). The mapping does know,
         // and a link is looked up by identity - so the scope is filled in from the
         // mapping rather than left absent, which would make every pairing invisible.
-        let subject = match event.subject.scope {
-            Some(_) => event.subject.clone(),
-            None => event.subject.clone().with_scope(here.scope.clone()),
-        };
+        let subject = event.subject.clone().with_scope(here.scope.clone());
 
         // A comment needs its own pairing, and it is looked up from the comment's
         // id - which the delivery carries in the detail, because the subject is the
         // issue the comment is on.
         let comment_ref = comment_reference(event, &subject);
         let comment_link = match &comment_ref {
-            Some(comment) => self.store.find_link(comment, &there.connector)?,
+            Some(comment) => self.store.find_link(comment, &there_connector)?,
             None => None,
         };
 
@@ -254,8 +316,8 @@ impl ReconcileHandler {
         // are what the decision is actually made on.
         let link = self
             .store
-            .find_link(&subject, &there.connector)?
-            .filter(|link| link.pairs(&subject, &there.connector));
+            .find_link(&subject, &there_connector)?
+            .filter(|link| link.pairs(&subject, &there_connector));
         let counterpart_ref = link
             .as_ref()
             .and_then(|link| link.counterpart(&subject))
@@ -267,6 +329,26 @@ impl ReconcileHandler {
             &here.scope,
             &subject.native_id,
         )?;
+
+        // The endpoint the *other* side is read and written through. On the source
+        // that is the repository this entity's mirror belongs in, resolved from its
+        // project; on the sink it is the mapping's source, which routing never varies.
+        let mut placement: Option<Placement> = None;
+        let there = match side {
+            Side::Sink => mapping.endpoint(Side::Source).clone(),
+            Side::Source => {
+                let fields = observed.fields.clone().unwrap_or_default();
+                let facts = self.entity_facts(&mapping, &subject.kind, &fields)?;
+                let placed = self.placement(&mapping, &subject, &fields, link.as_ref(), &facts)?;
+                let endpoint = Endpoint {
+                    connector: mapping.sink.connector.clone(),
+                    scope: placed.scope.clone(),
+                };
+                placement = Some(placed);
+                endpoint
+            }
+        };
+
         let mut counterpart = match &counterpart_ref {
             Some(reference) => self.snapshot(
                 &reference.kind,
@@ -276,6 +358,40 @@ impl ReconcileHandler {
             )?,
             None => Snapshot::gone(),
         };
+
+        // A delivery on the sink is still about the same source entity, and it is that
+        // entity's project that decides the repository - so the placement is read from
+        // the counterpart when the event arrived on the sink.
+        if placement.is_none() {
+            if let (Some(reference), Some(fields)) =
+                (counterpart_ref.as_ref(), counterpart.fields.as_ref())
+            {
+                let facts = self.entity_facts(&mapping, &reference.kind, fields)?;
+                placement =
+                    Some(self.placement(&mapping, reference, fields, link.as_ref(), &facts)?);
+            }
+        }
+        // A pair a route would have moved is reported, never relocated: moving a paired
+        // copy means deleting the one on the other side, and its history with it.
+        if let Some(placement) = &placement {
+            if placement.would_move() {
+                let pair = counterpart_ref
+                    .as_ref()
+                    .map(|other| match side {
+                        Side::Source => format!("{} <-> {}", subject.describe(), other.describe()),
+                        Side::Sink => format!("{} <-> {}", other.describe(), subject.describe()),
+                    })
+                    .unwrap_or_else(|| subject.describe());
+                log::warn!(
+                    "mapping `{}`: {} is mirrored in `{}`, but its project now routes to `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
+                    mapping.name,
+                    pair,
+                    placement.scope,
+                    placement.routed.as_deref().unwrap_or("-"),
+                    placement.scope
+                );
+            }
+        }
 
         // What the target can hold, and where an identity has no counterpart. Read
         // from the target's own capabilities rather than assumed, and computed before
@@ -372,6 +488,149 @@ impl ReconcileHandler {
             },
             step,
         )
+    }
+
+    /// Where an entity's mirror belongs on the sink, and what says so.
+    ///
+    /// `source` is the entity as the *source* platform holds it and `fields` its
+    /// fields - whichever end of the mapping the event arrived on, because a delivery
+    /// on the sink still says something about the same source entity. Closest to pure:
+    /// the only I/O is reading the container's pairing, which the rules need to know
+    /// whether a mirrored project already lives somewhere.
+    fn placement(
+        &mut self,
+        mapping: &Mapping,
+        source: &EntityRef,
+        fields: &IssueFields,
+        pair: Option<&Link>,
+        container: &ContainerFacts,
+    ) -> Result<Placement> {
+        // The sink side of this entity's own pairing, when it has one: a pair never
+        // moves repos, so this pins the entity wherever the mirror already is.
+        let paired = pair
+            .and_then(|link| link.counterpart(source))
+            .filter(|other| other.connector == mapping.sink.connector)
+            .and_then(|other| other.scope.clone());
+
+        // The container an issue names, resolved through the container's *pairing*
+        // first: a mirrored project knows the repository its board lives in. Its
+        // identity - the id the issue names it by, plus the slug and name resolved
+        // for the container - is what a `project` route matches, so an issue
+        // inherits a route that names its project by slug or name, not only by id.
+        let container_id = (source.kind == EntityKind::Issue)
+            .then(|| fields.project.clone())
+            .flatten();
+        let (container_paired, container_identity) = match &container_id {
+            Some(id) => {
+                let project = EntityRef {
+                    connector: mapping.source.connector.clone(),
+                    kind: EntityKind::Project,
+                    scope: Some(mapping.source.scope.clone()),
+                    native_id: id.clone(),
+                    url: None,
+                };
+                let paired_scope = self
+                    .store
+                    .find_link(&project, &mapping.sink.connector)?
+                    .and_then(|link| link.counterpart(&project).cloned())
+                    .filter(|other| other.connector == mapping.sink.connector)
+                    .and_then(|other| other.scope);
+                (
+                    paired_scope,
+                    Some(Identity {
+                        id: id.as_str(),
+                        slug: container.slug.as_deref(),
+                        name: container.name.as_deref(),
+                    }),
+                )
+            }
+            None => (None, None),
+        };
+
+        // A container is routed by its own identity; a contained entity by its
+        // container's project, then its own identifier, then its labels.
+        let own = (source.kind == EntityKind::Project).then_some(Identity {
+            id: source.native_id.as_str(),
+            slug: fields.slug.as_deref(),
+            name: Some(fields.title.as_str()),
+        });
+        // The key an `issue` rule names the entity by: the identifier a person sees,
+        // falling back to the platform id when the platform exposes no other.
+        let issue_key = (source.kind == EntityKind::Issue).then(|| {
+            fields
+                .identifier
+                .as_deref()
+                .unwrap_or(source.native_id.as_str())
+        });
+
+        Ok(crate::reconcile::route::place(
+            &mapping.routes,
+            mapping.sink_location.as_ref(),
+            &mapping.sink.scope,
+            crate::reconcile::route::Entity {
+                paired: paired.as_deref(),
+                container_paired: container_paired.as_deref(),
+                container: container_identity,
+                own,
+                issue: issue_key,
+                labels: &fields.labels,
+                links: &container.links,
+            },
+        ))
+    }
+
+    /// The routing facts about an entity's container, for the `project` rule and the
+    /// sink-platform link step: a contained entity uses its project's, a container its
+    /// own. A project is read once and its slug and name are carried out alongside its
+    /// links, so a `project` rule can match it by any of the three - not by id alone.
+    fn entity_facts(
+        &mut self,
+        mapping: &Mapping,
+        kind: &EntityKind,
+        fields: &IssueFields,
+    ) -> Result<ContainerFacts> {
+        match kind {
+            EntityKind::Project => Ok(ContainerFacts {
+                slug: fields.slug.clone(),
+                name: Some(fields.title.clone()),
+                links: fields.links.clone(),
+            }),
+            EntityKind::Issue => self.project_facts(mapping, fields.project.as_deref()),
+            _ => Ok(ContainerFacts::default()),
+        }
+    }
+
+    /// A source project's routing facts, fetched once.
+    ///
+    /// A no-op unless the sink declares a URL shape to match (otherwise a fetch would
+    /// be wasted) and the entity names a project. A project the source no longer has,
+    /// or one that declares nothing, yields no facts - never an error. A project whose
+    /// slug and name cannot be read this way degrades to an id-only identity.
+    fn project_facts(
+        &mut self,
+        mapping: &Mapping,
+        project: Option<&str>,
+    ) -> Result<ContainerFacts> {
+        if mapping.sink_location.is_none() {
+            return Ok(ContainerFacts::default());
+        }
+        let Some(project) = project else {
+            return Ok(ContainerFacts::default());
+        };
+        let snapshot = self.snapshot(
+            &EntityKind::Project,
+            &mapping.source.connector,
+            &mapping.source.scope,
+            project,
+        )?;
+        Ok(snapshot
+            .fields
+            .map(|fields| ContainerFacts {
+                slug: fields.slug,
+                name: Some(fields.title),
+                links: fields.links,
+            })
+            .unwrap_or_default())
     }
 
     /// Carry out one pair's step.
@@ -645,28 +904,85 @@ impl ReconcileHandler {
     pub fn survey(&mut self, index: usize) -> Result<Survey> {
         let mapping = self.mappings[index].clone();
         let issues_source = self.list_end(&mapping.source, &EntityKind::Issue)?;
-        let issues_sink = self.list_end(&mapping.sink, &EntityKind::Issue)?;
 
         // Projects are a second collection behind their own switch. A deployment that
         // never asked for them must not so much as list them, or a sweep would start
         // proposing project writes it was never configured for.
-        let (projects_source, projects_sink) = if mapping.policy.sync_projects {
-            (
-                self.list_end(&mapping.source, &EntityKind::Project)?,
-                self.list_end(&mapping.sink, &EntityKind::Project)?,
-            )
+        let projects_source = if mapping.policy.sync_projects {
+            self.list_end(&mapping.source, &EntityKind::Project)?
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
 
-        // Links are gathered from every entity either sweep will judge: an issue link
-        // and a project link live in the same table, keyed by identity, so the one
-        // lookup serves both.
-        let mut found: Vec<Found> = Vec::new();
-        found.extend(issues_source.iter().cloned());
-        found.extend(issues_sink.iter().cloned());
+        // Group the source entities by the sink scope their mirror belongs in. Each
+        // group is compared against *that* scope's contents and no other repository's.
+        // A project's declared locations are needed to resolve an issue's repo from a
+        // link, and its slug and name to route it by name rather than only by id; the
+        // projects already listed seed the cache, and one that was not listed is
+        // fetched once and remembered.
+        let mut project_facts: BTreeMap<String, ContainerFacts> = projects_source
+            .iter()
+            .map(|found| {
+                (
+                    found.reference.native_id.clone(),
+                    ContainerFacts {
+                        slug: found.fields.slug.clone(),
+                        name: Some(found.fields.title.clone()),
+                        links: found.fields.links.clone(),
+                    },
+                )
+            })
+            .collect();
+        let mut issue_groups: BTreeMap<String, Vec<Found>> = BTreeMap::new();
+        for found in &issues_source {
+            issue_groups
+                .entry(self.found_scope(&mapping, found, &mut project_facts)?)
+                .or_default()
+                .push(found.clone());
+        }
+        let mut project_groups: BTreeMap<String, Vec<Found>> = BTreeMap::new();
+        for found in &projects_source {
+            project_groups
+                .entry(self.found_scope(&mapping, found, &mut project_facts)?)
+                .or_default()
+                .push(found.clone());
+        }
+
+        // The sink scopes to read: the mapping's default, every route's, and every
+        // scope a group resolved to (a pairing may have pinned an entity to a scope no
+        // route names any more).
+        let mut scopes: Vec<String> = mapping
+            .sink_scopes()
+            .iter()
+            .map(|scope| scope.to_string())
+            .collect();
+        for group in issue_groups.keys().chain(project_groups.keys()) {
+            if !scopes.iter().any(|scope| scope.eq_ignore_ascii_case(group)) {
+                scopes.push(group.clone());
+            }
+        }
+
+        // Read every scope once, of each kind. The source is listed once, above; the
+        // sink is listed per scope so each entity is compared against its own.
+        let mut sink_issues: BTreeMap<String, Vec<Found>> = BTreeMap::new();
+        let mut sink_projects: BTreeMap<String, Vec<Found>> = BTreeMap::new();
+        for scope in &scopes {
+            let end = Endpoint {
+                connector: mapping.sink.connector.clone(),
+                scope: scope.clone(),
+            };
+            sink_issues.insert(scope.clone(), self.list_end(&end, &EntityKind::Issue)?);
+            if mapping.policy.sync_projects {
+                sink_projects.insert(scope.clone(), self.list_end(&end, &EntityKind::Project)?);
+            }
+        }
+
+        // Links are gathered from every source entity a sweep will judge: an issue link
+        // and a project link live in the same table, keyed by identity, so one lookup
+        // serves both. Pairing by link is what lets a sweep recognise a copy whose repo
+        // the config has since changed, instead of duplicating it.
+        let mut found: Vec<Found> = issues_source.clone();
         found.extend(projects_source.iter().cloned());
-        found.extend(projects_sink.iter().cloned());
         let links = self.links_among(&found)?;
 
         let source_caps = self.sink(&mapping.source.connector)?.capabilities();
@@ -678,44 +994,125 @@ impl ReconcileHandler {
             sink: describe_end(&mapping.sink),
             entries: Vec::new(),
         };
-        for pairing in sweep::pair_up(
-            &issues_source,
-            &issues_sink,
-            &mapping.sink.connector,
-            &links,
-        ) {
-            survey
-                .entries
-                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps)?);
+
+        let empty: Vec<Found> = Vec::new();
+        for scope in &scopes {
+            let ends = Ends {
+                source: &source_caps,
+                sink: &sink_caps,
+                sink_scope: scope,
+            };
+            let group = issue_groups.get(scope).unwrap_or(&empty);
+            let sinks = sink_issues.get(scope).cloned().unwrap_or_default();
+            for pairing in sweep::pair_up(group, &sinks, &mapping.sink.connector, &links) {
+                survey.entries.push(self.judge(&mapping, &pairing, ends)?);
+            }
         }
-        for pairing in sweep::pair_up(
-            &projects_source,
-            &projects_sink,
-            &mapping.sink.connector,
-            &links,
-        ) {
-            survey
-                .entries
-                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps)?);
+        for scope in &scopes {
+            if !mapping.policy.sync_projects {
+                continue;
+            }
+            let ends = Ends {
+                source: &source_caps,
+                sink: &sink_caps,
+                sink_scope: scope,
+            };
+            let group = project_groups.get(scope).unwrap_or(&empty);
+            let sinks = sink_projects.get(scope).cloned().unwrap_or_default();
+            for pairing in sweep::pair_up(group, &sinks, &mapping.sink.connector, &links) {
+                survey.entries.push(self.judge(&mapping, &pairing, ends)?);
+            }
         }
         Ok(survey)
+    }
+
+    /// The sink scope a source entity's mirror belongs in, for grouping a sweep.
+    ///
+    /// `found_facts` caches each project's routing facts, so a sweep reads a project
+    /// once however many of its issues it judges.
+    fn found_scope(
+        &mut self,
+        mapping: &Mapping,
+        found: &Found,
+        project_facts: &mut BTreeMap<String, ContainerFacts>,
+    ) -> Result<String> {
+        let link = self
+            .store
+            .find_link(&found.reference, &mapping.sink.connector)?;
+        let facts = self.found_facts(mapping, found, project_facts)?;
+        Ok(self
+            .placement(
+                mapping,
+                &found.reference,
+                &found.fields,
+                link.as_ref(),
+                &facts,
+            )?
+            .scope)
+    }
+
+    /// The routing facts of a source entity's container (a project's own, or its
+    /// project's), with the sweep's per-project cache.
+    fn found_facts(
+        &mut self,
+        mapping: &Mapping,
+        found: &Found,
+        project_facts: &mut BTreeMap<String, ContainerFacts>,
+    ) -> Result<ContainerFacts> {
+        match found.reference.kind {
+            EntityKind::Project => Ok(ContainerFacts {
+                slug: found.fields.slug.clone(),
+                name: Some(found.fields.title.clone()),
+                links: found.fields.links.clone(),
+            }),
+            EntityKind::Issue => {
+                let Some(project) = found.fields.project.clone() else {
+                    return Ok(ContainerFacts::default());
+                };
+                if let Some(facts) = project_facts.get(&project) {
+                    return Ok(facts.clone());
+                }
+                let facts = self.project_facts(mapping, Some(&project))?;
+                project_facts.insert(project, facts.clone());
+                Ok(facts)
+            }
+            _ => Ok(ContainerFacts::default()),
+        }
     }
 
     /// Carry out a survey. The only place a sweep writes anything.
     pub fn apply_survey(&mut self, index: usize, survey: &Survey) -> Result<usize> {
         let mapping = self.mappings[index].clone();
         let mut written = 0;
-        for entry in &survey.entries {
+        // Containers before their contents: a project this sweep creates is paired by
+        // the time its issues are written, so an issue whose project is being created
+        // alongside it lands on the new board in this same pass rather than waiting for
+        // the next. The relative order within each group is kept.
+        let mut order: Vec<usize> = (0..survey.entries.len()).collect();
+        order.sort_by_key(|&position| {
+            let entry = &survey.entries[position];
+            let creates_project = matches!(entry.step.as_ref(), Some(Step::Create { .. }))
+                && entry.subject.kind == EntityKind::Project;
+            !creates_project
+        });
+        for position in order {
+            let entry = &survey.entries[position];
             match &entry.step {
                 Some(step) => {
+                    // The entry's own scope, not the mapping's default: a routed issue
+                    // is written to the repository its project resolves to.
                     let there = match entry.side {
-                        Side::Source => &mapping.sink,
-                        Side::Sink => &mapping.source,
+                        Side::Source => Endpoint {
+                            connector: mapping.sink.connector.clone(),
+                            scope: entry.sink_scope.clone(),
+                        },
+                        Side::Sink => mapping.source.clone(),
                     };
+                    let step = self.resolve_container(&mapping, entry, step.clone())?;
                     self.carry_out(
                         &Pair {
                             mapping: &mapping.name,
-                            there,
+                            there: &there,
                             names_there: mapping.policy.names.of(entry.side.other()),
                             subject: &entry.subject,
                             counterpart: entry.counterpart.as_ref(),
@@ -724,7 +1121,7 @@ impl ReconcileHandler {
                             counterpart_state: entry.counterpart_state.as_deref(),
                             project_mirroring: there.connector == mapping.sink.connector,
                         },
-                        step.clone(),
+                        step,
                     )?;
                     written += 1;
                 }
@@ -742,6 +1139,41 @@ impl ReconcileHandler {
             }
         }
         Ok(written)
+    }
+
+    /// The step with an issue's container resolved to the sink's own project id.
+    ///
+    /// A sweep plans an issue before the project it names may be paired - a project
+    /// the same sweep creates has no sink id when the plan is made - so the project
+    /// id is resolved here, at the write, once containers have been carried out. A
+    /// project still unknown resolves to nothing and the issue is written where it
+    /// would have been, exactly as before.
+    fn resolve_container(
+        &mut self,
+        mapping: &Mapping,
+        entry: &Entry,
+        mut step: Step,
+    ) -> Result<Step> {
+        if entry.subject.kind != EntityKind::Issue {
+            return Ok(step);
+        }
+        let Some(source_project) = entry.source_project.as_deref() else {
+            return Ok(step);
+        };
+        let project = self.project_on(
+            &mapping.source,
+            &mapping.sink.connector,
+            Some(source_project),
+        )?;
+        if let Some(project) = project {
+            match &mut step {
+                Step::Create { fields, .. } | Step::Update { fields, .. } => {
+                    fields.project = Some(project);
+                }
+                _ => {}
+            }
+        }
+        Ok(step)
     }
 
     /// Everything one end of a mapping holds, of one kind.
@@ -790,19 +1222,12 @@ impl ReconcileHandler {
         &mut self,
         mapping: &Mapping,
         pairing: &sweep::Pairing,
-        source_caps: &Capabilities,
-        sink_caps: &Capabilities,
+        ends: Ends<'_>,
     ) -> Result<Entry> {
         match (pairing.source.as_ref(), pairing.sink.as_ref()) {
-            (Some(source), Some(sink)) => {
-                self.judge_pair(mapping, pairing, source, sink, source_caps, sink_caps)
-            }
-            (Some(source), None) => {
-                self.judge_single(mapping, source, Side::Source, source_caps, sink_caps)
-            }
-            (None, Some(sink)) => {
-                self.judge_single(mapping, sink, Side::Sink, source_caps, sink_caps)
-            }
+            (Some(source), Some(sink)) => self.judge_pair(mapping, pairing, source, sink, ends),
+            (Some(source), None) => self.judge_single(mapping, source, Side::Source, ends),
+            (None, Some(sink)) => self.judge_single(mapping, sink, Side::Sink, ends),
             (None, None) => unreachable!("a pairing names at least one entity"),
         }
     }
@@ -814,9 +1239,9 @@ impl ReconcileHandler {
         pairing: &sweep::Pairing,
         source: &Found,
         sink: &Found,
-        source_caps: &Capabilities,
-        sink_caps: &Capabilities,
+        ends: Ends<'_>,
     ) -> Result<Entry> {
+        let (source_caps, sink_caps, sink_scope) = (ends.source, ends.sink, ends.sink_scope);
         let source_names = mapping.policy.names.of(Side::Source);
         let sink_names = mapping.policy.names.of(Side::Sink);
 
@@ -881,23 +1306,29 @@ impl ReconcileHandler {
                 },
             ) {
                 sweep::Verdict::InStep => {
-                    return Ok(in_step(source, sink, &source_as_sink.fields, sink_names))
+                    return Ok(in_step(
+                        source,
+                        sink,
+                        &source_as_sink.fields,
+                        sink_names,
+                        sink_scope,
+                    ))
                 }
-                sweep::Verdict::Conflict => return Ok(conflict(source, sink)),
+                sweep::Verdict::Conflict => return Ok(conflict(source, sink, sink_scope)),
                 sweep::Verdict::Moved(side) => side,
                 sweep::Verdict::Adopted => Side::Source,
             },
             _ => Side::Source,
         };
 
-        let (observed, counterpart, expected, target) = match winner {
-            Side::Source => (source, sink, &source_as_sink, sink_caps),
+        let (observed, counterpart, expected) = match winner {
+            Side::Source => (source, sink, &source_as_sink),
             Side::Sink => {
                 // Writing back to the source: the container belongs to the sink, so
                 // it is not a difference the source is asked to resolve. Taking the
                 // source's own value makes the diff leave it alone.
                 sink_as_source.fields.project = source.fields.project.clone();
-                (sink, source, &sink_as_source, source_caps)
+                (sink, source, &sink_as_source)
             }
         };
         Ok(decide(
@@ -906,7 +1337,7 @@ impl ReconcileHandler {
             observed,
             Some(counterpart),
             expected,
-            target,
+            ends,
             recorded.as_deref(),
         ))
     }
@@ -917,9 +1348,9 @@ impl ReconcileHandler {
         mapping: &Mapping,
         found: &Found,
         side: Side,
-        source_caps: &Capabilities,
-        sink_caps: &Capabilities,
+        ends: Ends<'_>,
     ) -> Result<Entry> {
+        let (source_caps, sink_caps, sink_scope) = (ends.source, ends.sink, ends.sink_scope);
         let not_mirrored = |why: &str| Entry {
             subject: found.reference.clone(),
             side,
@@ -930,6 +1361,8 @@ impl ReconcileHandler {
             },
             step: None,
             record: None,
+            sink_scope: sink_scope.to_string(),
+            source_project: None,
         };
         if !mapping.policy.direction.allows(side) {
             return Ok(not_mirrored("the mapping only mirrors the other way"));
@@ -955,15 +1388,7 @@ impl ReconcileHandler {
         } else {
             expected.fields.project = None;
         }
-        Ok(decide(
-            mapping,
-            side,
-            found,
-            None,
-            &expected,
-            target_caps,
-            None,
-        ))
+        Ok(decide(mapping, side, found, None, &expected, ends, None))
     }
 
     /// Say what did not travel, once per delivery, at a level an operator sees.
@@ -1259,7 +1684,13 @@ fn describe_nothing(reason: Nothing) -> &'static str {
 ///
 /// It still records a revision, so the next sweep has a baseline rather than asking
 /// "who moved?" about two sides it cannot date.
-fn in_step(source: &Found, sink: &Found, expected: &IssueFields, sink_names: &StateNames) -> Entry {
+fn in_step(
+    source: &Found,
+    sink: &Found,
+    expected: &IssueFields,
+    sink_names: &StateNames,
+    sink_scope: &str,
+) -> Entry {
     Entry {
         subject: source.reference.clone(),
         side: Side::Source,
@@ -1268,11 +1699,13 @@ fn in_step(source: &Found, sink: &Found, expected: &IssueFields, sink_names: &St
         action: Action::InStep,
         step: None,
         record: Some(content_key(expected, sink.state.as_deref(), sink_names)),
+        sink_scope: sink_scope.to_string(),
+        source_project: None,
     }
 }
 
 /// Both ends changed since the bridge last wrote: reported, never resolved.
-fn conflict(source: &Found, sink: &Found) -> Entry {
+fn conflict(source: &Found, sink: &Found, sink_scope: &str) -> Entry {
     Entry {
         subject: source.reference.clone(),
         side: Side::Source,
@@ -1281,6 +1714,8 @@ fn conflict(source: &Found, sink: &Found) -> Entry {
         action: Action::Conflict,
         step: None,
         record: None,
+        sink_scope: sink_scope.to_string(),
+        source_project: None,
     }
 }
 
@@ -1291,9 +1726,14 @@ fn decide(
     observed: &Found,
     counterpart: Option<&Found>,
     expected: &Projected,
-    target: &Capabilities,
+    ends: Ends<'_>,
     recorded: Option<&str>,
 ) -> Entry {
+    // The target is the winner's *other* end: the platform the step writes to.
+    let target = match winner {
+        Side::Source => ends.sink,
+        Side::Sink => ends.source,
+    };
     let counterpart_state = counterpart.and_then(|found| found.state.clone());
     let counterpart_snapshot = match counterpart {
         Some(found) => Snapshot::present(found.fields.clone(), found.state.clone()),
@@ -1358,6 +1798,12 @@ fn decide(
         action,
         step: (!matches!(step, Step::Nothing(_))).then_some(step),
         record,
+        sink_scope: ends.sink_scope.to_string(),
+        // Only an issue the source side names a project for, being written to the
+        // sink: the id is resolved to the sink's own when the write is carried out.
+        source_project: (winner == Side::Source && observed.reference.kind == EntityKind::Issue)
+            .then(|| observed.fields.project.clone())
+            .flatten(),
     }
 }
 
@@ -1407,6 +1853,8 @@ mod tests {
             source: endpoint("linear:VED"),
             sink: endpoint("forgejo:Vedaru/linear-cli-rs"),
             users: UserMap::default(),
+            routes: Routes::default(),
+            sink_location: None,
             policy: default_policy(Sides::new(
                 StateNames {
                     closed: vec!["Done".into(), "Canceled".into()],
@@ -1465,6 +1913,29 @@ mod tests {
             mapping.side_of(&event("forgejo", "vedaru/linear-cli-rs")),
             Some(Side::Sink)
         );
+    }
+
+    #[test]
+    fn a_mapping_claims_an_event_from_a_routed_scope() {
+        // A routed repository is still this mapping's: an event from it must be
+        // claimed here rather than nowhere.
+        let mut mapping = mapping();
+        mapping.routes = Routes::new(vec![crate::reconcile::route::Route {
+            project: Some("project-kuro".into()),
+            issue: None,
+            label: None,
+            scope: "Vedaru/kuro".into(),
+        }]);
+        assert_eq!(
+            mapping.sink_scopes(),
+            vec!["Vedaru/linear-cli-rs", "Vedaru/kuro"]
+        );
+        assert_eq!(
+            mapping.side_of(&event("forgejo", "Vedaru/kuro")),
+            Some(Side::Sink)
+        );
+        // A repository nobody routed is still nobody's.
+        assert_eq!(mapping.side_of(&event("forgejo", "Vedaru/other")), None);
     }
 
     #[test]

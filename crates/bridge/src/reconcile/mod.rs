@@ -23,9 +23,11 @@
 
 pub mod handler;
 pub mod projection;
+pub mod route;
 pub mod survey;
 pub mod sweep;
 
+pub use route::{Entity, Identity, Location, Origin, Placement, Route, Routes};
 pub use survey::{Action, Entry, Survey};
 
 use crate::domain::{
@@ -870,6 +872,9 @@ mod tests {
             due_date: None,
             assignee: None,
             project: None,
+            slug: None,
+            identifier: None,
+            links: Vec::new(),
         }
     }
 

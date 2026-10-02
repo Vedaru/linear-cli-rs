@@ -267,6 +267,8 @@ impl Harness {
             source: Endpoint::parse("linear:VED").expect("an endpoint"),
             sink: Endpoint::parse(&format!("forgejo:{SCOPE}")).expect("an endpoint"),
             users: UserMap::default(),
+            routes: Default::default(),
+            sink_location: Default::default(),
             policy: policy(),
         };
         let path = std::env::temp_dir().join(format!(
