@@ -21,6 +21,7 @@ use crate::commands::webhook::serve::config_source;
 use crate::errors::{CliError, Result};
 use crate::output;
 
+mod link;
 mod status;
 
 #[derive(Args, Debug)]
@@ -46,11 +47,14 @@ pub struct SyncArgs {
 pub enum SyncCommand {
     /// What the store holds, and what the queue has given up on.
     Status(status::StatusArgs),
+    /// Record that two entities are the same, so the engine stops treating them as strangers
+    Link(link::LinkArgs),
 }
 
 pub fn run(args: SyncArgs) -> Result<()> {
     match args.command {
         Some(SyncCommand::Status(status_args)) => status::run(status_args),
+        Some(SyncCommand::Link(link_args)) => link::run(link_args),
         // No subcommand is the sweep, which is what `linear sync` has always meant. A sweep
         // is the thing you run repeatedly, so it should not have to be spelled out.
         None => sweep(args),

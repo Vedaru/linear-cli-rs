@@ -13,7 +13,7 @@ pub mod references;
 mod secret;
 
 pub use capability::{Capabilities, Field, StateModel};
-pub use entity::{Actor, EntityKind, EntityRef};
+pub use entity::{parse_entity_address, Actor, EntityKind, EntityRef};
 pub use event::{Action, DeliveryId, Event, EventDetail};
 pub use fields::{
     canonical_labels, diff, due_date_to_label, is_due_date_label, is_priority_label,

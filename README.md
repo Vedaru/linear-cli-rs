@@ -214,6 +214,7 @@ linear webhook replay 41          # run a stored delivery again, as the provider
 linear sync                       # or work on demand, with no service at all:
 linear sync --apply               #   the plan, and then the plan carried out
 linear sync status                # what the store holds, and what it gave up on
+linear sync link linear:VED#a-uuid forgejo:Vedaru/linear-cli-rs#7   # these two are the same
 ```
 
 `linear sync` is the same engine driven by a command instead of by a delivery: it reads
@@ -227,6 +228,15 @@ drained or filled, which look identical from outside because both answer a webho
 and neither writes anything. It reads the same store the service writes, prints the queue and
 the mappings, and lists the deliveries the queue gave up on with the error that stopped each
 one. A store it cannot read is a failure, not a zero.
+
+`linear sync link` is the one statement the engine cannot make for itself. It pairs two entities
+by hand, which matters for a pair that already existed on both sides before anyone started
+mirroring: the engine pairs what it created (a marker in the body) or what it has written across
+(a link it recorded), and two pre-existing entities have neither, so it can only treat them as
+strangers and make a second copy. The link it records carries **no** revision, which is what makes
+the sweep treat the pair as adopted - and adopt means the mapping's *source* side wins wherever
+the two differ, because that is what source means. The command says which side that is rather
+than leaving it to be discovered.
 
 `linear webhook replay <id>` is for after the fix: the store keeps every delivery's raw body,
 so a delivery can be run again against exactly what the provider sent rather than against what

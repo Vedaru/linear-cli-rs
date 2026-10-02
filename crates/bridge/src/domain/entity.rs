@@ -82,10 +82,101 @@ impl EntityRef {
     /// that a pair the bridge itself recorded is not a pair - which is exactly how
     /// a mirror ends up creating a second copy of everything it has already
     /// mirrored.
+    /// The entity as an operator writes it: `connector:scope#id`, or `connector#id` when it has
+    /// no scope. The scope is part of the address because an id is only unique within one - a
+    /// forge issue number means nothing without the repository it is a number in.
+    pub fn describe(&self) -> String {
+        match &self.scope {
+            Some(scope) if !scope.is_empty() => {
+                format!("{}:{scope}#{}", self.connector.as_str(), self.native_id)
+            }
+            _ => format!("{}#{}", self.connector.as_str(), self.native_id),
+        }
+    }
+
     pub fn same_entity(&self, other: &EntityRef) -> bool {
         self.connector == other.connector
             && self.kind == other.kind
             && self.scope == other.scope
             && self.native_id == other.native_id
+    }
+}
+
+/// The entity an address names: `connector:scope#id`, or `connector#id` without a scope.
+///
+/// The inverse of [`EntityRef::describe`], so an address a command printed can be pasted into
+/// one that acts on it. The kind defaults to an issue because that is what a pairing is about:
+/// the reconciler mirrors issues, and a link between two of anything else is not one it reads.
+pub fn parse_entity_address(value: &str) -> Result<EntityRef, String> {
+    let (where_, native_id) = value.split_once('#').ok_or_else(|| {
+        format!("`{value}` must be `connector:scope#id`, e.g. `linear:VED#a-uuid`")
+    })?;
+    if native_id.is_empty() {
+        return Err(format!("`{value}` names no entity after `#`"));
+    }
+    let (connector, scope) = match where_.split_once(':') {
+        Some((connector, scope)) => (connector, Some(scope.to_string())),
+        None => (where_, None),
+    };
+    if connector.is_empty() {
+        return Err(format!("`{value}` names no connector"));
+    }
+    let mut entity = EntityRef::new(
+        ConnectorId::new(connector),
+        EntityKind::Issue,
+        native_id.to_string(),
+    );
+    if let Some(scope) = scope {
+        if scope.is_empty() {
+            return Err(format!("`{value}` names no scope after `:`"));
+        }
+        entity = entity.with_scope(scope);
+    }
+    Ok(entity)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_address_round_trips_through_its_description() {
+        // The reason the pair exists: a command that prints an address prints one another can
+        // act on, rather than one a human has to translate.
+        for address in [
+            "linear:VED#a-uuid",
+            "forgejo:Vedaru/linear-cli-rs#7",
+            "forgejo#7",
+        ] {
+            let entity = parse_entity_address(address).unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(entity.describe(), address);
+        }
+    }
+
+    #[test]
+    fn an_address_that_names_nothing_says_which_part_is_missing() {
+        // Each of these is a thing someone types. Naming the part that is missing is the
+        // difference between fixing it and re-reading the doc.
+        for (address, expected) in [
+            ("linear-VED-123", "connector:scope#id"),
+            ("linear:VED#", "names no entity"),
+            ("linear:#a-uuid", "names no scope"),
+            (":VED#a-uuid", "names no connector"),
+        ] {
+            let error = parse_entity_address(address).unwrap_err();
+            assert!(
+                error.contains(expected),
+                "`{address}` should say `{expected}`, said `{error}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pairing_is_about_issues() {
+        // What a link is for: the reconciler mirrors issues, so an address without a kind is an
+        // issue rather than a guess.
+        let entity = parse_entity_address("linear:VED#a-uuid").unwrap();
+        assert_eq!(entity.kind, EntityKind::Issue);
     }
 }
