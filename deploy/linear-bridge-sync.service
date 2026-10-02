@@ -1,0 +1,16 @@
+[Unit]
+Description=Pull Linear's changes into the mirror, once
+Documentation=file:%h/.config/systemd/user/linear-bridge.service
+After=network-online.target
+
+[Service]
+Type=oneshot
+# `--apply`: a timer run writes. The same sweep without it is a dry run you can run by hand.
+ExecStart=%h/.local/bin/linear sync --apply --config %h/.config/linear/linear.toml
+EnvironmentFile=%h/.config/linear-bridge/secrets.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/linear-bridge

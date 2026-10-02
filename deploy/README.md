@@ -4,14 +4,50 @@ One binary, one config file, one environment file. The binary is the release ass
 what `linear config service` printed, with the placeholders filled in; the environment file holds
 the secrets the config only names.
 
+The binary is a release asset. Fetch it over **loopback**, not over the public hostname: the
+hostname is behind the login page, so a `curl` there downloads an HTML login form.
+
 ```sh
-install -Dm755 linear ~/.local/bin/linear                     # the release asset
-install -Dm644 deploy/linear-bridge.service ~/.config/systemd/user/linear-bridge.service
-linear config service --team <KEY> --repo <owner>/<name>    # prints the sections to paste
-chmod 600 ~/.config/linear-bridge/secrets.env                 # LINEAR_WEBHOOK_SECRET=... etc
-systemctl --user daemon-reload && systemctl --user enable --now linear-bridge
+cd /tmp
+base=$(curl -s http://127.0.0.1:3000/api/v1/repos/Vedaru/linear-cli-rs/releases/tags/rolling \
+  | python3 -c 'import json,sys; print([a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith(".tar.gz")][0])' \
+  | sed 's|https://git.vedaru.cn|http://127.0.0.1:3000|')
+curl -sSLO "$base" && curl -sSLO "$base.sha256"
+sha256sum -c "$(basename "$base").sha256"
+tar xzf "$(basename "$base")"
+install -Dm755 "$(find . -maxdepth 2 -name linear -type f | head -1)" ~/.local/bin/linear
+linear webhook --help        # "unrecognized subcommand" means an older binary is first on PATH
+```
+
+```sh
+install -Dm644 deploy/linear-bridge.service      ~/.config/systemd/user/linear-bridge.service
+install -Dm644 deploy/linear-bridge-sync.service ~/.config/systemd/user/linear-bridge-sync.service
+install -Dm644 deploy/linear-bridge-sync.timer   ~/.config/systemd/user/linear-bridge-sync.timer
+linear config service --team <KEY> --repo <owner>/<name> >> ~/.config/linear/linear.toml
+install -Dm600 /dev/null ~/.config/linear-bridge/secrets.env  # then fill it in
+systemctl --user daemon-reload
+systemctl --user enable --now linear-bridge                   # Forgejo's deliveries
+systemctl --user enable --now linear-bridge-sync.timer        # Linear's changes, pulled
 loginctl enable-linger "$USER"                                # survive a logout, start at boot
 ```
+
+`secrets.env` holds `LINEAR_API_KEY`, `FORGEJO_TOKEN`, `FORGEJO_WEBHOOK_SECRET` (you choose it;
+the same value goes in the repository's webhook settings) and `LINEAR_WEBHOOK_SECRET` (Linear
+gives you one when you create the webhook). The service wants the Linear secret even before any
+route exists, because Linear is a platform this deployment *accepts deliveries for* - a missing
+secret is a startup error by design, not a surprise on the first webhook.
+
+### Which halves need which
+
+| direction | what it needs |
+| -- | -- |
+| Linear -> forge | **nothing public**: the timer pulls every five minutes, and `Persistent=true` catches up after an outage |
+| forge -> Linear | a webhook from the forge to `http://127.0.0.1:8787/webhooks/forgejo` - no gateway in the way |
+| Linear -> forge, *pushed* | a route that reaches the service from outside, exempted from the login page - see below |
+
+The first two are between machines you already run, and they are the ones worth getting working
+first. The third is Linear calling *you*, and it is optional: the timer covers the same direction
+by asking instead of being told.
 
 Then, in order, the three things that actually decide whether it works:
 

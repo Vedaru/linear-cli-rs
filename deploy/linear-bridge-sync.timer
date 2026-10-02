@@ -1,0 +1,15 @@
+[Unit]
+Description=Pull Linear's changes into the mirror, every five minutes
+
+[Timer]
+# A couple of minutes after boot, then every five. The sweep is idempotent and cheap, and it
+# compares the two ends before writing anything, so a run that finds nothing costs one read per
+# mapping and writes nothing.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# A run that was missed - the machine was off, the network was down - happens once, promptly,
+# rather than being skipped: that is what makes this safe to rely on instead of a webhook.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
