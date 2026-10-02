@@ -135,6 +135,10 @@ jobs:
           SHA: ${{ forge.sha }}
         run: |
           set -euo pipefail
+          # The toolchain is installed with `--no-modify-path`, so cargo is not on the runner's
+          # PATH - the gate step exports this too, and the first run of this step failed here with
+          # `cargo: command not found` *after* a green gate.
+          export PATH="$HOME/.cargo/bin:$PATH"
           src="$RUNNER_TEMP/linear-cli-rs"
           out="$RUNNER_TEMP/dist"
           bins="$RUNNER_TEMP/bins"
