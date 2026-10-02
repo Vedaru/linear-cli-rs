@@ -81,6 +81,101 @@ linear sync status --config ~/.config/linear/linear.toml
 curl -s localhost:8787/healthz               # store liveness and delivery counts
 ```
 
+## Running it as a container
+
+`deploy/Dockerfile` and `deploy/compose.yaml`. The image is built from the **release asset**, not
+from source: nothing is compiled in it, and the binary it carries is the one the pipeline tested.
+
+```sh
+cd ~/Projects/linear-cli-rs                    # or wherever the repo is
+base=$(curl -s http://127.0.0.1:3000/api/v1/repos/Vedaru/linear-cli-rs/releases/tags/rolling \
+  | python3 -c 'import json,sys; print([a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].endswith(".tar.gz")][0])' \
+  | sed 's|https://git.vedaru.cn|http://127.0.0.1:3000|')
+export RELEASE_URL="$base"
+export RELEASE_SHA256="$(curl -s "$base.sha256" | cut -d' ' -f1)"
+export CONFIG_FILE=~/.config/linear/linear.toml
+export SECRETS_FILE=~/.config/linear-bridge/secrets.env
+docker compose -f deploy/compose.yaml up -d
+docker compose -f deploy/compose.yaml logs -f linear-bridge
+```
+
+Two things about this file are not style choices:
+
+- **`network_mode: host`.** Forgejo posts to `http://127.0.0.1:8787` and the bridge calls Forgejo
+  at `http://127.0.0.1:3000`, and both of those are only loopback *because* the container shares
+  the host's network. Published ports (`-p 8787:8787`) put a NAT hop in the way, which is fine for
+  a forge on the same host but is a second thing to explain when something does not arrive.
+- **`network: host` for the build.** The release lives on the server's own Forgejo at
+  `127.0.0.1:3000`, and inside a build container `127.0.0.1` is the *build's* loopback. The public
+  hostname is not a workaround: it is behind the login page, so the download would fetch an HTML
+  form and fail at the checksum - which is itself worth knowing, because that failure is loud only
+  because the digest is verified.
+
+The image is `debian:bookworm-slim` with the binary and `ca-certificates` in it, running as a
+non-root user, with the store on a named volume (`linear-bridge-store`). Its `HEALTHCHECK` is
+`linear sync status`: a container that cannot read its own queue is not healthy, however well the
+process answers.
+
+## Setting up the webhooks
+
+Two webhooks, two directions, and only one of them needs anything public.
+
+### Forgejo -> Linear (no gateway involved)
+
+Repository → **Settings → Webhooks → Add webhook → Forgejo**:
+
+| field | value |
+| -- | -- |
+| Target URL | `http://127.0.0.1:8787/webhooks/forgejo` |
+| HTTP method | `POST` |
+| Secret | the same value you put in `FORGEJO_WEBHOOK_SECRET` |
+| Trigger on | Repository (Push), Issues, Issue comments, Pull requests |
+| Active | yes |
+
+Those four are exactly the events the preset models - `push`, `issues`, `issue_comment`,
+`pull_request` arrive as the `X-Forgejo-Event` header, and nothing else is read.
+
+Then press **Test delivery**. It sends a `ping`, which the bridge accepts (`202`) and correctly
+mirrors as *nothing* - the journal says `delivery N carried no events`, and that is the success
+case: if it says `bad signature` instead, the two secrets differ, and if nothing is logged at all,
+the URL is not reaching the process.
+
+After that, do something real: open an issue in the repository, then
+
+```sh
+linear sync status        # 1 done, 0 dead - and the issue is in your Linear team
+```
+
+### Linear -> Forgejo
+
+Two ways, and the second is why nothing has to be public:
+
+**Pulled (recommended first).** Nothing to configure on Linear's side: the `linear-bridge-sync`
+timer (or the compose `linear-bridge-sync` service) runs `linear sync --apply` every five minutes
+and brings Linear's changes across. Missing a delivery is not possible, because nothing is being
+delivered.
+
+**Pushed.** In Linear: **Settings → API → Webhooks → New webhook**. Set the URL to the route you
+have exposed, copy the **signing secret** it shows into `LINEAR_WEBHOOK_SECRET`, and subscribe to
+Issues (and Comments). Then, before trusting it:
+
+```sh
+curl -i https://<your route>/healthz     # the service's own body, NOT a 302 to a login page
+```
+
+Only after that does Linear's delivery mean anything - a `302` is followed by the platform, read
+as a `200`, and filed as a successful delivery that never happened. Note also that Linear creates
+the webhook before your route exists happily; it will simply report a failing webhook until the
+route answers, so the order above is the one to use.
+
+### When a delivery does not do what you expected
+
+```sh
+docker compose -f deploy/compose.yaml logs linear-bridge     # or: journalctl --user -u linear-bridge -f
+linear sync status                                           # the queue, and what it gave up on
+linear webhook replay <id>                                   # re-run one, on the stored body
+```
+
 ## What the unit already handles
 
 - **Restarts.** `Restart=always`: the process is stateless between deliveries, and the queue is in
