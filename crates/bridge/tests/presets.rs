@@ -111,8 +111,8 @@ fn an_answer_is_chosen_by_what_the_body_asks_for() {
         r#"{"query":"query Issue($id: String!) { issue(id: $id) }"}"#,
     );
     assert!(
-        fetched.contains("VED-123"),
-        "the identifier fetch gets the issue: {fetched}"
+        fetched.contains("VED-2"),
+        "the identifier fetch gets the issue the fixture declares: {fetched}"
     );
 
     let mutated = post(
@@ -123,10 +123,7 @@ fn an_answer_is_chosen_by_what_the_body_asks_for() {
         mutated.contains("attachmentCreate"),
         "the mutation gets its own answer: {mutated}"
     );
-    assert!(
-        !mutated.contains("VED-123"),
-        "and not the fetch's: {mutated}"
-    );
+    assert!(!mutated.contains("VED-2"), "and not the fetch's: {mutated}");
 
     // A request the fixture cannot place says so, naming the method and path, rather than
     // answering with whatever came first.

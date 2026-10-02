@@ -113,7 +113,7 @@ body = '''not json'''
 method = "POST"
 path = "/graphql"
 match = "issue(id: $id)"
-answer = """{"data": {"issue": {"id": "1a2b3c4d-0000-4000-8000-000000000123", "identifier": "VED-123", "url": "http://linear.test/VED-123", "title": "The issue a commit names", "description": "as Linear would describe it", "dueDate": null, "priority": 0, "state": {"name": "Todo"}, "labels": {"nodes": []}, "assignee": null}}}"""
+answer = """{"data": {"issue": {"id": "1a2b3c4d-0000-4000-8000-000000000002", "identifier": "VED-2", "url": "http://linear.test/VED-2", "title": "The issue a commit names", "description": "as Linear would describe it", "dueDate": null, "priority": 0, "state": {"name": "Todo"}, "labels": {"nodes": []}, "assignee": null}}}"""
 
 [[api]]
 method = "POST"

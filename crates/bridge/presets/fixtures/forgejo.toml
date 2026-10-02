@@ -110,11 +110,12 @@ id = "4"
 scope = "a/b"
 reference_text = "Fixes VED-2\n\nwhy"
 closing_keyword = "fixes"
+url = "http://forge/a/b/pulls/4"
 headers = { "X-Forgejo-Event" = "pull_request" }
 body = '''{
   "action": "opened",
   "repository": { "full_name": "a/b" },
-  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why" }
+  "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why", "html_url": "http://forge/a/b/pulls/4" }
 }'''
 
 [[delivery]]
