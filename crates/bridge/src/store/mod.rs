@@ -111,9 +111,9 @@ impl Link {
 
     /// The other end of this link, when `side` is one of them.
     pub fn counterpart(&self, side: &EntityRef) -> Option<&EntityRef> {
-        if &self.left == side {
+        if self.left.same_entity(side) {
             Some(&self.right)
-        } else if &self.right == side {
+        } else if self.right.same_entity(side) {
             Some(&self.left)
         } else {
             None

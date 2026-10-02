@@ -73,6 +73,21 @@ impl EntityRef {
         self.url = url;
         self
     }
+
+    /// True when both point at the same entity on the same platform.
+    ///
+    /// The URL is deliberately **not** part of identity. The same issue arrives
+    /// with a URL in an API response and without one in a webhook payload (or with
+    /// a per-delivery one), and `EntityRef`'s derived equality would then decide
+    /// that a pair the bridge itself recorded is not a pair - which is exactly how
+    /// a mirror ends up creating a second copy of everything it has already
+    /// mirrored.
+    pub fn same_entity(&self, other: &EntityRef) -> bool {
+        self.connector == other.connector
+            && self.kind == other.kind
+            && self.scope == other.scope
+            && self.native_id == other.native_id
+    }
 }
 
 /// A change to apply to an entity, in platform-neutral terms.

@@ -51,6 +51,12 @@ pub enum EventDetail {
     /// Nothing beyond the subject.
     None,
     Comment {
+        /// The comment's own id on the platform that sent it.
+        ///
+        /// A comment is *about* an issue - that is what the subject carries, and
+        /// what a link pairs - so the comment's identity has to live somewhere, and
+        /// the marker needs it to tell a copy of ours from a user's new comment.
+        id: Option<String>,
         body: Option<String>,
     },
     /// Text to mine for issue references - a commit message, a pull-request

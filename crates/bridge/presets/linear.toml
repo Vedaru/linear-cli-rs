@@ -29,8 +29,45 @@ multiple_assignees = false
 native_pull_requests = false
 deletion = true
 
-# One rule covers every Linear event: the event name selects the kind, and an
-# event type this preset does not model still becomes an event of kind
+# An issue event: the subject is the issue itself.
+[[event.rule]]
+match = "Issue"
+kind = "issue"
+[event.rule.fields]
+action = "/action"
+id = "/data/id"
+scope = "/data/team/key"
+url = "/url"
+actor = "/actor/id"
+actor_name = "/actor/name"
+[event.rule.actions]
+create = "created"
+update = "updated"
+remove = "deleted"
+
+# A comment event is *about* its issue. The issue is what a mapping pairs and what
+# the link store knows, so the issue is the subject; the comment's own id travels
+# in the detail and is what goes into the marker written on the copy - which is how
+# that copy is recognised when the other platform announces it.
+[[event.rule]]
+match = "Comment"
+kind = "comment"
+[event.rule.fields]
+action = "/action"
+id = "/data/issue/id"
+comment_id = "/data/id"
+subject_kind = "issue"
+body = "/data/body"
+url = "/url"
+actor = "/actor/id"
+actor_name = "/actor/name"
+[event.rule.actions]
+create = "created"
+update = "updated"
+remove = "deleted"
+
+# One catch-all still covers every Linear event: the event name selects the kind,
+# and an event type this preset does not model still becomes an event of kind
 # `event-name` rather than being dropped, so a new Linear feature is visible in
 # the log instead of silently ignored.
 [[event.rule]]

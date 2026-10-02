@@ -107,9 +107,13 @@ fn linear_comments_carry_their_body() {
     );
     let events = source.parse(&HeaderMap::default(), &body).unwrap();
     assert_eq!(events[0].kind, EntityKind::Comment);
+    // The subject is the issue the comment is on - what a link pairs - and the
+    // comment's own id rides in the detail.
+    assert_eq!(events[0].subject.native_id, "issue-uuid");
     assert_eq!(
         events[0].detail,
         EventDetail::Comment {
+            id: Some("comment-1".into()),
             body: Some("hello".into())
         }
     );
@@ -224,6 +228,7 @@ fn forgejo_comments_and_pull_requests_carry_their_text() {
         "action": "created",
         "repository": { "full_name": "a/b" },
         "sender": { "login": "vedaru" },
+        "issue": { "number": 12 },
         "comment": { "id": 12, "body": "looks good", "html_url": "http://x/c/12" }
     }"#;
     let events = source
@@ -234,6 +239,7 @@ fn forgejo_comments_and_pull_requests_carry_their_text() {
     assert_eq!(
         events[0].detail,
         EventDetail::Comment {
+            id: Some("12".into()),
             body: Some("looks good".into())
         }
     );
@@ -374,7 +380,7 @@ fn gitlab_uses_a_shared_token_instead_of_a_body_signature() {
     assert_eq!(events[0].subject.scope.as_deref(), Some("group/project"));
 
     let note = br#"{
-        "object_attributes": { "action": "create", "id": 5, "note": "hi" },
+        "object_attributes": { "action": "create", "id": 5, "note": "hi", "noteable_id": 9 },
         "project": { "path_with_namespace": "group/project" },
         "user": { "username": "vedaru" }
     }"#;
@@ -382,9 +388,11 @@ fn gitlab_uses_a_shared_token_instead_of_a_body_signature() {
         .parse(&headers(&[("X-Gitlab-Event", "Note Hook")]), note)
         .unwrap();
     assert_eq!(events[0].kind, EntityKind::Comment);
+    assert_eq!(events[0].subject.native_id, "9");
     assert_eq!(
         events[0].detail,
         EventDetail::Comment {
+            id: Some("5".into()),
             body: Some("hi".into())
         }
     );

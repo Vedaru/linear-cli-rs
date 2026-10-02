@@ -232,13 +232,17 @@ fn a_signed_linear_delivery_is_accepted_queued_and_drained() {
     );
 
     // And the worker picks it up: with a logging handler it completes.
+    //
+    // The deadline is generous on purpose: CI runs on the same machine as the
+    // tests, so a build in another job can starve this one for seconds. A tight
+    // boundary here fails for reasons that have nothing to do with the code.
     let mut drained = false;
-    for _ in 0..50 {
+    for _ in 0..200 {
         if store.counts().unwrap().done == 1 {
             drained = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(50));
     }
     assert!(drained, "the worker never drained the delivery");
 }

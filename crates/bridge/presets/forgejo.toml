@@ -48,7 +48,12 @@ match = "issue_comment"
 kind = "comment"
 [event.rule.fields]
 action = "/action"
-id = "/comment/id"
+# The subject is the *issue* the comment is on: that is what a link pairs, and a
+# comment event whose subject were the comment itself would have nothing to look up.
+id = "/issue/number"
+comment_id = "/comment/id"
+# The event is a comment; the entity it points at is an issue.
+subject_kind = "issue"
 scope = "/repository/full_name"
 url = "/comment/html_url"
 actor = "/sender/login"

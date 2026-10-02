@@ -121,6 +121,15 @@ pub struct Fields {
     pub actor_name: Option<String>,
     /// Comment text.
     pub body: Option<String>,
+    /// A comment's own id, when the event is *about* its parent.
+    ///
+    /// A comment delivery carries two ids: the comment's and the issue's. The
+    /// subject is the issue (a link pairs issues, so that is what the reconciler
+    /// looks up), which leaves the comment's own id to be named here.
+    pub comment_id: Option<String>,
+    /// The kind of the entity the subject points at, when it differs from the kind
+    /// of the event itself (`comment` deliveries point at an `issue`).
+    pub subject_kind: Option<String>,
     /// Reference text: all non-empty parts, joined (a title and a body).
     #[serde(default)]
     pub text: Vec<String>,
@@ -267,6 +276,14 @@ impl SourceSpec {
         }
         let mut has_catch_all = false;
         for rule in &self.event.rules {
+            if let Some(kind) = &rule.fields.subject_kind {
+                if Kind::parse(kind).is_none() {
+                    return Err(format!(
+                        "rule `{}` declares an unknown subject_kind `{kind}`",
+                        rule.event
+                    ));
+                }
+            }
             if rule.event.is_empty() {
                 return Err("a rule needs `match` (an event name, or `*`)".into());
             }
@@ -412,7 +429,22 @@ impl DeclarativeSource {
                 ))
             })?;
 
-        let mut subject = EntityRef::new(self.id.clone(), kind.clone(), id);
+        // What the event is *about* is not always what kind of event it is. A
+        // comment delivery is a comment, but the entity it points at is the issue
+        // the comment is on - and that issue is what a link pairs, so the subject
+        // has to be typed as the parent. Getting this wrong makes every pairing
+        // invisible to the reconciler, which then treats a comment as an entity of
+        // its own and finds nothing to attach it to.
+        let subject_kind = match rule.fields.subject_kind.as_deref().and_then(Kind::parse) {
+            Some(Kind::Issue) => EntityKind::Issue,
+            Some(Kind::Comment) => EntityKind::Comment,
+            Some(Kind::Reference) => EntityKind::Reference,
+            // `skip` and `event-name` point at no entity of their own, and neither
+            // does an undeclared subject kind: the event's own kind stands.
+            _ => kind.clone(),
+        };
+
+        let mut subject = EntityRef::new(self.id.clone(), subject_kind, id);
         if let Some(scope) = as_field(item, root, rule.fields.scope.as_deref()) {
             subject = subject.with_scope(scope);
         }
@@ -428,6 +460,7 @@ impl DeclarativeSource {
         let action = self.action_for(rule, item, root);
         let detail = match kind {
             EntityKind::Comment => EventDetail::Comment {
+                id: as_field(item, root, rule.fields.comment_id.as_deref()),
                 body: as_field(item, root, rule.fields.body.as_deref()),
             },
             EntityKind::Reference => EventDetail::Reference {
@@ -589,6 +622,21 @@ impl Source for DeclarativeSource {
     fn capabilities(&self) -> Capabilities {
         self.spec.capabilities.into()
     }
+
+    /// The event name arrived in a header (a forge) or in the body (Linear). Only
+    /// the header case needs rebuilding, and the delivery row kept the name.
+    fn replay_headers(&self, event: &str) -> HeaderMap {
+        if self.spec.event.headers.is_empty() {
+            return HeaderMap::default();
+        }
+        HeaderMap::from_pairs(
+            self.spec
+                .event
+                .headers
+                .iter()
+                .map(|header| (header.clone(), event.to_string())),
+        )
+    }
 }
 
 /// Resolve a pointer against the element, then against the whole document. This
@@ -720,6 +768,7 @@ scope = "/repo"
         assert_eq!(
             events[0].detail,
             EventDetail::Comment {
+                id: None,
                 body: Some("hello".into())
             }
         );

@@ -44,7 +44,13 @@ match = "Note Hook"
 kind = "comment"
 [event.rule.fields]
 action = "/object_attributes/action"
-id = "/object_attributes/id"
+# The subject is the thing the note is on, not the note: a comment has to be able
+# to find the pairing of its parent. GitLab's `noteable_id` is the *global* id of
+# that object while the issue/mr rules above use the project-scoped `iid`, so this
+# rule needs revisiting before GitLab is used as a sink (it has no write half yet).
+id = "/object_attributes/noteable_id"
+comment_id = "/object_attributes/id"
+subject_kind = "issue"
 scope = "/project/path_with_namespace"
 url = "/object_attributes/url"
 actor = "/user/username"

@@ -9,138 +9,14 @@
 //! The assertions are about the request, so the platform has to be boring for a
 //! failure to mean anything.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+mod support;
 
 use serde_json::{json, Value};
-use tiny_http::{Header, Response, Server};
 
-use linear_bridge::domain::{Capabilities, IssueFields, Secret};
-use linear_bridge::sink::declarative::DeclarativeSink;
-use linear_bridge::sink::spec::SinkSpec;
+use linear_bridge::domain::IssueFields;
 use linear_bridge::sink::Sink;
-use linear_bridge::sources::presets;
 
-type Route = fn(&str, &str, &Value) -> (u16, Value);
-
-#[derive(Clone, Debug)]
-struct Recorded {
-    method: String,
-    path: String,
-    body: Value,
-}
-
-/// A fake platform on an ephemeral port.
-struct Fake {
-    base_url: String,
-    seen: Arc<Mutex<Vec<Recorded>>>,
-    shutdown: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Fake {
-    fn start(route: Route) -> Self {
-        let server = Server::http("127.0.0.1:0").expect("a fake platform binds");
-        let base_url = format!("http://{}", server.server_addr());
-        let seen: Arc<Mutex<Vec<Recorded>>> = Arc::new(Mutex::new(Vec::new()));
-        let shutdown = Arc::new(AtomicBool::new(false));
-
-        let thread = {
-            let seen = Arc::clone(&seen);
-            let shutdown = Arc::clone(&shutdown);
-            thread::spawn(move || {
-                while !shutdown.load(Ordering::SeqCst) {
-                    let Ok(Some(mut request)) = server.recv_timeout(Duration::from_millis(25))
-                    else {
-                        continue;
-                    };
-                    let method = request.method().as_str().to_string();
-                    let path = request.url().to_string();
-                    let mut raw = String::new();
-                    let _ = request.as_reader().read_to_string(&mut raw);
-                    let body: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-                    seen.lock().expect("recorded").push(Recorded {
-                        method: method.clone(),
-                        path: path.clone(),
-                        body: body.clone(),
-                    });
-                    let (status, reply) = route(&method, &path, &body);
-                    let header = Header::from_bytes("Content-Type", "application/json")
-                        .expect("a valid header");
-                    let _ = request.respond(
-                        Response::from_string(reply.to_string())
-                            .with_status_code(status)
-                            .with_header(header),
-                    );
-                }
-            })
-        };
-
-        Self {
-            base_url,
-            seen,
-            shutdown,
-            thread: Some(thread),
-        }
-    }
-
-    fn seen(&self) -> Vec<Recorded> {
-        self.seen.lock().expect("recorded").clone()
-    }
-
-    /// The one request with this method and path.
-    fn only(&self, method: &str, path: &str) -> Recorded {
-        let seen = self.seen();
-        let found: Vec<&Recorded> = seen
-            .iter()
-            .filter(|record| record.method == method && record.path == path)
-            .collect();
-        assert_eq!(found.len(), 1, "expected one {method} {path}, got {seen:?}");
-        found[0].clone()
-    }
-
-    /// Every request whose GraphQL query mentions `needle` - how a fake tells
-    /// one mutation from another when they share a path.
-    fn graphql(&self, needle: &str) -> Vec<Recorded> {
-        self.seen()
-            .into_iter()
-            .filter(|record| {
-                record
-                    .body
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .is_some_and(|query| query.contains(needle))
-            })
-            .collect()
-    }
-
-    /// A sink built from a preset, pointed at this fake instead of the real API.
-    fn sink(&self, preset: &str) -> DeclarativeSink {
-        let source = presets::preset(preset).expect("the preset loads");
-        let capabilities: Capabilities = source.capabilities.into();
-        let mut spec: SinkSpec = source.sink.expect("the preset has a write half");
-        // The preset names the real API; only the origin changes here, the path
-        // prefix stays so the assertions are about the preset's own paths.
-        let path = spec.base_url.splitn(4, '/').nth(3).unwrap_or("");
-        spec.base_url = if path.is_empty() {
-            self.base_url.clone()
-        } else {
-            format!("{}/{path}", self.base_url)
-        };
-        DeclarativeSink::new(preset, spec, Some(Secret::new("test-token")), capabilities)
-    }
-}
-
-impl Drop for Fake {
-    fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
+use support::Fake;
 
 fn fields() -> IssueFields {
     IssueFields {

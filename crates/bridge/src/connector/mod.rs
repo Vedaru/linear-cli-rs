@@ -159,6 +159,18 @@ pub trait Source: Send + Sync {
     /// deployment does not model): the delivery is acknowledged, not retried.
     fn parse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject>;
 
+    /// The headers a *stored* delivery needs to be parsed again.
+    ///
+    /// The worker re-parses the raw body, because one delivery can carry several
+    /// events and the stored row keeps only the first one's summary. The body alone
+    /// does not always say what the event was - for a connector whose event name
+    /// arrives in a header, the row's event name is the only record of it, so the
+    /// connector reconstructs the header it needs. The default is honest for a
+    /// connector that reads everything it needs from the body.
+    fn replay_headers(&self, _event: &str) -> HeaderMap {
+        HeaderMap::default()
+    }
+
     fn capabilities(&self) -> Capabilities;
 }
 
