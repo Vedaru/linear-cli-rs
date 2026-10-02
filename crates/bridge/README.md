@@ -265,7 +265,10 @@ preset *reads* but can never write, because that difference can never be resolve
 
 Derived from each preset's `[capabilities]` and kept honest by the suite above. "Emulated"
 means the engine carries the field in the only way that platform has - it is not silently
-dropped.
+dropped: a priority travels as a `priority:*` label, and a due date as a `due:*` one, each
+read back by that platform's own `[sink.issue.read]` rule so both ends still agree about the
+value. A projection that emulates a field says so (`emulated`, distinct from `skipped`, which
+means the value really was lost).
 
 | preset | states | labels | due dates | priority | assignees | references | deletion | sweepable |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

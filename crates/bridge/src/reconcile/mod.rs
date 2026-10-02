@@ -794,6 +794,7 @@ mod tests {
             let expected = self.expected.clone().unwrap_or_else(|| Projected {
                 fields: self.observed.fields.clone().unwrap_or_default(),
                 skipped: Vec::new(),
+                emulated: Vec::new(),
             });
             plan(&Context {
                 event: &self.event,

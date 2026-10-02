@@ -19,8 +19,9 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    canonical_labels, labels_to_priority, normalise_due_date, priority_to_label, Capabilities,
-    Change, ConnectorId, IssueFields, Patch, Secret,
+    canonical_labels, due_date_to_label, labels_to_due_date, labels_to_priority,
+    normalise_due_date, priority_to_label, Capabilities, Change, ConnectorId, IssueFields, Patch,
+    Secret,
 };
 use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
@@ -122,7 +123,11 @@ impl DeclarativeSink {
     /// it is added back here: dropping it would quietly lose the priority of every
     /// issue the moment it crossed to a forge.
     fn outbound_labels(&self, fields: &IssueFields) -> Vec<String> {
-        self.outbound_labels_for(&fields.canonical_labels(), Some(fields.priority))
+        self.outbound_labels_for(
+            &fields.canonical_labels(),
+            Some(fields.priority),
+            fields.due_date.as_deref(),
+        )
     }
 
     /// The label set to send for a given priority.
@@ -130,13 +135,29 @@ impl DeclarativeSink {
     /// The priority is passed separately because on a forge the two are one field:
     /// a write that names the labels and forgets the priority does not omit it, it
     /// *clears* it.
-    fn outbound_labels_for(&self, names: &[String], priority: Option<u8>) -> Vec<String> {
+    fn outbound_labels_for(
+        &self,
+        names: &[String],
+        priority: Option<u8>,
+        due_date: Option<&str>,
+    ) -> Vec<String> {
         let mut labels = canonical_labels(names);
         if !self.capabilities.priorities {
             if let Some(label) = priority.and_then(priority_to_label) {
                 labels.push(label.to_string());
             }
         }
+        // And the same for a due date: the platform has no field for it, so it travels
+        // as a `due:*` label - which is what its read half reads back, so the two ends
+        // still agree about the date instead of one of them silently losing it.
+        if !self.capabilities.due_dates {
+            if let Some(date) = due_date {
+                labels.push(due_date_to_label(date));
+            }
+        }
+        // Order is left alone: the names arrived canonical (sorted, deduped, synthetic
+        // labels removed) and the emulated ones are appended, so resolving them in order
+        // asks the platform for the same ids in the same order every time.
         labels
     }
 
@@ -160,7 +181,7 @@ impl DeclarativeSink {
             values["body"] = json!(body);
         }
         if let Change::Set(names) = &patch.labels {
-            let labels = self.outbound_labels_for(names, call.priority);
+            let labels = self.outbound_labels_for(names, call.priority, call.due_date);
             values["labels"] = json!(labels);
             if uses(&operation.body, "$label_ids") {
                 let mut ids = Vec::with_capacity(labels.len());
@@ -515,6 +536,12 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
             .and_then(|value| value.parse::<u8>().ok())
             .unwrap_or(0),
     };
+    // Same shape as the priority above: the preset says where the value lives, and a
+    // platform with no due-date field says it lives in a `due:*` label.
+    let due_date = match read.due_date.as_ref() {
+        Some(field) if field.from_labels() => labels_to_due_date(&raw_labels),
+        field => normalise_due_date(read_text(body, field).as_deref()),
+    };
     IssueFields {
         // Normalised exactly as the read side normalises an inbound payload, so a
         // field that made it across unchanged reads back unchanged instead of
@@ -527,7 +554,7 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // `0001-01-01T00:00:00Z`, and taken literally that is a due date the source
         // does not have - a difference that never converges, which is the same trap
         // an unwritable assignee sets.
-        due_date: normalise_due_date(read_text(body, read.due_date.as_ref()).as_deref()),
+        due_date,
         assignee: read_text(body, read.assignee.as_ref()),
     }
 }
@@ -676,6 +703,7 @@ impl Sink for DeclarativeSink {
                 .id(id)
                 .patch(patch)
                 .priority(patch.priority.value().copied())
+                .due_date(patch.due_date.value().map(String::as_str))
                 .state(state),
         )?;
         self.execute(update, &values)?;
@@ -690,7 +718,8 @@ impl Sink for DeclarativeSink {
                     &Call::new(scope)
                         .id(id)
                         .patch(patch)
-                        .priority(patch.priority.value().copied()),
+                        .priority(patch.priority.value().copied())
+                        .due_date(patch.due_date.value().map(String::as_str)),
                 )?;
                 self.execute(labels, &values)?;
             }
@@ -773,6 +802,8 @@ struct Call<'a> {
     patch: Option<&'a Patch>,
     /// The priority the issue will end up with, whether or not this call sets it.
     priority: Option<u8>,
+    /// The due date the issue will end up with, on the same terms.
+    due_date: Option<&'a str>,
     state: Option<&'a str>,
     comment: Option<&'a str>,
     title: Option<&'a str>,
@@ -804,6 +835,11 @@ impl<'a> Call<'a> {
 
     fn priority(mut self, priority: Option<u8>) -> Self {
         self.priority = priority;
+        self
+    }
+
+    fn due_date(mut self, due_date: Option<&'a str>) -> Self {
+        self.due_date = due_date;
         self
     }
 
@@ -871,6 +907,7 @@ fn uses(template: &Option<Value>, directive: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::StateModel;
 
     #[test]
     fn uses_finds_a_directive_anywhere_in_a_template() {
@@ -896,6 +933,81 @@ mod tests {
         // A label id means nothing in another repository, so it must not leak.
         assert_eq!(lookups.resolved("label", "c/d", "bug"), None);
         assert_eq!(lookups.resolved("state", "a/b", "bug"), None);
+    }
+
+    #[test]
+    fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
+        // The same degradation the priority already had, for the same reason: the
+        // platform has no field for it, so the value travels in the one it does have -
+        // and the read half takes it back out, so the two ends still agree about the
+        // date instead of one of them quietly losing it.
+        let read = ReadSpec {
+            labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
+                path: Some("/labels".into()),
+                pick: Some("/name".into()),
+                from_labels: false,
+            })),
+            // Where the preset says a platform keeps its due dates.
+            due_date: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
+                from_labels: true,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        // What the bridge wrote: the label, because there is no field to write.
+        let build = |capabilities: &Capabilities| {
+            DeclarativeSink::new(
+                "forgejo",
+                SinkSpec {
+                    base_url: "http://127.0.0.1:1".into(),
+                    auth: None,
+                    headers: Default::default(),
+                    error_pointer: None,
+                    issue: Default::default(),
+                },
+                None,
+                capabilities.clone(),
+            )
+        };
+        let mut capabilities = Capabilities {
+            states: StateModel::OpenClosed,
+            labels: true,
+            due_dates: false,
+            priorities: false,
+            multiple_assignees: false,
+            native_pull_requests: true,
+            deletion: false,
+            list: false,
+        };
+        let fields = IssueFields {
+            due_date: Some("2026-10-09".to_string()),
+            ..Default::default()
+        };
+        let sink = build(&capabilities);
+        let labels = sink.outbound_labels(&fields);
+        assert!(
+            labels.contains(&"due:2026-10-09".to_string()),
+            "the date has to travel: {labels:?}"
+        );
+
+        // And it comes back out on the way in.
+        let body = json!({ "labels": [{ "name": "due:2026-10-09" }] });
+        assert_eq!(
+            read_fields(&body, &read).due_date.as_deref(),
+            Some("2026-10-09")
+        );
+
+        // A label that merely looks like one is not a date: a user may label an issue
+        // `due:someday`, and reading that as one would invent a due date.
+        let body = json!({ "labels": [{ "name": "due:someday" }] });
+        assert_eq!(read_fields(&body, &read).due_date, None);
+
+        // On a platform that *does* have the field, nothing is added: the field is the
+        // date, and the label would be a second copy of it.
+        capabilities.due_dates = true;
+        let sink = build(&capabilities);
+        assert!(sink.outbound_labels(&fields).is_empty());
     }
 
     #[test]

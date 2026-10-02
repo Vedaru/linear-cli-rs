@@ -211,13 +211,51 @@ pub fn labels_to_priority(labels: &[String]) -> Option<u8> {
     })
 }
 
+/// True when a label is one of the synthetic `due:*` labels.
+///
+/// A platform with no due-date field carries the date as a label, the same way a
+/// platform with no priority field carries the priority. Both are *synthetic*: they
+/// are not user labels, so they are filtered out of the neutral set before anything
+/// compares two of them.
+pub fn is_due_date_label(label: &str) -> bool {
+    label.to_ascii_lowercase().starts_with("due:")
+}
+
+/// A due date as the label that carries it, for a platform with no due-date field.
+pub fn due_date_to_label(due_date: &str) -> String {
+    format!("due:{due_date}")
+}
+
+/// Find a `due:*` label in a set and read the date out of it.
+///
+/// The value has to look like a date to count: a user is free to label an issue
+/// `due:someday`, and reading that as a due date would invent one.
+pub fn labels_to_due_date(labels: &[String]) -> Option<String> {
+    labels.iter().find_map(|label| {
+        let (prefix, value) = label.split_once(':')?;
+        (prefix.eq_ignore_ascii_case("due") && is_a_date(value)).then(|| value.to_string())
+    })
+}
+
+/// `YYYY-MM-DD`, the form every synced platform writes and the label carries.
+fn is_a_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+}
+
 /// Normalise label names: drop the synthetic priority labels, lowercase, dedupe,
 /// sort. Sorting is what makes the hash independent of the order a platform
 /// happened to return labels in.
 pub fn canonical_labels(names: &[String]) -> Vec<String> {
     let mut labels: Vec<String> = names
         .iter()
-        .filter(|name| !is_priority_label(name))
+        .filter(|name| !is_priority_label(name) && !is_due_date_label(name))
         .map(|name| name.to_ascii_lowercase())
         .collect();
     labels.sort();

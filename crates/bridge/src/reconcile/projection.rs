@@ -32,6 +32,11 @@ pub enum Reason {
     Unsupported,
     /// The identity map exists but does not know this value for that platform.
     Unmapped,
+    /// The platform has no such field, and the value travelled in another one - a
+    /// due date or a priority carried as a label. Reported so an operator can see the
+    /// shape it arrived in, rather than finding a label and wondering where it came
+    /// from.
+    Emulated,
     /// No identity map is configured, so assignee syncing is off rather than
     /// guessed - translating by hope would send one platform's login to another.
     NoIdentityMap,
@@ -41,6 +46,7 @@ impl Reason {
     pub fn as_str(self) -> &'static str {
         match self {
             Reason::Unsupported => "unsupported",
+            Reason::Emulated => "emulated",
             Reason::Unmapped => "unmapped",
             Reason::NoIdentityMap => "no identity map",
         }
@@ -74,6 +80,10 @@ impl fmt::Display for Skipped {
 pub struct Projected {
     pub fields: IssueFields,
     pub skipped: Vec<Skipped>,
+    /// Fields the platform cannot hold as themselves, carried in another field
+    /// instead - a due date or a priority as a label. Nothing was lost, so these are
+    /// not "skipped"; they are reported so the shape the value arrived in is visible.
+    pub emulated: Vec<Skipped>,
 }
 
 impl Projected {
@@ -104,6 +114,10 @@ impl<'a> Projection<'a> {
     pub fn of(&self, fields: &IssueFields, from: &ConnectorId, onto: &ConnectorId) -> Projected {
         let mut projected = fields.clone();
         let mut skipped = Vec::new();
+        // A field the target cannot hold but *can* carry another way. Kept apart from
+        // what was skipped, because those are two different things to an operator:
+        // one is lost, the other arrived in a different shape.
+        let mut emulated = Vec::new();
 
         if !self.capabilities.labels && !fields.labels.is_empty() {
             projected.labels = Vec::new();
@@ -113,13 +127,17 @@ impl<'a> Projection<'a> {
                 Reason::Unsupported,
             ));
         }
-        if !self.capabilities.due_dates && fields.due_date.is_some() {
-            projected.due_date = None;
-            skipped.push(Skipped::new(
-                "due date",
-                fields.due_date.clone().unwrap_or_default(),
-                Reason::Unsupported,
-            ));
+        if let Some(date) = &fields.due_date {
+            if !self.capabilities.due_dates {
+                // Not dropped, and not silently: the date travels as a `due:*` label,
+                // exactly as the priority does on a platform without that field. The
+                // read half reads it back, so the two ends still agree about it.
+                // The date itself stays: the *sink* is what turns it into a
+                // `due:*` label, exactly as it does for a priority (the same
+                // capability check, in the same place). Clearing it here would
+                // leave the sink with nothing to carry.
+                emulated.push(Skipped::new("due date", date.clone(), Reason::Emulated));
+            }
         }
         // Priority is never dropped: a platform without the field carries it as a
         // `priority:*` label, which is exactly what the read half reads back.
@@ -141,6 +159,7 @@ impl<'a> Projection<'a> {
         Projected {
             fields: projected,
             skipped,
+            emulated,
         }
     }
 
@@ -197,21 +216,37 @@ mod tests {
     }
 
     #[test]
-    fn a_platform_without_the_field_does_not_get_it_and_says_so() {
+    fn what_a_platform_cannot_hold_is_either_emulated_or_reported() {
+        // The distinction this test exists for: a field the target cannot hold is either
+        // carried another way (emulated, and nothing is lost) or reported as dropped.
+        // Conflating the two would hide a real loss behind a label.
         let (caps, users) = (minimal(), UserMap::default());
         let projection = Projection::new(&caps, &users);
-        let projected = projection.of(&full_fields(), &linear(), &forge());
+        let mut fields = full_fields();
+        fields.due_date = Some("2026-10-09".to_string());
+        let projected = projection.of(&fields, &linear(), &forge());
 
+        // Labels are genuinely unsupported here: dropped, and reported as such.
         assert!(projected.fields.labels.is_empty());
-        assert_eq!(projected.fields.due_date, None);
-        assert!(projected.is_degraded());
-        let reasons: Vec<&str> = projected
+        let dropped: Vec<&str> = projected
             .skipped
             .iter()
             .map(|skipped| skipped.field)
             .collect();
-        assert!(reasons.contains(&"labels"), "{reasons:?}");
-        assert!(reasons.contains(&"due date"), "{reasons:?}");
+        assert!(dropped.contains(&"labels"), "{dropped:?}");
+
+        // The due date is not dropped and not a label yet: the *sink* is what turns it
+        // into a `due:*` label (the same capability check the priority goes through),
+        // and the projection's job is to say that this is what will happen.
+        assert_eq!(projected.fields.due_date.as_deref(), Some("2026-10-09"));
+        assert!(!dropped.contains(&"due date"), "{dropped:?}");
+        let emulated: Vec<&str> = projected
+            .emulated
+            .iter()
+            .map(|emulated| emulated.field)
+            .collect();
+        assert!(emulated.contains(&"due date"), "{emulated:?}");
+
         // Title, body and priority are always representable: priority travels as a
         // label on a platform that has no field for it.
         assert_eq!(projected.fields.title, "Title");
