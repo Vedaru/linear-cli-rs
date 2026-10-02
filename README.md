@@ -230,6 +230,10 @@ and neither writes anything. It reads the same store the service writes, prints 
 the mappings, and lists the deliveries the queue gave up on with the error that stopped each
 one. A store it cannot read is a failure, not a zero.
 
+Running it as a service is [deploy/README.md](deploy/README.md): a systemd unit, the secrets file
+it reads, and the three things that decide whether a deployment works - chiefly that the webhook's
+route must not be behind a login page, which is measured rather than assumed for this server.
+
 `linear config service` prints those sections rather than asking questions: one file holds both
 halves - the CLI's settings and the bridge's - which is the design rather than a coincidence,
 because both read the same `linear.toml` with the same precedence. It never writes a secret: the
