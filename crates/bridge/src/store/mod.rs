@@ -188,6 +188,12 @@ pub trait Store: Send {
     /// Idempotent: the same pair recorded twice is one row.
     fn record_reference(&mut self, link: &ReferenceLink) -> Result<()>;
 
+    /// Whether this reference has already been carried out.
+    ///
+    /// The pairing of a reference with its issue is what makes a second delivery of the same
+    /// commit - a force-push, under a new delivery id - recognisably the same reference.
+    fn reference_exists(&mut self, source: &EntityRef, target: &EntityRef) -> Result<bool>;
+
     /// Every reference pointing at `target`.
     fn references_for(&mut self, target: &EntityRef) -> Result<Vec<ReferenceLink>>;
 }

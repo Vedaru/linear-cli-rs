@@ -65,6 +65,15 @@ fn reference_delivery() -> Delivery {
     })
 }
 
+/// A push, with the delivery id varied: what a force-push looks like from here.
+fn push_delivery(delivery_id: &str) -> Delivery {
+    let mut delivery = delivery_where("a push", |delivery| {
+        delivery.event.as_deref() == Some("push")
+    });
+    delivery.delivery_id = delivery_id.to_string();
+    delivery
+}
+
 /// The merge: the same reference, reported as closed **and** merged.
 fn merged_reference_delivery() -> Delivery {
     delivery_where("a merge", |delivery| delivery.merged == Some(true))
@@ -359,5 +368,29 @@ fn the_side_the_reference_arrives_from_does_not_change_where_it_goes() {
         attached.len(),
         1,
         "the attachment still lands on the issue the text named"
+    );
+}
+
+#[test]
+fn a_force_push_does_not_attach_the_same_commit_twice() {
+    let mut fixture = Fixture::start();
+
+    // The same push, delivered again under a new delivery id. That is what a force-push looks
+    // like from here - and what the intake's replay log cannot catch, because the delivery id
+    // really is new. The reference record is what catches it, and this is the acceptance's
+    // "force-pushes must not re-attach".
+    fixture.deliver(&push_delivery("1001")).expect("handled");
+    fixture.deliver(&push_delivery("1002")).expect("handled");
+
+    assert_eq!(
+        fixture.attached_to().len(),
+        1,
+        "one attachment, however many times the commit arrives"
+    );
+    // And nothing moved: the workflow half belongs to a review request, and a commit message is
+    // a mention. A force-push cannot re-transition an issue because it never transitions one.
+    assert!(
+        fixture.moved_to().is_empty(),
+        "a commit is a mention, not a workflow step"
     );
 }

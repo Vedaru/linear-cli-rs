@@ -304,6 +304,8 @@ impl Store for SqliteStore {
     }
 
     fn record_reference(&mut self, link: &ReferenceLink) -> Result<()> {
+        // Written once and left alone: the row says which reference was carried out and where
+        // it pointed, and neither changes afterwards.
         self.conn.execute(
             "INSERT INTO reference_links
                  (source_connector, source_scope, source_kind, source_id,
@@ -311,7 +313,7 @@ impl Store for SqliteStore {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT (source_connector, source_scope, source_id,
                           target_connector, target_scope, target_id)
-             DO UPDATE SET url = COALESCE(excluded.url, reference_links.url)",
+             DO NOTHING",
             params![
                 link.source.connector.as_str(),
                 scope_of(&link.source),
@@ -326,6 +328,27 @@ impl Store for SqliteStore {
             ],
         )?;
         Ok(())
+    }
+
+    fn reference_exists(&mut self, source: &EntityRef, target: &EntityRef) -> Result<bool> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM reference_links
+                 WHERE source_connector = ?1 AND source_scope = ?2 AND source_id = ?3
+                   AND target_connector = ?4 AND target_scope = ?5 AND target_id = ?6",
+                params![
+                    source.connector.as_str(),
+                    scope_of(source),
+                    source.native_id,
+                    target.connector.as_str(),
+                    scope_of(target),
+                    target.native_id,
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
     }
 
     fn references_for(&mut self, target: &EntityRef) -> Result<Vec<ReferenceLink>> {
@@ -427,6 +450,56 @@ mod tests {
             native_id: "7".into(),
             body: "{\"action\":\"opened\"}".into(),
         }
+    }
+
+    #[test]
+    fn a_reference_is_recognised_by_what_it_pairs_not_by_the_delivery() {
+        let mut store = SqliteStore::open_in_memory().unwrap();
+        store.migrate().unwrap();
+
+        let commit = EntityRef {
+            connector: ConnectorId::new("forgejo"),
+            kind: EntityKind::Reference,
+            scope: Some("a/b".into()),
+            native_id: "abc123".into(),
+            url: Some("http://forge/commit/abc123".into()),
+        };
+        let issue = EntityRef {
+            connector: ConnectorId::new("linear"),
+            kind: EntityKind::Issue,
+            scope: Some("VED".into()),
+            native_id: "issue-uuid".into(),
+            url: None,
+        };
+        let link = ReferenceLink {
+            source: commit.clone(),
+            target: issue.clone(),
+            url: Some("http://forge/commit/abc123".into()),
+        };
+
+        assert!(
+            !store.reference_exists(&commit, &issue).unwrap(),
+            "nothing carried out yet"
+        );
+        store.record_reference(&link).unwrap();
+        assert!(
+            store.reference_exists(&commit, &issue).unwrap(),
+            "the pairing of reference and issue is what is recognised, not the delivery"
+        );
+        // The same commit under a new delivery id: the same reference. Recording it again is a
+        // no-op, which is what the caller relies on when it sees one arrive twice.
+        store.record_reference(&link).unwrap();
+        assert_eq!(
+            store.references_for(&issue).unwrap().len(),
+            1,
+            "one row, not two"
+        );
+        // A different issue is a different reference, however similar the commit.
+        let elsewhere = EntityRef {
+            native_id: "another-issue".into(),
+            ..issue.clone()
+        };
+        assert!(!store.reference_exists(&commit, &elsewhere).unwrap());
     }
 
     #[test]

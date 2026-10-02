@@ -23,7 +23,7 @@ use crate::reconcile::{
     Sides, Snapshot, StateNames, Step,
 };
 use crate::sink::{RemoteIssue, Sink};
-use crate::store::{Delivery, Link, Store};
+use crate::store::{Delivery, Link, ReferenceLink, Store};
 
 /// One end of a mapping: a platform, and the container inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -495,14 +495,38 @@ impl ReconcileHandler {
                 // On the target's own side, by the target's own id: the attachment goes on
                 // the issue the reference named.
                 let scope = target.scope.clone().unwrap_or_default();
+
+                // Carried out once per reference, not once per delivery. A force-push re-sends
+                // the same commit message under a new delivery id, so the intake's replay log -
+                // keyed by delivery - cannot see it; this is the record that can. The insert is
+                // the guard: two workers on the same reference cannot both be told it is new.
+                let reference = ReferenceLink {
+                    source: pair.subject.clone(),
+                    target: target.clone(),
+                    url: Some(url.clone()),
+                };
+                // Whether this reference is new is a fact about the store, taken before a sink
+                // is borrowed around it.
+                let carried_out = self
+                    .store
+                    .reference_exists(&reference.source, &reference.target)?;
                 let sink = self.sink(&target.connector)?;
-                sink.attach(&scope, &target.native_id, &url, &title)?;
-                log::info!(
-                    "attached {} to {} {}",
-                    url,
-                    target.connector,
-                    target.native_id
-                );
+                if carried_out {
+                    log::debug!(
+                        "{} is already attached to {} {}",
+                        url,
+                        target.connector,
+                        target.native_id
+                    );
+                } else {
+                    sink.attach(&scope, &target.native_id, &url, &title)?;
+                    log::info!(
+                        "attached {} to {} {}",
+                        url,
+                        target.connector,
+                        target.native_id
+                    );
+                }
                 // And, when the reference is a review request, the move that goes with it.
                 // Through `transition` rather than a full update with one field in it: it is
                 // the operation a state-only move has, and a preset that can move an issue but
@@ -515,6 +539,16 @@ impl ReconcileHandler {
                         target.native_id,
                         state
                     );
+                }
+
+                // Recorded last, and only once the platform has accepted the write: recording
+                // first would make a failure in between look like an attachment that exists,
+                // and nothing would ever repair it. This way the worst case is a second
+                // attachment - visible, and deletable by hand. The record deliberately does
+                // not guard the move above: a merge is the same reference as the open that
+                // attached it, so "already carried out" must not stop it.
+                if !carried_out {
+                    self.store.record_reference(&reference)?;
                 }
             }
         }

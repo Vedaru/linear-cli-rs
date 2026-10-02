@@ -284,7 +284,10 @@ The limits worth stating out loud, because each one is a real thing a deployment
   state alone - abandoned work is not finished work, and marking it done is a claim somebody
   has to undo by hand - and a commit only ever attaches, because a mention is not a workflow
   step. Which of those a delivery is comes from the preset: it says where the platform reports
-  the merge, and a reference whose payload has no such field is a commit.
+  the merge, and a reference whose payload has no such field is a commit. A reference is carried
+  out **once**, however many times it arrives: a force-push re-sends the same commit message
+  under a new delivery id, so the guard is a record of what has been attached to what - not the
+  delivery log, which is keyed by delivery and sees a new one every time.
 - **A platform Linear integrates through its own app is deliberately not a preset here.**
   Bridging it would duplicate that integration rather than add to it. A preset is written for a
   platform this deployment actually talks to, and nothing in the engine is shaped around any
