@@ -68,6 +68,11 @@ pub struct Answer {
     pub method: String,
     /// The path after the base url. A trailing `*` matches a prefix.
     pub path: String,
+    /// A substring the request body must contain, for a platform that puts every operation on
+    /// one path - Linear's GraphQL endpoint is a single url where a fetch and a mutation differ
+    /// only in what the body asks for.
+    #[serde(default, rename = "match")]
+    pub matching: Option<String>,
     #[serde(default = "default_status")]
     pub status: u16,
     /// The body, as JSON. Absent means an empty body.
@@ -334,13 +339,17 @@ impl Fake {
         // Owned, because the closure outlives this call and names the platform in its
         // "no answer configured" message.
         let platform = platform.to_string();
-        Self::start(move |method: &str, path: &str, _body: &serde_json::Value| {
+        Self::start(move |method: &str, path: &str, body: &serde_json::Value| {
             fixture
                 .answers
                 .iter()
                 .find(|answer| {
                     answer.method.eq_ignore_ascii_case(method)
                         && path_matches(&answer.path, path)
+                        && answer
+                            .matching
+                            .as_deref()
+                            .is_none_or(|needle| body.to_string().contains(needle))
                 })
                 .map(|answer| (answer.status, answer.body()))
                 .unwrap_or_else(|| {

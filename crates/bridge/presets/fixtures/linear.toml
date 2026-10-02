@@ -105,3 +105,18 @@ body = '''{ "action": "create", "type": "Issue", "webhookTimestamp": {now},
 [[delivery]]
 reject = "malformed"
 body = '''not json'''
+
+# Linear answers everything on one url, so these are told apart by what the body asks for.
+# The shapes are the ones the preset's read spec and attach operation expect.
+
+[[api]]
+method = "POST"
+path = "/graphql"
+match = "issue(id: $id)"
+answer = """{"data": {"issue": {"id": "1a2b3c4d-0000-4000-8000-000000000123", "identifier": "VED-123", "url": "http://linear.test/VED-123", "title": "The issue a commit names", "description": "as Linear would describe it", "dueDate": null, "priority": 0, "state": {"name": "Todo"}, "labels": {"nodes": []}, "assignee": null}}}"""
+
+[[api]]
+method = "POST"
+path = "/graphql"
+match = "attachmentCreate"
+answer = """{"data": {"attachmentCreate": {"success": true}}}"""
