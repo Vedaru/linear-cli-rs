@@ -29,6 +29,7 @@ fn fields() -> IssueFields {
         priority: 2,
         due_date: Some("2026-10-09".into()),
         assignee: Some("vedaru".into()),
+        project: None,
     }
 }
 
@@ -529,6 +530,7 @@ fn linear_fields() -> IssueFields {
         priority: 2,
         due_date: Some("2026-10-09".into()),
         assignee: Some("vedaru@example.com".into()),
+        project: None,
     }
 }
 

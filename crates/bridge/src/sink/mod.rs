@@ -149,4 +149,23 @@ pub trait Sink: Send + Sync {
             self.id().clone(),
         ))
     }
+
+    // --- an issue on a project's board -------------------------------------
+    //
+    // The container is a field of the *issue* mirror, not an entity of its own: an
+    // issue whose source names a paired project is put on that project's board.
+    // Both are no-ops by default, and that default is deliberate: a forge that has
+    // no projects at all (one that keeps milestones, or nothing) must degrade to
+    // doing nothing rather than failing the whole mirror over a container it does
+    // not have. A platform that *does* declare projects overrides them.
+
+    /// Put an issue on the project's board. `project` is an id on this platform.
+    fn place_issue(&self, _scope: &str, _issue: &str, _project: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Take an issue off the project's board it was placed on.
+    fn remove_issue(&self, _scope: &str, _issue: &str, _project: &str) -> Result<()> {
+        Ok(())
+    }
 }

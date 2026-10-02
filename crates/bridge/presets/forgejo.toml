@@ -299,3 +299,15 @@ title = "/title"
 body = "/description"
 id = "/id"
 url = "/html_url"
+
+# A mirrored issue landing on its mirrored project's board. `{id}` is the project
+# and `{index}` the issue; Forgejo puts the card in the project's default column,
+# and an issue belongs to at most one project - so assigning it to a different one
+# *moves* it, and an explicit removal is only needed when the project is cleared.
+[sink.project.assign]
+method = "POST"
+path = "/repos/{scope}/projects/{id}/issues/{index}"
+
+[sink.project.unassign]
+method = "DELETE"
+path = "/repos/{scope}/projects/{id}/issues/{index}"

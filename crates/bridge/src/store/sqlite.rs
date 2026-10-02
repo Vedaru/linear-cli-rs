@@ -18,7 +18,10 @@ use crate::store::{Counts, Delivery, InsertOutcome, Link, NewDelivery, Reference
 /// Schema revision, applied with `include_str!` so the SQL ships inside the
 /// binary: a service deployed as a single file must not need the source tree to
 /// migrate its own database.
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/0001_init.sql"),
+    include_str!("../../migrations/0002_link_project.sql"),
+];
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -260,8 +263,8 @@ impl Store for SqliteStore {
             "INSERT INTO entity_links
                  (left_connector, left_scope, left_kind, left_id,
                   right_connector, right_scope, right_kind, right_id,
-                  last_synced_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                  last_synced_hash, project, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT (left_connector, left_scope, left_id,
                           right_connector, right_scope, right_id)
              DO UPDATE SET
@@ -269,6 +272,11 @@ impl Store for SqliteStore {
                  -- that knows the pairing but not the content must not erase what
                  -- was last written, or the next echo looks like a real change.
                  last_synced_hash = COALESCE(excluded.last_synced_hash, entity_links.last_synced_hash),
+                 -- The same for the recorded project: a pairing written for the
+                 -- hash alone (a sweep's baseline) must not forget which board the
+                 -- issue was placed on. Clearing it is explicit, through
+                 -- `set_link_project`, because `None` there means \"taken off\".
+                 project = COALESCE(excluded.project, entity_links.project),
                  updated_at = excluded.updated_at",
             params![
                 link.left.connector.as_str(),
@@ -280,6 +288,7 @@ impl Store for SqliteStore {
                 link.right.kind.as_str(),
                 link.right.native_id,
                 link.last_synced_hash,
+                link.project,
                 now_millis(),
             ],
         )?;
@@ -337,6 +346,39 @@ impl Store for SqliteStore {
             params![side.connector.as_str(), scope_of(side), side.native_id],
         )?;
         Ok(())
+    }
+
+    fn set_link_project(&mut self, side: &EntityRef, project: Option<&str>) -> Result<()> {
+        // Every pairing this issue is an end of, so it does not matter which way
+        // round the link was written (a mirror may run either direction).
+        self.conn.execute(
+            "UPDATE entity_links SET project = ?4
+              WHERE (left_connector = ?1 AND left_scope = ?2 AND left_id = ?3)
+                 OR (right_connector = ?1 AND right_scope = ?2 AND right_id = ?3)",
+            params![
+                side.connector.as_str(),
+                scope_of(side),
+                side.native_id,
+                project
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn link_project(&mut self, side: &EntityRef) -> Result<Option<String>> {
+        let found: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT project FROM entity_links
+                  WHERE (left_connector = ?1 AND left_scope = ?2 AND left_id = ?3)
+                     OR (right_connector = ?1 AND right_scope = ?2 AND right_id = ?3)
+                  ORDER BY id
+                  LIMIT 1",
+                params![side.connector.as_str(), scope_of(side), side.native_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.flatten())
     }
 
     fn record_reference(&mut self, link: &ReferenceLink) -> Result<()> {
@@ -419,13 +461,14 @@ impl Store for SqliteStore {
 
 const LINK_COLUMNS: &str = "left_connector, left_scope, left_kind, left_id, \
                             right_connector, right_scope, right_kind, right_id, \
-                            last_synced_hash";
+                            last_synced_hash, project";
 
 fn link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Link> {
     Ok(Link {
         left: entity_from_row(row, 0)?,
         right: entity_from_row(row, 4)?,
         last_synced_hash: row.get(8)?,
+        project: row.get(9)?,
     })
 }
 
@@ -593,7 +636,7 @@ mod tests {
             .connection()
             .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(revisions, 1);
+        assert_eq!(revisions, 2, "one row per migration, applied once");
     }
 
     #[test]
@@ -713,7 +756,7 @@ mod tests {
         let from_forgejo = store.find_links(&forgejo).unwrap();
         assert_eq!(from_linear.len(), 1);
         assert_eq!(from_linear, from_forgejo, "one row, seen from both ends");
-        assert_eq!(from_linear[0].last_synced_hash.as_deref(), Some("def"));
+        assert_eq!(from_linear[0].recorded_revision(), Some("def"));
 
         let found = store
             .find_link(&linear, &ConnectorId::new("forgejo"))
@@ -743,7 +786,7 @@ mod tests {
             .upsert_link(&Link::new(linear.clone(), forgejo))
             .unwrap();
         let links = store.find_links(&linear).unwrap();
-        assert_eq!(links[0].last_synced_hash.as_deref(), Some("hash-1"));
+        assert_eq!(links[0].recorded_revision(), Some("hash-1"));
     }
 
     #[test]
@@ -801,6 +844,42 @@ mod tests {
         assert!(store.find_links(&forgejo).unwrap().is_empty());
         // Deleting again is a no-op, not an error.
         store.delete_links(&forgejo).unwrap();
+    }
+
+    #[test]
+    fn a_link_records_the_project_an_issue_is_on_and_can_forget_it() {
+        // A forge reports an issue's project nowhere, so the pairing is the only
+        // place that knows which board the issue was placed on - without it a
+        // cleared project could never be taken off.
+        let mut store = SqliteStore::open_in_memory().unwrap();
+        let linear = entity("linear", Some("VED"), "i");
+        let forgejo = entity("forgejo", Some("a/b"), "1");
+        store
+            .upsert_link(&Link::new(linear.clone(), forgejo.clone()).with_hash("h-1"))
+            .unwrap();
+        assert_eq!(
+            store.link_project(&linear).unwrap(),
+            None,
+            "nothing placed yet"
+        );
+
+        store.set_link_project(&linear, Some("4")).unwrap();
+        assert_eq!(store.link_project(&linear).unwrap().as_deref(), Some("4"));
+        // Seen from either end of the link.
+        assert_eq!(store.link_project(&forgejo).unwrap().as_deref(), Some("4"));
+        // A later hash-only upsert - a sweep's baseline - must not forget the board.
+        store
+            .upsert_link(&Link::new(linear.clone(), forgejo).with_hash("h-2"))
+            .unwrap();
+        assert_eq!(
+            store.link_project(&linear).unwrap().as_deref(),
+            Some("4"),
+            "the baseline erased which board the issue was on"
+        );
+
+        // Clearing is explicit: `None` means "off the board", not "leave it alone".
+        store.set_link_project(&linear, None).unwrap();
+        assert_eq!(store.link_project(&linear).unwrap(), None);
     }
 
     #[test]

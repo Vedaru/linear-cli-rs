@@ -35,6 +35,14 @@ pub struct IssueFields {
     pub due_date: Option<String>,
     /// Canonical assignee token, as agreed by the user map.
     pub assignee: Option<String>,
+    /// The project this issue is on, in the id space of the platform being
+    /// described. A container is not one of the fields an issue *body* holds, but
+    /// it is part of what a mirror has to make the two sides agree about: an issue
+    /// that names a project must land on the project's board, and be taken off it
+    /// when the project is cleared or changed. The reconciler resolves the id
+    /// across a pairing before the sink is given it, so on the write side this is
+    /// the *target* platform's project id.
+    pub project: Option<String>,
 }
 
 impl IssueFields {
@@ -62,6 +70,7 @@ impl IssueFields {
         let labels = canonical_labels(&self.labels).join(",");
         let priority = self.priority.to_string();
         let assignee = self.assignee.clone().unwrap_or_default().to_lowercase();
+        let project = self.project.clone().unwrap_or_default();
         let parts = [
             self.title.trim(),
             body.trim_end(),
@@ -69,6 +78,7 @@ impl IssueFields {
             priority.as_str(),
             self.due_date.as_deref().unwrap_or(""),
             assignee.as_str(),
+            project.as_str(),
         ];
         crate::domain::hash::sha256_hex(parts.join("\u{0}").as_bytes())
     }
@@ -123,6 +133,10 @@ pub struct Patch {
     pub priority: Change<u8>,
     pub due_date: Change<String>,
     pub assignee: Change<String>,
+    /// The project the issue sits on. `Set` puts it on the project's board;
+    /// `Clear` takes it off the one it was on. A container is a field of the issue
+    /// mirror like any other, so it travels in the same diff.
+    pub project: Change<String>,
 }
 
 impl Patch {
@@ -140,6 +154,7 @@ impl Patch {
             ("priority", !self.priority.is_leave()),
             ("due_date", !self.due_date.is_leave()),
             ("assignee", !self.assignee.is_leave()),
+            ("project", !self.project.is_leave()),
         ];
         named
             .into_iter()
@@ -184,6 +199,7 @@ pub fn diff(source: &IssueFields, target: &IssueFields) -> Patch {
         priority: change(Some(&source.priority), Some(&target.priority)),
         due_date: change(source.due_date.as_ref(), target.due_date.as_ref()),
         assignee: change(source.assignee.as_ref(), target.assignee.as_ref()),
+        project: change(source.project.as_ref(), target.project.as_ref()),
     }
 }
 

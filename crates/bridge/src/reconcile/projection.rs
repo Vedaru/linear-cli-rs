@@ -204,6 +204,7 @@ mod tests {
             priority: 2,
             due_date: Some("2026-10-02".into()),
             assignee: Some("loner@example.com".into()),
+            project: None,
         }
     }
 

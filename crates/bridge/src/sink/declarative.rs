@@ -415,6 +415,29 @@ impl DeclarativeSink {
             .and_then(|pointer| resolve_string(&response.body, pointer));
         Ok(RemoteRef { id, url })
     }
+
+    /// Run the operation that puts an issue on a project's board, or takes it off.
+    ///
+    /// A platform that declares no `assign`/`unassign` under `[sink.project]` does
+    /// nothing here, and that is deliberate: a forge with no projects at all (one
+    /// that keeps milestones, or nothing) must degrade to doing nothing rather than
+    /// fail a mirror over a container it does not have. `id` is the project, `index`
+    /// the issue - the path names the container and its member.
+    fn membership(&self, name: &str, scope: &str, issue: &str, project: &str) -> Result<()> {
+        let operation = self.spec.project.as_ref().and_then(|project| match name {
+            "project.assign" => project.assign.as_ref(),
+            _ => project.unassign.as_ref(),
+        });
+        let Some(operation) = operation else {
+            return Ok(());
+        };
+        let values = json!({ "scope": scope, "id": project, "index": issue });
+        let request = self
+            .spec
+            .request(operation, &values, self.secret.as_ref())?;
+        self.send(&request)?;
+        Ok(())
+    }
 }
 
 /// The lookup cache: per (kind, scope), the candidate list as the platform gave
@@ -556,6 +579,10 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // an unwritable assignee sets.
         due_date,
         assignee: read_text(body, read.assignee.as_ref()),
+        // A platform that reports an issue's project only if its preset says where.
+        // A forge that reports it nowhere yields `None`, and the reconciler falls
+        // back to the project it recorded when it placed the issue.
+        project: read_text(body, read.project.as_ref()),
     }
 }
 
@@ -885,6 +912,14 @@ impl Sink for DeclarativeSink {
         self.execute(update, &values)?;
         Ok(())
     }
+
+    fn place_issue(&self, scope: &str, issue: &str, project: &str) -> Result<()> {
+        self.membership("project.assign", scope, issue, project)
+    }
+
+    fn remove_issue(&self, scope: &str, issue: &str, project: &str) -> Result<()> {
+        self.membership("project.unassign", scope, issue, project)
+    }
 }
 
 /// What one call knows. A struct rather than a list of `Option`s: the call sites
@@ -1125,6 +1160,7 @@ mod tests {
             })),
             due_date: Some(ReadField::Pointer("/due_date".into())),
             assignee: Some(ReadField::Pointer("/assignees/0/login".into())),
+            project: None,
             state: Some(ReadField::Pointer("/state".into())),
             id: Some("/number".into()),
             url: Some("/html_url".into()),

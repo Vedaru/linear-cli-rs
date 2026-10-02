@@ -83,6 +83,31 @@ pub struct Counts {
     pub dead: i64,
 }
 
+/// The mirror's field vocabulary, as a record carries it.
+///
+/// [`Link::last_synced_hash`] is the content signature of what this bridge last wrote,
+/// and that signature covers every mirrored field - so *adding a field* changes every key
+/// at once. Untagged, every pre-existing record would then match neither side and read as
+/// "both sides moved": a conflict, which the engine reports rather than guesses at, for
+/// every pair in the store and for ever. The tag is what lets the engine tell "written by
+/// this vocabulary" from "written by an older one" and treat the second as a record to
+/// replace rather than a disagreement to report.
+///
+/// Bump this whenever a field is added to, removed from, or re-encoded in the signature.
+pub const REVISION_VOCABULARY: &str = "v2";
+
+/// Stamp a content key as a record this vocabulary wrote.
+pub fn revision_record(key: &str) -> String {
+    format!("{REVISION_VOCABULARY}:{key}")
+}
+
+/// The key inside a record, when the current vocabulary wrote it.
+pub fn revision_key(recorded: &str) -> Option<&str> {
+    recorded
+        .strip_prefix(REVISION_VOCABULARY)
+        .and_then(|rest| rest.strip_prefix(':'))
+}
+
 /// A mirrored pair: the same entity, as two platforms know it.
 ///
 /// `last_synced_hash` is the signature of the content this bridge last wrote
@@ -93,6 +118,12 @@ pub struct Link {
     pub left: EntityRef,
     pub right: EntityRef,
     pub last_synced_hash: Option<String>,
+    /// For an issue pairing: the project the issue was placed on, on the container
+    /// platform. A forge reports an issue's project nowhere else, so this record is
+    /// the only way the mirror can tell that a project was cleared or changed and
+    /// take the issue off (or move it). It rides with the pairing because that is
+    /// where "what this bridge last wrote across it" already lives.
+    pub project: Option<String>,
 }
 
 impl Link {
@@ -101,11 +132,32 @@ impl Link {
             left,
             right,
             last_synced_hash: None,
+            project: None,
         }
     }
 
+    /// Record the revision this bridge last wrote across this link.
+    ///
+    /// The value is stamped with the vocabulary that produced it, so a record written
+    /// before a field was added to the signature can be told apart from a conflicting
+    /// one - see [`REVISION_VOCABULARY`].
     pub fn with_hash(mut self, hash: impl Into<String>) -> Self {
-        self.last_synced_hash = Some(hash.into());
+        self.last_synced_hash = Some(revision_record(&hash.into()));
+        self
+    }
+
+    /// The recorded revision, when the current vocabulary wrote it.
+    ///
+    /// `None` covers "no record at all" and "a record from an older vocabulary" alike:
+    /// neither can be compared against today's keys, and both mean the source's revision
+    /// is the one to keep - rather than a conflict the engine cannot act on, which is what
+    /// every pair in an upgraded store would otherwise become.
+    pub fn recorded_revision(&self) -> Option<&str> {
+        self.last_synced_hash.as_deref().and_then(revision_key)
+    }
+
+    pub fn with_project(mut self, project: Option<impl Into<String>>) -> Self {
+        self.project = project.map(Into::into);
         self
     }
 
@@ -192,6 +244,15 @@ pub trait Store: Send {
     /// side, so a later re-creation starts cleanly instead of resuming a stale
     /// pairing.
     fn delete_links(&mut self, side: &EntityRef) -> Result<()>;
+
+    /// Record the project an issue was placed on (that platform's own id), or clear
+    /// the record when it was taken off. Explicit rather than folded into
+    /// [`Store::upsert_link`] because `None` here means "no longer on a project",
+    /// which must overwrite - not the "preserve what is there" an absent hash means.
+    fn set_link_project(&mut self, side: &EntityRef, project: Option<&str>) -> Result<()>;
+
+    /// The project recorded for the pairing `side` is part of, if any.
+    fn link_project(&mut self, side: &EntityRef) -> Result<Option<String>>;
 
     /// Record that `source` (a pull request, a commit) referenced `target`.
     /// Idempotent: the same pair recorded twice is one row.

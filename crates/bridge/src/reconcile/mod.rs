@@ -441,7 +441,7 @@ fn plan_change(context: &Context<'_>) -> Step {
             expected: context.expected,
             target: context.target,
         },
-        link.last_synced_hash.as_deref(),
+        link.recorded_revision(),
     )
 }
 
@@ -627,7 +627,7 @@ fn plan_project_change(context: &Context<'_>) -> Step {
         &context.expected.fields,
         ours.openness(context.observed.state.as_deref()),
     );
-    if link.last_synced_hash.as_deref() == Some(expected_key.as_str()) {
+    if link.recorded_revision() == Some(expected_key.as_str()) {
         return Step::Nothing(Nothing::Echo);
     }
     let counterpart_key = context
@@ -650,6 +650,9 @@ fn plan_project_change(context: &Context<'_>) -> Step {
     patch.priority = Change::Leave;
     patch.due_date = Change::Leave;
     patch.assignee = Change::Leave;
+    // A project is not on a project: the container's own `project` field is empty
+    // on both sides, and comparing it would be comparing a field neither holds.
+    patch.project = Change::Leave;
     if patch.is_empty() {
         return Step::Nothing(Nothing::AlreadyEqual);
     }
@@ -866,6 +869,7 @@ mod tests {
             priority,
             due_date: None,
             assignee: None,
+            project: None,
         }
     }
 

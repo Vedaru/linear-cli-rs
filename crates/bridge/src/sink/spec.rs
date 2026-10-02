@@ -83,6 +83,15 @@ pub struct IssueSpec {
     /// Replacing an issue's labels wholesale.
     #[serde(default)]
     pub labels: Option<Operation>,
+    /// Putting an issue on a project's board. Declared by a `[sink.project]` half:
+    /// the issue is the *container's* member, so the path names the project and the
+    /// issue (`/projects/{id}/issues/{index}`). A platform without projects simply
+    /// does not declare these, and the mirror places nothing rather than failing.
+    #[serde(default)]
+    pub assign: Option<Operation>,
+    /// Taking an issue off the project it is on.
+    #[serde(default)]
+    pub unassign: Option<Operation>,
     /// Reading a whole scope, for a sweep. Absent means this platform cannot be
     /// enumerated, which a sweep reports rather than works around.
     #[serde(default)]
@@ -319,6 +328,12 @@ pub struct ReadSpec {
     pub due_date: Option<ReadField>,
     #[serde(default)]
     pub assignee: Option<ReadField>,
+    /// The project the issue is on, where the platform reports one. A platform
+    /// whose issue carries no such field leaves this undeclared, and the mirror
+    /// falls back to the project it recorded on the pairing when deciding whether
+    /// the issue moved.
+    #[serde(default)]
+    pub project: Option<ReadField>,
     /// The platform's state, as a name (`/state/name` on Linear, `/state` on a
     /// forge).
     #[serde(default)]
@@ -500,9 +515,12 @@ impl SinkSpec {
 
 /// The values a path may name. Paths are configuration (not user input), but a
 /// missing value is still an error rather than a literal `{id}` sent upstream.
+///
+/// `index` is the *other* entity a membership path addresses
+/// (`/projects/{id}/issues/{index}`): the container is `id`, the member `index`.
 fn placeholders(values: &Value) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for key in ["scope", "scope_id", "id", "name"] {
+    for key in ["scope", "scope_id", "id", "index", "name"] {
         if let Some(value) = values.get(key).and_then(scalar) {
             out.push((key.to_string(), value));
         }
@@ -532,6 +550,8 @@ fn validate_project(project: &IssueSpec) -> std::result::Result<(), String> {
         ("transition", project.transition.as_ref()),
         ("attach", project.attach.as_ref()),
         ("labels", project.labels.as_ref()),
+        ("assign", project.assign.as_ref()),
+        ("unassign", project.unassign.as_ref()),
     ];
     for (name, operation) in operations {
         if let Some(operation) = operation {

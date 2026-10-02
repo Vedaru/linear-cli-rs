@@ -83,7 +83,7 @@ pub fn verdict(link: &Link, source: View<'_>, sink: View<'_>) -> Verdict {
     if source_key == sink_key {
         return Verdict::InStep;
     }
-    match link.last_synced_hash.as_deref() {
+    match link.recorded_revision() {
         // The source still reads as the record did, so whatever moved, moved elsewhere.
         Some(recorded) if recorded == source_key => Verdict::Moved(WhichSide::Sink),
         Some(recorded) if recorded == sink_key => Verdict::Moved(WhichSide::Source),
@@ -499,6 +499,55 @@ mod tests {
             view(&sink, &sink.fields, &sink_names),
         );
         assert_eq!(verdict, Verdict::Conflict);
+    }
+
+    #[test]
+    fn a_record_from_an_older_vocabulary_is_replaced_rather_than_argued_with() {
+        // Adding a field to the signature changes every key at once, so a record written
+        // before the addition matches neither side. Read as "both sides moved", every pair
+        // in an upgraded store would sit in `Conflict` for ever - reported, never acted on,
+        // which is a frozen mirror rather than a cautious one.
+        let source_names = names(&["Done"], "In Progress");
+        let sink_names = names(&["closed"], "open");
+        let source = found(&linear(), "issue-1", "VED", "Source edit", "In Progress");
+        let sink = found(&forge(), "12", "Vedaru/linear-cli-rs", "Sink edit", "open");
+
+        // A record the way an older vocabulary left it: no tag this engine knows.
+        let mut link = link();
+        link.last_synced_hash = Some("Team|title|open".to_string());
+
+        let verdict = verdict(
+            &link,
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
+        );
+        assert_eq!(verdict, Verdict::Adopted);
+    }
+
+    #[test]
+    fn a_record_this_vocabulary_wrote_is_still_read() {
+        // The other half: a tagged record keeps its meaning, so the fix re-baselines an
+        // old store once instead of disabling the comparison for everything.
+        let source_names = names(&["Done"], "In Progress");
+        let sink_names = names(&["closed"], "open");
+        let source = found(&linear(), "issue-1", "VED", "One", "In Progress");
+        let sink = found(
+            &forge(),
+            "12",
+            "Vedaru/linear-cli-rs",
+            "One (edited)",
+            "open",
+        );
+
+        let recorded = content_key_with(&source.fields, source_names.openness(Some("In Progress")));
+        let link = link().with_hash(recorded);
+
+        let verdict = verdict(
+            &link,
+            view(&source, &source.fields, &source_names),
+            view(&sink, &sink.fields, &sink_names),
+        );
+        assert_eq!(verdict, Verdict::Moved(WhichSide::Sink));
     }
 
     #[test]

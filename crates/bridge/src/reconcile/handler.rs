@@ -120,6 +120,10 @@ struct Pair<'a> {
     comment_link: Option<&'a Link>,
     /// The other end's state as the platform reports it, for the recorded revision.
     counterpart_state: Option<&'a str>,
+    /// Whether the end being written to is the mapping's *sink*, which is the only
+    /// end that holds an issue's container. False for everything else, so a project a
+    /// human set on the source platform is never touched by a step writing back.
+    project_mirroring: bool,
 }
 
 impl ReconcileHandler {
@@ -263,7 +267,7 @@ impl ReconcileHandler {
             &here.scope,
             &subject.native_id,
         )?;
-        let counterpart = match &counterpart_ref {
+        let mut counterpart = match &counterpart_ref {
             Some(reference) => self.snapshot(
                 &reference.kind,
                 &there.connector,
@@ -279,10 +283,43 @@ impl ReconcileHandler {
         // it can bring into agreement, not what the source happens to say.
         let target = self.sink(&there.connector)?.capabilities();
         let projection = Projection::new(&target, &mapping.users);
-        let expected = match &observed.fields {
+        let mut expected = match &observed.fields {
             Some(fields) => projection.of(fields, &here.connector, &there.connector),
             None => Projected::default(),
         };
+
+        // A container is a field of the issue mirror, and only the mapping's *sink*
+        // is asked to hold it: the source names a project in its own ids, and the
+        // pairing says which project on the sink that is. Any other direction leaves
+        // the field out of the comparison, so a project a human set on the source
+        // platform is never mistaken for a difference the mirror has to clear.
+        let mirror_project =
+            subject.kind == EntityKind::Issue && there.connector == mapping.sink.connector;
+        if mirror_project {
+            let named = observed
+                .fields
+                .as_ref()
+                .and_then(|fields| fields.project.clone());
+            expected.fields.project = self.project_on(&here, &there.connector, named.as_deref())?;
+            // A forge reports an issue's project nowhere, so the target's current
+            // value for this one field is what the pairing recorded when it last
+            // placed the issue. Without it the diff could neither stop re-placing on
+            // every edit nor see a project cleared.
+            if let Some(project) = link.as_ref().and_then(|link| link.project.clone()) {
+                if let Some(fields) = counterpart.fields.as_mut() {
+                    if fields.project.is_none() {
+                        fields.project = Some(project);
+                    }
+                }
+            }
+        } else {
+            // The other direction does not hold the container, so its project is not
+            // a difference either: cleared on both sides, the diff leaves it alone.
+            expected.fields.project = None;
+            if let Some(fields) = counterpart.fields.as_mut() {
+                fields.project = None;
+            }
+        }
 
         let step = plan(&Context {
             event,
@@ -331,6 +368,7 @@ impl ReconcileHandler {
                 comment: comment_ref.as_ref(),
                 comment_link: comment_link.as_ref(),
                 counterpart_state: counterpart.state.as_deref(),
+                project_mirroring: mirror_project,
             },
             step,
         )
@@ -375,8 +413,12 @@ impl ReconcileHandler {
                         .map(str::to_string)
                 });
                 let hash = content_key(&fields, effective.as_deref(), pair.names_there);
-                self.store
-                    .upsert_link(&Link::new(pair.subject.clone(), created_ref).with_hash(hash))?;
+                self.store.upsert_link(
+                    &Link::new(pair.subject.clone(), created_ref.clone()).with_hash(hash),
+                )?;
+                // A container is a field of the issue, so a newly created issue whose
+                // source named a paired project also lands on that project's board.
+                self.place_on_project(pair, &created_ref, fields.project.as_deref())?;
                 log::info!(
                     "created {} {} for {} {}",
                     pair.there.connector,
@@ -413,6 +455,10 @@ impl ReconcileHandler {
                         state.as_deref(),
                     )?,
                 }
+                // The issue's container travels with the same patch: a project that
+                // changed puts the issue on the new board (which moves it, as an
+                // issue sits on one project), and one that was cleared takes it off.
+                self.settle_project(pair, &reference, &patch, &fields)?;
                 // The link records the revision the target now holds - the projected
                 // fields, not the raw ones. Recording the source's own truth is how a
                 // field the target cannot hold turns into a difference forever.
@@ -640,7 +686,7 @@ impl ReconcileHandler {
         ) {
             survey
                 .entries
-                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps));
+                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps)?);
         }
         for pairing in sweep::pair_up(
             &projects_source,
@@ -650,7 +696,7 @@ impl ReconcileHandler {
         ) {
             survey
                 .entries
-                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps));
+                .push(self.judge(&mapping, &pairing, &source_caps, &sink_caps)?);
         }
         Ok(survey)
     }
@@ -676,6 +722,7 @@ impl ReconcileHandler {
                             comment: None,
                             comment_link: None,
                             counterpart_state: entry.counterpart_state.as_deref(),
+                            project_mirroring: there.connector == mapping.sink.connector,
                         },
                         step.clone(),
                     )?;
@@ -740,12 +787,12 @@ impl ReconcileHandler {
 
     /// What a sweep should do about one pairing.
     fn judge(
-        &self,
+        &mut self,
         mapping: &Mapping,
         pairing: &sweep::Pairing,
         source_caps: &Capabilities,
         sink_caps: &Capabilities,
-    ) -> Entry {
+    ) -> Result<Entry> {
         match (pairing.source.as_ref(), pairing.sink.as_ref()) {
             (Some(source), Some(sink)) => {
                 self.judge_pair(mapping, pairing, source, sink, source_caps, sink_caps)
@@ -762,24 +809,51 @@ impl ReconcileHandler {
 
     /// Both ends present: who moved, and what the other end gets.
     fn judge_pair(
-        &self,
+        &mut self,
         mapping: &Mapping,
         pairing: &sweep::Pairing,
         source: &Found,
         sink: &Found,
         source_caps: &Capabilities,
         sink_caps: &Capabilities,
-    ) -> Entry {
+    ) -> Result<Entry> {
         let source_names = mapping.policy.names.of(Side::Source);
         let sink_names = mapping.policy.names.of(Side::Sink);
+
+        // A forge reports an issue's project nowhere, so a sweep's view of the
+        // *sink's* project is what the pairing recorded when it placed the issue.
+        // Only an issue has a container, and only the mapping's sink holds it.
+        let mut sink_owned = sink.clone();
+        if source.reference.kind == EntityKind::Issue {
+            if let Some(project) = pairing.link.as_ref().and_then(|link| link.project.clone()) {
+                if sink_owned.fields.project.is_none() {
+                    sink_owned.fields.project = Some(project);
+                }
+            }
+        }
+        let sink = &sink_owned;
+
         let onto_sink = Projection::new(sink_caps, &mapping.users);
         let onto_source = Projection::new(source_caps, &mapping.users);
-        let source_as_sink = onto_sink.of(
+        // The source names its project in its own ids, while the comparison - and the
+        // hash a write records - are in the sink's: the pairing translates between
+        // them. An unpaired (or absent) project resolves to `None`, which places
+        // nothing and is deliberately not an error.
+        let mut source_as_sink = onto_sink.of(
             &source.fields,
             &mapping.source.connector,
             &mapping.sink.connector,
         );
-        let sink_as_source = onto_source.of(
+        if source.reference.kind == EntityKind::Issue {
+            source_as_sink.fields.project = self.project_on(
+                &mapping.source,
+                &mapping.sink.connector,
+                source.fields.project.as_deref(),
+            )?;
+        } else {
+            source_as_sink.fields.project = None;
+        }
+        let mut sink_as_source = onto_source.of(
             &sink.fields,
             &mapping.sink.connector,
             &mapping.source.connector,
@@ -787,7 +861,8 @@ impl ReconcileHandler {
         let recorded = pairing
             .link
             .as_ref()
-            .and_then(|link| link.last_synced_hash.clone());
+            .and_then(|link| link.recorded_revision())
+            .map(str::to_owned);
 
         // A pair with no record - adopted by its marker, or held without one - keeps the
         // source's revision, because that is what "source" means in the mapping.
@@ -806,9 +881,9 @@ impl ReconcileHandler {
                 },
             ) {
                 sweep::Verdict::InStep => {
-                    return in_step(source, sink, &source_as_sink.fields, sink_names)
+                    return Ok(in_step(source, sink, &source_as_sink.fields, sink_names))
                 }
-                sweep::Verdict::Conflict => return conflict(source, sink),
+                sweep::Verdict::Conflict => return Ok(conflict(source, sink)),
                 sweep::Verdict::Moved(side) => side,
                 sweep::Verdict::Adopted => Side::Source,
             },
@@ -817,9 +892,15 @@ impl ReconcileHandler {
 
         let (observed, counterpart, expected, target) = match winner {
             Side::Source => (source, sink, &source_as_sink, sink_caps),
-            Side::Sink => (sink, source, &sink_as_source, source_caps),
+            Side::Sink => {
+                // Writing back to the source: the container belongs to the sink, so
+                // it is not a difference the source is asked to resolve. Taking the
+                // source's own value makes the diff leave it alone.
+                sink_as_source.fields.project = source.fields.project.clone();
+                (sink, source, &sink_as_source, source_caps)
+            }
         };
-        decide(
+        Ok(decide(
             mapping,
             winner,
             observed,
@@ -827,18 +908,18 @@ impl ReconcileHandler {
             expected,
             target,
             recorded.as_deref(),
-        )
+        ))
     }
 
     /// One end present: mirror it, or say why the mapping does not.
     fn judge_single(
-        &self,
+        &mut self,
         mapping: &Mapping,
         found: &Found,
         side: Side,
         source_caps: &Capabilities,
         sink_caps: &Capabilities,
-    ) -> Entry {
+    ) -> Result<Entry> {
         let not_mirrored = |why: &str| Entry {
             subject: found.reference.clone(),
             side,
@@ -851,7 +932,7 @@ impl ReconcileHandler {
             record: None,
         };
         if !mapping.policy.direction.allows(side) {
-            return not_mirrored("the mapping only mirrors the other way");
+            return Ok(not_mirrored("the mapping only mirrors the other way"));
         }
 
         let (target_caps, target_connector) = match side {
@@ -859,8 +940,30 @@ impl ReconcileHandler {
             Side::Sink => (source_caps, &mapping.source.connector),
         };
         let projection = Projection::new(target_caps, &mapping.users);
-        let expected = projection.of(&found.fields, &found.reference.connector, target_connector);
-        decide(mapping, side, found, None, &expected, target_caps, None)
+        let mut expected =
+            projection.of(&found.fields, &found.reference.connector, target_connector);
+        // Only the mapping's sink holds the container: an issue that names a paired
+        // project lands on that project's board when it is created there. Any other
+        // direction leaves the field out.
+        if found.reference.kind == EntityKind::Issue && target_connector == &mapping.sink.connector
+        {
+            expected.fields.project = self.project_on(
+                mapping.endpoint(side),
+                target_connector,
+                found.fields.project.as_deref(),
+            )?;
+        } else {
+            expected.fields.project = None;
+        }
+        Ok(decide(
+            mapping,
+            side,
+            found,
+            None,
+            &expected,
+            target_caps,
+            None,
+        ))
     }
 
     /// Say what did not travel, once per delivery, at a level an operator sees.
@@ -871,6 +974,123 @@ impl ReconcileHandler {
         for skipped in skipped {
             log::warn!("`{mapping}`: {skipped}");
         }
+    }
+
+    /// The project the other end names, resolved through the project pairing.
+    ///
+    /// The source names a project by its own id; the sink knows it by a different
+    /// one. The pairing recorded when the projects were mirrored is what translates
+    /// between them. A project the issue names that is not paired (or no project at
+    /// all) resolves to `None` - which places nothing and is deliberately not an
+    /// error, because a forge without that project has nothing to do rather than a
+    /// reason to fail the whole issue.
+    fn project_on(
+        &mut self,
+        from: &Endpoint,
+        onto: &ConnectorId,
+        named: Option<&str>,
+    ) -> Result<Option<String>> {
+        let Some(named) = named else {
+            return Ok(None);
+        };
+        let reference = EntityRef {
+            connector: from.connector.clone(),
+            kind: EntityKind::Project,
+            scope: Some(from.scope.clone()),
+            native_id: named.to_string(),
+            url: None,
+        };
+        let Some(link) = self.store.find_link(&reference, onto)? else {
+            return Ok(None);
+        };
+        Ok(link
+            .counterpart(&reference)
+            .map(|found| found.native_id.clone()))
+    }
+
+    /// Put a newly mirrored issue on the board of the project it names, and record
+    /// where it landed. A no-op for anything but an issue, and for an issue whose
+    /// source named no paired project.
+    fn place_on_project(
+        &mut self,
+        pair: &Pair<'_>,
+        issue: &EntityRef,
+        project: Option<&str>,
+    ) -> Result<()> {
+        if pair.subject.kind != EntityKind::Issue || !pair.project_mirroring {
+            return Ok(());
+        }
+        if let Some(project) = project {
+            self.sink(&pair.there.connector)?.place_issue(
+                &pair.there.scope,
+                &issue.native_id,
+                project,
+            )?;
+            log::info!(
+                "placed {} {} on project {}",
+                pair.there.connector,
+                issue.native_id,
+                project
+            );
+        }
+        // Recorded whether or not there was a project, so a pairing that never had
+        // one is not later mistaken for one that did.
+        self.store.set_link_project(pair.subject, project)?;
+        Ok(())
+    }
+
+    /// Carry the container part of an issue update: a changed project moves the
+    /// issue (a forge issue sits on one project, so assigning the new board takes it
+    /// off the old), and a cleared one takes it off the board the record names.
+    fn settle_project(
+        &mut self,
+        pair: &Pair<'_>,
+        issue: &EntityRef,
+        patch: &Patch,
+        fields: &IssueFields,
+    ) -> Result<()> {
+        if pair.subject.kind != EntityKind::Issue || !pair.project_mirroring {
+            return Ok(());
+        }
+        let desired = fields.project.as_deref();
+        match &patch.project {
+            Change::Set(_) => {
+                if let Some(project) = desired {
+                    self.sink(&pair.there.connector)?.place_issue(
+                        &pair.there.scope,
+                        &issue.native_id,
+                        project,
+                    )?;
+                    log::info!(
+                        "moved {} {} to project {}",
+                        pair.there.connector,
+                        issue.native_id,
+                        project
+                    );
+                }
+            }
+            Change::Clear => {
+                // The id to remove it from is the one the pairing recorded: the
+                // platform reports it nowhere, and the patch only says "cleared".
+                let previous = self.store.link_project(pair.subject)?;
+                if let Some(project) = previous.as_deref() {
+                    self.sink(&pair.there.connector)?.remove_issue(
+                        &pair.there.scope,
+                        &issue.native_id,
+                        project,
+                    )?;
+                    log::info!(
+                        "removed {} {} from project {}",
+                        pair.there.connector,
+                        issue.native_id,
+                        project
+                    );
+                }
+            }
+            Change::Leave => {}
+        }
+        self.store.set_link_project(pair.subject, desired)?;
+        Ok(())
     }
 
     /// One end's current state, as the platform reports it.
