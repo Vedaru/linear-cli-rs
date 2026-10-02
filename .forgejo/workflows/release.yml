@@ -147,13 +147,18 @@ jobs:
           short=$(printf '%s' "$SHA" | cut -c1-12)
           stem="linear-cli-rs-${short}"
 
-          # The gate above built the service shape; keep its binary before the next build replaces it.
+          # Build the service shape here rather than trusting what the gate left at
+          # `target/release/linear`: both shapes write that one path, and the gate's last release
+          # build is the CLI-only one, so the first version of this step copied the same binary
+          # twice (caught by the size assertion below, after a fully green gate). Usually a no-op,
+          # since the gate has just built this shape.
+          cargo build --release --workspace --all-features --locked
           install -m 0755 "$src/target/release/linear" "$bins/linear-service"
-          (cd "$src" && cargo build --release -p linear --no-default-features --locked)
+          cargo build --release -p linear --no-default-features --locked
           install -m 0755 "$src/target/release/linear" "$bins/linear-cli"
 
           # The two must actually differ, or the feature gate is decorative and the "CLI" archive
-          # is the service under another name.
+          # is the service under another name. Both directions, because either copy can be wrong.
           service_size=$(stat -c%s "$bins/linear-service")
           cli_size=$(stat -c%s "$bins/linear-cli")
           echo "service binary: $service_size bytes; cli binary: $cli_size bytes"
@@ -161,6 +166,10 @@ jobs:
             echo "the service build is not larger than the CLI build - the feature gate is not doing anything" >&2
             exit 1
           fi
+          "$bins/linear-service" webhook --help >/dev/null 2>&1 || {
+            echo "the service build does not answer \`webhook\` - it was built without the service feature" >&2
+            exit 1
+          }
           "$bins/linear-cli" webhook --help >/dev/null 2>&1 && {
             echo "the CLI build answers \`webhook\` - it was built with the service feature" >&2
             exit 1
