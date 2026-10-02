@@ -234,6 +234,45 @@ fn every_adapter_refuses_a_stale_delivery_where_its_payload_carries_time() {
 }
 
 #[test]
+fn every_preset_verifies_what_the_platform_really_sends() {
+    // Built from the preset, the harness would happily sign whatever header and prefix the
+    // preset named - so this is the check that the *preset* matches the platform: the
+    // fixturs carry the contract as the platform's own documentation describes it.
+    for (name, fixture) in conformance_fixtures() {
+        let proof = fixture
+            .proof
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: its fixture declares no [proof] block"));
+        let scheme = source(&name).signature();
+
+        let declared = match scheme.algorithm {
+            Algorithm::HmacSha256 => "hmac-sha256",
+            Algorithm::Token => "token",
+        };
+        assert_eq!(
+            declared, proof.algorithm,
+            "{name}: the preset says it verifies with `{declared}`, the platform sends \
+             `{}`",
+            proof.algorithm
+        );
+        assert!(
+            scheme
+                .headers
+                .iter()
+                .any(|header| header.eq_ignore_ascii_case(&proof.header)),
+            "{name}: the platform sends its proof in `{}`, the preset reads {:?}",
+            proof.header,
+            scheme.headers
+        );
+        assert_eq!(
+            scheme.prefix.as_deref(),
+            proof.prefix.as_deref(),
+            "{name}: the digest is wrapped differently from how the platform wraps it"
+        );
+    }
+}
+
+#[test]
 fn every_preset_names_what_it_needs_to_be_configured() {
     for (name, _) in conformance_fixtures() {
         let spec = presets::preset(&name).expect("the preset loads");

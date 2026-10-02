@@ -9,3 +9,10 @@ body = '''{
 
 [headers]
 "X-GitHub-Event" = "issues"
+
+# The proof this platform actually sends, so the suite checks the preset against the
+# real contract rather than against itself.
+[proof]
+algorithm = "hmac-sha256"
+header = "X-Hub-Signature-256"
+prefix = "sha256="

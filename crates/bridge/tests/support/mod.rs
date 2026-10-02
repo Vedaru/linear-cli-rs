@@ -40,6 +40,26 @@ pub struct Fixture {
     /// The headers it sends that are not the proof.
     #[serde(default)]
     pub headers: std::collections::BTreeMap<String, String>,
+    /// What this platform really signs with, so the suite can hold the preset to the real
+    /// contract instead of to itself: the harness builds the proof from the *preset*, so
+    /// without this nothing would notice a preset that reads the wrong header.
+    ///
+    /// Absent on a fixture that says `same_as`: it inherits the fixture it points at,
+    /// proof and all.
+    #[serde(default)]
+    pub proof: Option<Proof>,
+}
+
+/// A platform's proof of authenticity, as its own documentation describes it.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Proof {
+    /// `hmac-sha256` or `token`.
+    pub algorithm: String,
+    /// The header the platform sends it in, spelled as the platform spells it.
+    pub header: String,
+    /// What wraps the digest, if anything (`sha256=` on GitHub).
+    #[serde(default)]
+    pub prefix: Option<String>,
 }
 
 impl Fixture {

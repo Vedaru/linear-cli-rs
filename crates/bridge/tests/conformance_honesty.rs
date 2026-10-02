@@ -192,6 +192,24 @@ fn unbacked_claims(name: &str, source: &SourceSpec, sink: &SinkSpec) -> Vec<Stri
         claimed.deletion,
         sink.issue.delete.is_some(),
     ));
+    // The claim covers both halves - emitting and accepting - so it needs evidence on the
+    // read side too: a preset that says it can observe a deletion must have a rule that
+    // would recognise one, or the platform's deletion arrives and is dropped.
+    failures.extend(unbacked(
+        name,
+        "deletion (observable)",
+        claimed.deletion,
+        source.event.rules.iter().any(|rule| {
+            let event = rule.event.to_ascii_lowercase();
+            event.contains("delet")
+                || event.contains("remove")
+                || rule.actions.iter().any(|(action, kind)| {
+                    action.to_ascii_lowercase().contains("delet")
+                        || action.to_ascii_lowercase().contains("remove")
+                        || kind.to_ascii_lowercase().contains("delet")
+                })
+        }),
+    ));
 
     // And the mirror of the same defect: a field the preset *reads* is a field the
     // reconciler compares, so reading one the platform can never be told about makes
@@ -254,8 +272,18 @@ fn a_preset_that_claims_a_field_it_never_sends_fails_this_suite() {
     // VED-29's acceptance clause, written as the defect it describes: an adapter that
     // claims due-date support and drops it. Leaving the claim alone and removing what
     // backs it is what "drops it" looks like in a preset.
-    let mut spec = presets::preset("forgejo").expect("the preset loads");
-    let mut sink = spec.sink.clone().expect("forgejo writes");
+    // No platform named: the first preset that ships a fixture *and* claims due dates is
+    // the one to doctor, so this test cannot rot into naming a platform that changed.
+    let name = presets::preset_names()
+        .into_iter()
+        .find(|name| {
+            presets::preset(name)
+                .map(|spec| spec.capabilities.due_dates && spec.sink.is_some())
+                .unwrap_or(false)
+        })
+        .expect("some preset claims due dates, or this check has nothing to prove");
+    let mut spec = presets::preset(name).expect("the preset loads");
+    let mut sink = spec.sink.clone().expect("it writes");
 
     // Removing what backs the claim, leaving the claim: exactly what "claims due-date
     // support and drops it" looks like. Every operation, because a preset that carries a
@@ -270,7 +298,7 @@ fn a_preset_that_claims_a_field_it_never_sends_fails_this_suite() {
         spec.capabilities.due_dates,
         "the fixture has to keep claiming it, or this proves nothing"
     );
-    let failures = unbacked_claims("forgejo (doctored)", &spec, &sink);
+    let failures = unbacked_claims(&format!("{name} (doctored)"), &spec, &sink);
     assert!(
         failures.iter().any(|failure| failure.contains("due_dates")),
         "a claim with nothing behind it must fail the suite, got: {failures:?}"

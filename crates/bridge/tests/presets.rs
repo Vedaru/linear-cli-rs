@@ -157,18 +157,6 @@ fn linear_rejects_a_stale_delivery_and_a_payload_without_an_id() {
     ));
 }
 
-#[test]
-fn linear_declares_what_it_can_carry() {
-    let capabilities = source("linear").capabilities();
-    assert!(capabilities.supports(linear_bridge::domain::Field::Priority));
-    assert!(capabilities.supports(linear_bridge::domain::Field::DueDate));
-    assert!(capabilities.supports(linear_bridge::domain::Field::Deletion));
-    assert_eq!(
-        capabilities.states,
-        linear_bridge::domain::StateModel::Named
-    );
-}
-
 // --- Forgejo ----------------------------------------------------------------
 
 #[test]
@@ -325,78 +313,7 @@ fn forgejo_accepts_the_legacy_gitea_headers_and_ignores_pings() {
     );
 }
 
-#[test]
-fn forgejo_declares_that_it_cannot_observe_deletions() {
-    let capabilities = source("forgejo").capabilities();
-    assert!(!capabilities.supports(linear_bridge::domain::Field::Deletion));
-    assert!(!capabilities.supports(linear_bridge::domain::Field::Priority));
-    assert!(capabilities.supports(linear_bridge::domain::Field::DueDate));
-}
-
 // --- GitHub and GitLab ------------------------------------------------------
-
-#[test]
-fn github_deliveries_use_the_sha256_prefixed_signature_and_its_own_event_header() {
-    let source = source("github");
-    let body = br#"{
-        "action": "opened",
-        "repository": { "full_name": "o/r" },
-        "sender": { "login": "vedaru" },
-        "issue": { "number": 12, "html_url": "https://github.com/o/r/issues/12" }
-    }"#;
-    let events = source
-        .parse(&headers(&[("X-GitHub-Event", "issues")]), body)
-        .unwrap();
-    assert_eq!(events[0].kind, EntityKind::Issue);
-    assert_eq!(events[0].subject.native_id, "12");
-    assert_eq!(events[0].subject.scope.as_deref(), Some("o/r"));
-
-    // The scheme names the prefixed header, so a bare digest cannot be mistaken
-    // for a valid signature.
-    let scheme = source.signature();
-    assert_eq!(scheme.headers, vec!["x-hub-signature-256"]);
-    assert_eq!(scheme.prefix.as_deref(), Some("sha256="));
-}
-
-#[test]
-fn gitlab_uses_a_shared_token_instead_of_a_body_signature() {
-    let source = source("gitlab");
-    assert_eq!(
-        source.signature().algorithm,
-        linear_bridge::connector::Algorithm::Token
-    );
-
-    let body = br#"{
-        "object_attributes": { "action": "open", "iid": 9, "url": "https://gitlab/x/-/issues/9" },
-        "project": { "path_with_namespace": "group/project" },
-        "user": { "username": "vedaru" }
-    }"#;
-    let events = source
-        .parse(&headers(&[("X-Gitlab-Event", "Issue Hook")]), body)
-        .unwrap();
-    assert_eq!(events[0].kind, EntityKind::Issue);
-    assert_eq!(events[0].action, Action::Created);
-    assert_eq!(events[0].subject.native_id, "9");
-    assert_eq!(events[0].subject.scope.as_deref(), Some("group/project"));
-
-    let note = br#"{
-        "object_attributes": { "action": "create", "id": 5, "note": "hi", "noteable_id": 9 },
-        "project": { "path_with_namespace": "group/project" },
-        "user": { "username": "vedaru" }
-    }"#;
-    let events = source
-        .parse(&headers(&[("X-Gitlab-Event", "Note Hook")]), note)
-        .unwrap();
-    assert_eq!(events[0].kind, EntityKind::Comment);
-    assert_eq!(events[0].subject.native_id, "9");
-    assert_eq!(
-        events[0].detail,
-        EventDetail::Comment {
-            id: Some("5".into()),
-            body: Some("hi".into())
-        }
-    );
-}
 
 #[test]
 fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
