@@ -126,9 +126,11 @@ impl Harness {
         stream
             // Generous on purpose: a test client waiting on a local server must not
             // decide whether the suite is green. Five seconds was enough on an idle
-            // machine and not on a busy one - the same run passed twice and failed once
-            // with a read timeout, under a workspace-wide test run.
-            .set_read_timeout(Some(Duration::from_secs(30)))
+            // machine and not on a busy one; thirty was not enough on a busy one either
+            // (in CI the whole request went unanswered while a release build used the
+            // same four cores). When something is genuinely broken the suite still
+            // fails - two minutes later.
+            .set_read_timeout(Some(Duration::from_secs(120)))
             .unwrap();
 
         let mut request = format!(
@@ -237,19 +239,26 @@ fn a_signed_linear_delivery_is_accepted_queued_and_drained() {
 
     // And the worker picks it up: with a logging handler it completes.
     //
-    // The deadline is generous on purpose: CI runs on the same machine as the
-    // tests, so a build in another job can starve this one for seconds. Ten seconds
-    // was not enough - this failed once in three workspace runs, with the suite
-    // taking exactly the deadline and passing on the next run unchanged.
+    // The deadline is generous on purpose: CI runs on the same machine as the tests,
+    // and so does whatever else is being built - a release build on this four-core box
+    // took 2m42s while a workspace test run was going. Ten seconds was not enough
+    // (this failed once in three workspace runs, with the suite taking exactly the
+    // deadline and passing on the next run unchanged), and sixty was not enough either:
+    // in CI the intake's *next* request got no answer at all and this test waited its
+    // whole budget. Two minutes costs nothing on the happy path, which is 0.3s.
     let mut drained = false;
-    for _ in 0..1200 {
+    for _ in 0..2400 {
         if store.counts().unwrap().done == 1 {
             drained = true;
             break;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(drained, "the worker never drained the delivery");
+    assert!(
+        drained,
+        "the worker never drained the delivery: {:?}",
+        store.counts().unwrap()
+    );
 }
 
 #[test]
