@@ -21,8 +21,11 @@ probe() { # method path outfile -> status code
     method=$1
     path=$2
     out=$3
-    curl -sS -m 20 -o "$out" -D "$out.headers" -w '%{http_code}' \
-        -X "$method" "${base}${path}" 2>"$out.err" || echo 000
+    # `|| code=000` rather than piping into a fallback: curl still prints `000` through `-w`
+    # when it cannot connect, so appending a second one yields `000000`.
+    code=$(curl -sS -m 20 -o "$out" -D "$out.headers" -w '%{http_code}' \
+        -X "$method" "${base}${path}" 2>"$out.err") || code=000
+    printf '%s' "$code"
 }
 
 say() { printf '%s\n' "$*"; }
@@ -30,6 +33,11 @@ say() { printf '%s\n' "$*"; }
 # 1. /healthz: the bridge's own JSON, or something in front of it.
 code=$(probe GET /healthz "$tmp/health")
 case "$code" in
+000)
+    say "FAIL  GET /healthz -> no answer: $(head -c 200 "$tmp/health.err" 2>/dev/null || true)"
+    say "      nothing is listening on that address, or the route does not reach the host"
+    fail=1
+    ;;
 301 | 302 | 307 | 308)
     say "FAIL  GET /healthz -> $code"
     say "      $(tr -d '\r' <"$tmp/health.headers" | grep -i '^location:' || true)"

@@ -112,6 +112,10 @@ curl -s localhost:8787/healthz               # store liveness and delivery count
 
 ## Running it as a container
 
+The full runbook is **[container.md](container.md)** — prerequisites (a reachable base image),
+the build, the mounts, verification, upgrades and the failure signatures. What follows is the short
+version.
+
 `deploy/Dockerfile` and `deploy/compose.yaml`. The image is built from the **release asset**, not
 from source: nothing is compiled in it, and the binary it carries is the one the pipeline tested.
 
