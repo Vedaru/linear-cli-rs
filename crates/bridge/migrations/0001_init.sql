@@ -1,12 +1,19 @@
 -- Bridge schema, revision 1.
 --
--- Every table is keyed by (connector, ...) rather than by platform-name columns:
--- a third platform must not require a migration of shape, and an operator may
--- run two connectors of the same kind (two forges) without their rows colliding.
+-- NOT YET DEPLOYED ANYWHERE: while that is true, this revision is amended in
+-- place rather than superseded. The moment a real database exists outside a test
+-- the rule changes and a revision is added instead - `migrate` records applied
+-- revisions and never re-runs one.
 --
--- `deliveries` is the durable queue *and* the replay log: the raw body is kept
--- so a handler can be re-run against exactly what the provider sent, which is
--- the only way to diagnose a sync bug after deploying a fix.
+-- Every table is keyed by (connector, scope, id) rather than by platform-name
+-- columns: a third platform must not require a migration of shape, an operator
+-- may run two connectors of the same kind (two forges) without their rows
+-- colliding, and an id is only unique *within* its scope (a forge issue number is
+-- per repository).
+--
+-- `deliveries` is the durable queue *and* the replay log: the raw body is kept so
+-- a handler can be re-run against exactly what the provider sent, which is the
+-- only way to diagnose a sync bug after deploying a fix.
 
 CREATE TABLE IF NOT EXISTS deliveries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,38 +39,51 @@ CREATE TABLE IF NOT EXISTS deliveries (
 -- full scan of the delivery log on every queue tick.
 CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries (status, available_at);
 
--- Links between the same entity on two platforms, plus the hash of the content
--- last written. The hash is what turns "the provider said it changed" into "and
--- it actually differs from what we wrote", which is how echoes of our own writes
--- are dropped. Consumed by the reconciler from M3 onwards.
+-- Links between the same entity on two connectors, plus the hash of the content
+-- last written across the link. The hash is what turns "the provider said it
+-- changed" into "and it actually differs from what we wrote", which is how echoes
+-- of our own writes are dropped.
+--
+-- Left/right are symmetric: a mapping may mirror either direction, and the
+-- reconciler looks a link up from whichever side produced the event. `kind` is
+-- recorded so a row is self-describing (`sync status` can print it) and so a link
+-- can be resumed without re-deriving what it points at.
 CREATE TABLE IF NOT EXISTS entity_links (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- Left/right are symmetric: a mapping may mirror either direction, and the
-    -- reconciler looks a link up from whichever side produced the event.
-    left_connector  TEXT    NOT NULL,
-    left_scope      TEXT,
-    left_id         TEXT    NOT NULL,
-    right_connector TEXT    NOT NULL,
-    right_scope     TEXT,
-    right_id        TEXT    NOT NULL,
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    left_connector   TEXT    NOT NULL,
+    -- '' rather than NULL: an absent scope must still take part in the
+    -- uniqueness rule, and SQLite treats NULLs in a UNIQUE constraint as distinct.
+    left_scope       TEXT    NOT NULL DEFAULT '',
+    left_kind        TEXT    NOT NULL,
+    left_id          TEXT    NOT NULL,
+    right_connector  TEXT    NOT NULL,
+    right_scope      TEXT    NOT NULL DEFAULT '',
+    right_kind       TEXT    NOT NULL,
+    right_id         TEXT    NOT NULL,
     last_synced_hash TEXT,
-    updated_at      INTEGER NOT NULL,
-    UNIQUE (left_connector, left_id, right_connector, right_id)
+    updated_at       INTEGER NOT NULL,
+    UNIQUE (left_connector, left_scope, left_id, right_connector, right_scope, right_id)
 );
 
-CREATE INDEX IF NOT EXISTS entity_links_left ON entity_links (left_connector, left_id);
-CREATE INDEX IF NOT EXISTS entity_links_right ON entity_links (right_connector, right_id);
+CREATE INDEX IF NOT EXISTS entity_links_left ON entity_links (left_connector, left_scope, left_id);
+CREATE INDEX IF NOT EXISTS entity_links_right ON entity_links (right_connector, right_scope, right_id);
 
 -- Which entities a pull request or commit touched, so a merged PR can transition
--- every issue it referenced.
+-- every issue it referenced - and so the same reference is not attached twice.
 CREATE TABLE IF NOT EXISTS reference_links (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    connector   TEXT    NOT NULL,
-    scope       TEXT,
-    reference_id TEXT   NOT NULL,
-    target_connector TEXT NOT NULL,
-    target_id   TEXT    NOT NULL,
-    url         TEXT,
-    created_at  INTEGER NOT NULL,
-    UNIQUE (connector, reference_id, target_connector, target_id)
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_connector TEXT    NOT NULL,
+    source_scope     TEXT    NOT NULL DEFAULT '',
+    source_kind      TEXT    NOT NULL,
+    source_id        TEXT    NOT NULL,
+    target_connector TEXT    NOT NULL,
+    target_scope     TEXT    NOT NULL DEFAULT '',
+    target_kind      TEXT    NOT NULL,
+    target_id        TEXT    NOT NULL,
+    url              TEXT,
+    created_at       INTEGER NOT NULL,
+    UNIQUE (source_connector, source_scope, source_id, target_connector, target_scope, target_id)
 );
+
+CREATE INDEX IF NOT EXISTS reference_links_target
+    ON reference_links (target_connector, target_scope, target_id);

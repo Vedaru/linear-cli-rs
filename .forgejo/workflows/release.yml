@@ -105,11 +105,11 @@ jobs:
               rc=1
             fi
           }
-          check "cargo build --locked" cargo build --locked
-          check "cargo test --locked" cargo test --locked
-          check "cargo clippy --all-targets --locked -- -D warnings" \
-                cargo clippy --all-targets --locked -- -D warnings
-          check "cargo build --release --locked" cargo build --release --locked
+          check "cargo build --workspace --locked" cargo build --workspace --locked
+          check "cargo test --workspace --locked" cargo test --workspace --locked
+          check "cargo clippy --workspace --all-targets --locked -- -D warnings" \
+                cargo clippy --workspace --all-targets --locked -- -D warnings
+          check "cargo build --release --workspace --locked" cargo build --release --workspace --locked
           if [ "$rc" -eq 0 ]; then echo "gate: PASS"; else echo "gate: FAIL"; fi
           exit "$rc"
 

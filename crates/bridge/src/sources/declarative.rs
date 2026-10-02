@@ -17,12 +17,12 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::connector::{Algorithm, HeaderMap, Reject, SignatureScheme, Source};
+use crate::domain::references::CLOSING_KEYWORDS as DEFAULT_CLOSING_KEYWORDS;
 use crate::domain::{
     Action, Actor, Capabilities, ConnectorId, DeliveryId, EntityKind, EntityRef, Event,
     EventDetail, Secret, StateModel,
 };
 use crate::pointer::{resolve, resolve_string};
-use crate::sources::FORGE_CLOSING_KEYWORDS;
 use crate::verify::body_digest;
 
 /// A full platform description.
@@ -425,7 +425,7 @@ impl DeclarativeSource {
                 text: join_text(item, root, &rule.fields.text).unwrap_or_default(),
                 closing_keywords: match &rule.closing_keywords {
                     Some(configured) => configured.clone(),
-                    None => FORGE_CLOSING_KEYWORDS
+                    None => DEFAULT_CLOSING_KEYWORDS
                         .iter()
                         .map(|keyword| (*keyword).to_string())
                         .collect(),

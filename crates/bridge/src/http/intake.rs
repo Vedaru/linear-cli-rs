@@ -256,10 +256,9 @@ mod tests {
 
     #[test]
     fn a_stale_linear_timestamp_is_rejected() {
-        let body = format!(
-            r#"{{"action":"create","type":"Issue","webhookTimestamp":0,"data":{{"id":"x"}}}}"#
-        )
-        .into_bytes();
+        let body = r#"{"action":"create","type":"Issue","webhookTimestamp":0,"data":{"id":"x"}}"#
+            .as_bytes()
+            .to_vec();
         let outcome = intake().decide("POST", "/webhooks/linear", &linear_headers(&body), &body);
         assert_eq!(outcome.status(), 400);
     }

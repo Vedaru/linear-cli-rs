@@ -17,6 +17,11 @@ path = "src/main.rs"
 # driven from a test, from an agent, or from the service loop rather than only
 # from argv. See crates/bridge/README.md for the layering rules.
 members = ["crates/bridge"]
+# A bare `cargo test` in the repository root must mean "the whole product", not
+# "the binary's crate". Without this, `cargo test` silently skipped every test in
+# crates/bridge - including the CI gate's, which is how a whole crate's suite can
+# be green-by-absence. The workflows pass `--workspace` explicitly as well.
+default-members = [".", "crates/bridge"]
 
 [dependencies]
 # The webhook/bridge framework: domain model, connector traits, webhook intake,
