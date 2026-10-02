@@ -71,8 +71,21 @@ pub trait Sink: Send + Sync {
     /// A [`Patch`], not a field set: an update that restated every field would
     /// overwrite whatever the other side holds for the ones it did not actually
     /// change, and it is the difference the caller has already worked out.
-    fn update_issue(&self, scope: &str, id: &str, patch: &Patch, state: Option<&str>)
-        -> Result<()>;
+    /// Apply a patch.
+    ///
+    /// `effective` is what the issue will *hold* afterwards - the projected field set, of
+    /// which `patch` is the difference. A platform that carries the priority or the due
+    /// date in a label needs it, because writing the labels means writing the whole set:
+    /// the patch says "the labels changed" and says nothing about a value it did not
+    /// move, so a sink left to infer it from the patch alone would drop it.
+    fn update_issue(
+        &self,
+        scope: &str,
+        id: &str,
+        patch: &Patch,
+        effective: &IssueFields,
+        state: Option<&str>,
+    ) -> Result<()>;
 
     fn comment(&self, scope: &str, id: &str, body: &str) -> Result<RemoteRef>;
 

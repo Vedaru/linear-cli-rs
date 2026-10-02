@@ -42,7 +42,10 @@ fn forgejo_routes(method: &str, path: &str, _body: &Value) -> (u16, Value) {
             json!([
                 { "id": 3, "name": "Bug" },
                 { "id": 9, "name": "Urgent" },
-                { "id": 11, "name": "priority:high" }
+                { "id": 11, "name": "priority:high" },
+                // A label the bridge wrote as an emulated due date, which is what a
+                // platform with no due-date field is asked for.
+                { "id": 21, "name": "due:2026-10-09" }
             ]),
         ),
         // A sweep: two pages, the second one short - which is how a numbered API
@@ -119,6 +122,46 @@ fn forgejo_routes(method: &str, path: &str, _body: &Value) -> (u16, Value) {
 }
 
 #[test]
+fn an_emulated_due_date_survives_a_labels_only_update() {
+    // The bug this pins: a labels-only patch has nothing to say about the due date, so a
+    // sink that read the value out of the patch would send the label set *without* the
+    // emulated label - and the target would lose a date nobody touched. On a platform that
+    // carries the date in a label, writing the labels means writing the whole set.
+    let fake = Fake::start(forgejo_routes);
+    let preset = presets::preset("forgejo").expect("the preset loads");
+    let mut capabilities: linear_bridge::domain::Capabilities = preset.capabilities.clone().into();
+    capabilities.due_dates = false;
+    let sink = fake.sink_with(
+        "forgejo",
+        preset.sink.clone().expect("forgejo writes"),
+        capabilities,
+    );
+
+    // Only the labels move.
+    let patch = Patch {
+        labels: Change::Set(vec!["bug".into()]),
+        ..Default::default()
+    };
+    let effective = IssueFields {
+        labels: vec!["bug".into()],
+        due_date: Some("2026-10-09".into()),
+        ..Default::default()
+    };
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, &effective, None)
+        .expect("update");
+
+    // The label set the forge is asked to hold carries the date, resolved to the id the
+    // platform knows it by.
+    let sent = fake.only("PUT", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/labels");
+    assert_eq!(
+        sent.body["labels"],
+        json!([3, 21]),
+        "the emulated due date has to be in the set: {}",
+        sent.body
+    );
+}
+
+#[test]
 fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
     let fake = Fake::start(forgejo_routes);
     let sink = fake.sink("forgejo");
@@ -161,7 +204,7 @@ fn a_patch_sends_only_what_it_changes() {
         title: Change::Set("Renamed".into()),
         ..Patch::default()
     };
-    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, None)
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, &fields(), None)
         .expect("update");
 
     let update = fake.only("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12");
@@ -195,8 +238,14 @@ fn a_patch_clears_exactly_what_it_says_it_clears() {
         assignee: Change::Clear,
         ..Patch::default()
     };
-    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, Some("closed"))
-        .expect("update");
+    sink.update_issue(
+        "Vedaru/linear-cli-rs",
+        "12",
+        &patch,
+        &fields(),
+        Some("closed"),
+    )
+    .expect("update");
 
     let update = fake.only("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12");
     // A present null is the instruction "clear it" - the one thing that must not be
@@ -221,7 +270,7 @@ fn a_priority_change_rewrites_the_label_set_it_travels_in() {
         labels: Change::Set(vec!["bug".into()]),
         ..Patch::default()
     };
-    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, None)
+    sink.update_issue("Vedaru/linear-cli-rs", "12", &patch, &fields(), None)
         .expect("update");
 
     let labels = fake.only("PUT", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/labels");

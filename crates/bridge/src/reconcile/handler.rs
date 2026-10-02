@@ -376,6 +376,7 @@ impl ReconcileHandler {
                     &pair.there.scope,
                     &reference.native_id,
                     &patch,
+                    &fields,
                     state.as_deref(),
                 )?;
                 // The link records the revision the target now holds - the projected

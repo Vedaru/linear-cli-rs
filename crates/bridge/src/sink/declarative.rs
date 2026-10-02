@@ -692,18 +692,21 @@ impl Sink for DeclarativeSink {
         scope: &str,
         id: &str,
         patch: &Patch,
+        effective: &IssueFields,
         state: Option<&str>,
     ) -> Result<()> {
         let update = self.operation("update", self.spec.issue.update.as_ref())?;
-        // The effective priority travels with the call: on a platform that carries
-        // the priority inside a label, writing the labels without it drops it.
+        // The *effective* values travel with the call, not the patch's: on a platform
+        // that carries the priority or the due date inside a label, writing the labels
+        // without it drops it - and the patch has nothing to say about a field it did
+        // not move.
         let values = self.context(
             update,
             &Call::new(scope)
                 .id(id)
                 .patch(patch)
-                .priority(patch.priority.value().copied())
-                .due_date(patch.due_date.value().map(String::as_str))
+                .priority(Some(effective.priority))
+                .due_date(effective.due_date.as_deref())
                 .state(state),
         )?;
         self.execute(update, &values)?;
@@ -718,8 +721,8 @@ impl Sink for DeclarativeSink {
                     &Call::new(scope)
                         .id(id)
                         .patch(patch)
-                        .priority(patch.priority.value().copied())
-                        .due_date(patch.due_date.value().map(String::as_str)),
+                        .priority(Some(effective.priority))
+                        .due_date(effective.due_date.as_deref()),
                 )?;
                 self.execute(labels, &values)?;
             }
