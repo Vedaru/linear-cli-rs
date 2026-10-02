@@ -155,13 +155,25 @@ path = "/repos/{scope}/issues/{id}/labels"
 [sink.issue.labels.body]
 labels = "$label_ids"
 
-[sink.issue.comment]
+# A comment is created through its issue, then addressed by its own id: a mirrored
+# edit must reach the copy rather than become a second comment.
+[sink.issue.comment.create]
 method = "POST"
 path = "/repos/{scope}/issues/{id}/comments"
 id = "/id"
 url = "/html_url"
-[sink.issue.comment.body]
+[sink.issue.comment.create.body]
 body = "$body"
+
+[sink.issue.comment.update]
+method = "PATCH"
+path = "/repos/{scope}/issues/comments/{id}"
+[sink.issue.comment.update.body]
+body = "$body"
+
+[sink.issue.comment.delete]
+method = "DELETE"
+path = "/repos/{scope}/issues/comments/{id}"
 
 [sink.issue.transition]
 method = "PATCH"

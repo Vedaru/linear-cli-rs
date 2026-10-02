@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use linear_bridge::domain::IssueFields;
 use linear_bridge::sink::Sink;
+use linear_bridge::sources::presets;
 
 use support::Fake;
 
@@ -63,6 +64,10 @@ fn forgejo_routes(method: &str, path: &str, _body: &Value) -> (u16, Value) {
                 "assignees": [{ "login": "vedaru" }],
             }),
         ),
+        ("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77") => {
+            (200, json!({ "id": 77 }))
+        }
+        ("DELETE", "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77") => (200, json!({})),
         ("POST", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/comments") => (
             201,
             json!({ "id": 77, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12#comment-77" }),
@@ -161,6 +166,61 @@ fn a_comment_returns_the_id_the_other_side_will_link_to() {
         "/api/v1/repos/Vedaru/linear-cli-rs/issues/12/comments",
     );
     assert_eq!(comment.body["body"], "mirrored comment");
+}
+
+#[test]
+fn a_mirrored_comment_can_be_edited_and_removed() {
+    let fake = Fake::start(forgejo_routes);
+    let sink = fake.sink("forgejo");
+
+    // A comment is created through its issue...
+    let created = sink
+        .comment("Vedaru/linear-cli-rs", "12", "looks good")
+        .expect("comment");
+    assert_eq!(created.id, "77");
+
+    // ...and everything after that is addressed by its own id, on its own path: an
+    // edit that went to the issue's comment *collection* would post a second comment.
+    sink.update_comment("Vedaru/linear-cli-rs", "77", "looks good (edited)")
+        .expect("update");
+    let patch = fake.only(
+        "PATCH",
+        "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77",
+    );
+    assert_eq!(patch.body["body"], "looks good (edited)");
+
+    sink.delete_comment("Vedaru/linear-cli-rs", "77")
+        .expect("delete");
+    fake.only(
+        "DELETE",
+        "/api/v1/repos/Vedaru/linear-cli-rs/issues/comments/77",
+    );
+}
+
+#[test]
+fn a_platform_that_cannot_edit_a_comment_says_so_by_name() {
+    // The engine refuses an operation the spec does not declare rather than
+    // inventing a request: a mapping that needs comment edits on a platform that
+    // has none should hear about it, not silently post duplicates.
+    let fake = Fake::start(forgejo_routes);
+    // The preset's write half, with the one operation taken away: a platform that
+    // cannot edit a comment is a real case (an older API, a stricter token).
+    let forgejo = presets::preset("forgejo").expect("the preset");
+    let capabilities: linear_bridge::domain::Capabilities = forgejo.capabilities.into();
+    let mut spec = forgejo.sink.expect("the preset has a write half");
+    spec.issue
+        .comment
+        .as_mut()
+        .expect("a comment section")
+        .update = None;
+    let sink = fake.sink_with("forgejo", spec, capabilities);
+
+    let error = sink
+        .update_comment("Vedaru/linear-cli-rs", "77", "edited")
+        .expect_err("the spec declares no comment.update");
+    let message = error.to_string();
+    assert!(message.contains("comment.update"), "{message}");
+    assert!(message.contains("forgejo"), "{message}");
 }
 
 #[test]

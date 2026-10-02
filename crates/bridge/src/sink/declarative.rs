@@ -507,10 +507,43 @@ impl Sink for DeclarativeSink {
     }
 
     fn comment(&self, scope: &str, id: &str, body: &str) -> Result<RemoteRef> {
-        let comment = self.operation("comment", self.spec.issue.comment.as_ref())?;
+        let create = self
+            .spec
+            .issue
+            .comment
+            .as_ref()
+            .map(|comment| &comment.create);
+        let comment = self.operation("comment", create)?;
+        // `$id` is the issue here: a new comment is addressed through its parent.
         let values = self.context(comment, &Call::new(scope).id(id).comment(body))?;
         let reference = self.execute(comment, &values)?;
         Ok(reference)
+    }
+
+    fn update_comment(&self, scope: &str, id: &str, body: &str) -> Result<()> {
+        let update = self
+            .spec
+            .issue
+            .comment
+            .as_ref()
+            .and_then(|comment| comment.update.as_ref());
+        let comment = self.operation("comment.update", update)?;
+        let values = self.context(comment, &Call::new(scope).id(id).comment(body))?;
+        self.execute(comment, &values)?;
+        Ok(())
+    }
+
+    fn delete_comment(&self, scope: &str, id: &str) -> Result<()> {
+        let delete = self
+            .spec
+            .issue
+            .comment
+            .as_ref()
+            .and_then(|comment| comment.delete.as_ref());
+        let comment = self.operation("comment.delete", delete)?;
+        let values = self.context(comment, &Call::new(scope).id(id))?;
+        self.execute(comment, &values)?;
+        Ok(())
     }
 
     fn transition(&self, scope: &str, id: &str, state: &str) -> Result<()> {

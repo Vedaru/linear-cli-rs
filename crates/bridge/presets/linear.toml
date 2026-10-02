@@ -141,14 +141,28 @@ path = ""
 query = "mutation IssueArchive($id: String!) { issueArchive(id: $id) { success } }"
 variables = { id = "$id" }
 
-[sink.issue.comment]
+[sink.issue.comment.create]
 method = "POST"
 path = ""
 id = "/data/commentCreate/comment/id"
 url = "/data/commentCreate/comment/url"
-[sink.issue.comment.body]
+[sink.issue.comment.create.body]
 query = "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id url } } }"
 variables = { input = { issueId = "$id", body = "$body" } }
+
+[sink.issue.comment.update]
+method = "POST"
+path = ""
+[sink.issue.comment.update.body]
+query = "mutation CommentUpdate($id: String!, $input: CommentUpdateInput!) { commentUpdate(id: $id, input: $input) { success } }"
+variables = { id = "$id", input = { body = "$body" } }
+
+[sink.issue.comment.delete]
+method = "POST"
+path = ""
+[sink.issue.comment.delete.body]
+query = "mutation CommentDelete($id: String!) { commentDelete(id: $id) { success } }"
+variables = { id = "$id" }
 
 [sink.issue.transition]
 method = "POST"

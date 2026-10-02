@@ -40,8 +40,13 @@ struct World {
     linear: Option<Value>,
     forgejo: Option<Value>,
     forgejo_next: i64,
+    /// Comments posted on the forge, and every edit or deletion of one.
     forgejo_comments: Vec<Value>,
+    forgejo_comment_calls: Vec<(String, Value)>,
     linear_comments: Vec<Value>,
+    /// Edits and deletions of mirrored comments, as Linear received them.
+    linear_comment_edits: Vec<Value>,
+    linear_comment_deletions: Vec<Value>,
 }
 
 fn state() -> Arc<Mutex<World>> {
@@ -113,6 +118,22 @@ fn linear_routes(
                     json!({ "data": { "issueUpdate": { "success": true } } }),
                 )
             }
+            _ if query.contains("CommentUpdate") => {
+                world.linear_comment_edits.push(body["variables"].clone());
+                (
+                    200,
+                    json!({ "data": { "commentUpdate": { "success": true } } }),
+                )
+            }
+            _ if query.contains("CommentDelete") => {
+                world
+                    .linear_comment_deletions
+                    .push(body["variables"]["id"].clone());
+                (
+                    200,
+                    json!({ "data": { "commentDelete": { "success": true } } }),
+                )
+            }
             _ if query.contains("CommentCreate") => {
                 let input = &body["variables"]["input"];
                 world.linear_comments.push(input.clone());
@@ -137,6 +158,18 @@ fn forgejo_routes(
 ) -> impl Fn(&str, &str, &Value) -> (u16, Value) + Send + Sync {
     move |method, path, body| {
         let mut world = world.lock().unwrap();
+        // A comment is addressed by its own id, which is a different path from the
+        // issue it belongs to - and the difference is the whole point of this route.
+        if path.contains("/issues/comments/") {
+            world
+                .forgejo_comment_calls
+                .push((method.to_string(), body.clone()));
+            return match method {
+                "PATCH" => (200, json!({ "id": 1, "body": body["body"] })),
+                "DELETE" => (200, json!({})),
+                _ => (405, json!({ "message": "no such comment method" })),
+            };
+        }
         let issue_at = path.starts_with("/api/v1/repos/Vedaru/linear-cli-rs/issues/");
         let suffix = path.rsplit('/').next().unwrap_or_default().to_string();
         match (
@@ -334,6 +367,11 @@ impl Harness {
             .expect("the delivery is handled");
     }
 
+    /// Every link that has this entity at either end.
+    fn links_for(&mut self, side: EntityRef) -> Vec<linear_bridge::store::Link> {
+        self.store.find_links(&side).expect("a readable store")
+    }
+
     fn links(&mut self) -> Vec<linear_bridge::store::Link> {
         let mut side = issue_ref();
         side.connector = ConnectorId::new("linear");
@@ -390,8 +428,12 @@ fn linear_issue(action: &str) -> String {
 
 /// A Linear comment body: the issue is the subject, the comment is the content.
 fn linear_comment(body: &str) -> String {
+    linear_comment_action("create", body)
+}
+
+fn linear_comment_action(action: &str, body: &str) -> String {
     json!({
-        "action": "create",
+        "action": action,
         "type": "Comment",
         "webhookTimestamp": linear_bridge::clock::now_millis(),
         "actor": { "id": "u-1", "name": "vedaru" },
@@ -413,14 +455,40 @@ fn forgejo_issue(action: &str) -> String {
 }
 
 fn forgejo_comment(body: &str) -> String {
+    forgejo_comment_action("created", body)
+}
+
+fn forgejo_comment_action(action: &str, body: &str) -> String {
     json!({
-        "action": "created",
+        "action": action,
         "repository": { "full_name": "Vedaru/linear-cli-rs" },
         "sender": { "login": "vedaru" },
         "issue": { "number": 13 },
         "comment": { "id": 1, "body": body }
     })
     .to_string()
+}
+
+/// The forge's comment in the reverse-direction tests.
+fn forgejo_comment_ref() -> EntityRef {
+    EntityRef {
+        connector: ConnectorId::new("forgejo"),
+        kind: EntityKind::Comment,
+        scope: Some("Vedaru/linear-cli-rs".into()),
+        native_id: "1".into(),
+        url: None,
+    }
+}
+
+/// The comment the comment deliveries in these tests are about.
+fn comment_ref() -> EntityRef {
+    EntityRef {
+        connector: ConnectorId::new("linear"),
+        kind: EntityKind::Comment,
+        scope: Some("VED".into()),
+        native_id: "comment-9".into(),
+        url: None,
+    }
 }
 
 fn issue_ref() -> EntityRef {
@@ -556,6 +624,117 @@ fn a_comment_is_mirrored_with_attribution_and_then_recognised() {
     // The forge announces that comment. It carries our marker, so it stops here.
     harness.deliver("forgejo", "issue_comment", &forgejo_comment(&body));
     assert!(harness.linear.graphql("CommentCreate").is_empty());
+}
+
+#[test]
+fn an_edited_comment_edits_the_mirrored_copy_and_does_not_post_a_second_one() {
+    let mut harness = Harness::start();
+    harness.world.lock().unwrap().linear = Some(linear_issue_state("Mirror the thing", "Todo"));
+    harness.deliver("linear", "Issue", &linear_issue("create"));
+    harness.deliver("linear", "Comment", &linear_comment("looks good to me"));
+    assert_eq!(harness.world.lock().unwrap().forgejo_comments.len(), 1);
+
+    // The comment is edited on Linear. Without a pairing this would post the edited
+    // text as a second comment - the duplicate a reader would notice.
+    harness.deliver(
+        "linear",
+        "Comment",
+        &linear_comment_action("update", "looks good to me (edited)"),
+    );
+
+    let world = harness.world.lock().unwrap();
+    assert_eq!(
+        world.forgejo_comments.len(),
+        1,
+        "an edit must not become a second comment"
+    );
+    assert_eq!(
+        world.forgejo_comment_calls.len(),
+        1,
+        "{:?}",
+        world.forgejo_comment_calls
+    );
+    let (method, body) = &world.forgejo_comment_calls[0];
+    assert_eq!(method, "PATCH");
+    let text = body["body"].as_str().expect("a body");
+    assert!(text.contains("looks good to me (edited)"), "{text}");
+    assert!(text.contains("linear-bridge:linear:comment-9"), "{text}");
+    drop(world);
+
+    // The forge announces that edit of its own copy: the marker stops it.
+    let echoed = harness.world.lock().unwrap().forgejo_comment_calls[0].1["body"]
+        .as_str()
+        .expect("a body")
+        .to_string();
+    harness.deliver("forgejo", "issue_comment", &forgejo_comment(&echoed));
+    assert!(harness.linear.graphql("CommentUpdate").is_empty());
+    assert!(harness.linear.graphql("CommentCreate").is_empty());
+}
+
+#[test]
+fn a_deleted_comment_is_deleted_on_the_other_side_and_unpaired() {
+    let mut harness = Harness::start();
+    harness.world.lock().unwrap().linear = Some(linear_issue_state("Mirror the thing", "Todo"));
+    harness.deliver("linear", "Issue", &linear_issue("create"));
+    harness.deliver("linear", "Comment", &linear_comment("looks good to me"));
+    // The comment has its own pairing, alongside the issue's.
+    assert_eq!(harness.links_for(comment_ref()).len(), 1);
+
+    harness.deliver(
+        "linear",
+        "Comment",
+        &linear_comment_action("remove", "looks good to me"),
+    );
+
+    let world = harness.world.lock().unwrap();
+    let calls = world.forgejo_comment_calls.clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "DELETE");
+    drop(world);
+    // And the comment's pairing is gone, so a later comment with the same id starts
+    // clean rather than editing something that is no longer there.
+    assert_eq!(
+        harness.links_for(comment_ref()).len(),
+        0,
+        "the comment pairing was dropped"
+    );
+    assert_eq!(harness.links().len(), 1, "the issue pairing stays");
+}
+
+#[test]
+fn a_comment_written_edited_and_deleted_on_the_forge_does_the_same_on_linear() {
+    let mut harness = Harness::start();
+    harness.world.lock().unwrap().linear = Some(linear_issue_state("Mirror the thing", "Todo"));
+    harness.deliver("linear", "Issue", &linear_issue("create"));
+
+    harness.deliver("forgejo", "issue_comment", &forgejo_comment("written here"));
+    assert_eq!(harness.world.lock().unwrap().linear_comments.len(), 1);
+    assert_eq!(harness.links_for(forgejo_comment_ref()).len(), 1);
+
+    // An edit has to reach the copy Linear holds - addressed by *Linear's* id for the
+    // comment, not by anything in the forge's payload.
+    harness.deliver(
+        "forgejo",
+        "issue_comment",
+        &forgejo_comment_action("edited", "written here (edited)"),
+    );
+    let edits = harness.world.lock().unwrap().linear_comment_edits.clone();
+    assert_eq!(edits.len(), 1, "one edit, not a second comment");
+    assert_eq!(edits[0]["id"], "linear-comment-1");
+    let body = edits[0]["input"]["body"].as_str().expect("a body");
+    assert!(body.contains("written here (edited)"), "{body}");
+
+    // And a deletion removes it there, rather than leaving a comment behind.
+    harness.deliver(
+        "forgejo",
+        "issue_comment",
+        &forgejo_comment_action("deleted", "written here (edited)"),
+    );
+    assert_eq!(
+        harness.world.lock().unwrap().linear_comment_deletions,
+        vec![json!("linear-comment-1")]
+    );
+    assert_eq!(harness.links_for(forgejo_comment_ref()).len(), 0);
 }
 
 #[test]

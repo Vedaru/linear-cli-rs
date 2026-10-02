@@ -128,14 +128,30 @@ impl Fake {
     pub fn sink(&self, preset: &str) -> DeclarativeSink {
         let source = presets::preset(preset).expect("the preset loads");
         let capabilities: Capabilities = source.capabilities.into();
-        let mut spec: SinkSpec = source.sink.expect("the preset has a write half");
+        let spec: SinkSpec = source.sink.expect("the preset has a write half");
+        self.sink_with(preset, spec, capabilities)
+    }
+
+    /// The same, for a spec a test has changed - the way to ask what a platform
+    /// *without* some operation does, rather than asserting a preset stays limited.
+    pub fn sink_with(
+        &self,
+        connector: &str,
+        mut spec: SinkSpec,
+        capabilities: Capabilities,
+    ) -> DeclarativeSink {
         let path = spec.base_url.splitn(4, '/').nth(3).unwrap_or("");
         spec.base_url = if path.is_empty() {
             self.base_url.clone()
         } else {
             format!("{}/{path}", self.base_url)
         };
-        DeclarativeSink::new(preset, spec, Some(Secret::new("test-token")), capabilities)
+        DeclarativeSink::new(
+            connector,
+            spec,
+            Some(Secret::new("test-token")),
+            capabilities,
+        )
     }
 }
 

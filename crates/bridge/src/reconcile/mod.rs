@@ -266,6 +266,12 @@ pub enum Step {
     Comment {
         body: String,
     },
+    /// Edit the mirrored copy of a comment rather than posting a second one.
+    UpdateComment {
+        body: String,
+    },
+    /// Remove the mirrored copy of a comment.
+    DeleteComment,
     Delete,
     Attach {
         url: String,
@@ -290,6 +296,13 @@ pub struct Context<'a> {
     pub policy: &'a Policy,
     /// The pair this entity is part of, if it has one.
     pub link: Option<&'a Link>,
+    /// The pair a *comment* is part of, when the event is about a comment.
+    ///
+    /// A comment needs its own pairing: the issue's says where the copy lives, and
+    /// this one says which comment it is - which is what an edit or a deletion has
+    /// to address. Without it the only safe answer to an edit is to do nothing, and
+    /// re-posting the text would duplicate it.
+    pub comment_link: Option<&'a Link>,
     /// The entity as the platform that sent the event has it *now*. The payload is
     /// a snapshot from whenever the provider queued it; this is the truth.
     pub observed: &'a Snapshot,
@@ -434,37 +447,80 @@ fn plan_comment(context: &Context<'_>) -> Step {
     if !context.counterpart.exists() {
         return Step::Nothing(Nothing::Unpaired);
     }
-    if let crate::domain::Action::Deleted = context.event.action {
-        // The sink interface has no comment deletion, and inventing one for a
-        // platform that may not support it is worse than a visible gap.
-        return Step::Nothing(Nothing::Unsupported);
-    }
-
     let Some(EventDetail::Comment { id, body }) = Some(&context.event.detail) else {
         return Step::Nothing(Nothing::NotOurKind);
     };
-    let Some(body) = body.as_deref() else {
-        return Step::Nothing(Nothing::Empty);
-    };
     // A body that carries our marker is text this service wrote on the other
-    // platform, arriving back as that platform's own event.
-    if markers::has_marker(body) {
+    // platform, arriving back as that platform's own event - whatever the action.
+    if body.as_deref().is_some_and(markers::has_marker) {
         return Step::Nothing(Nothing::Echo);
     }
-    let clean = markers::strip(body);
-    if clean.trim().is_empty() {
-        return Step::Nothing(Nothing::Empty);
+
+    match context.event.action {
+        crate::domain::Action::Deleted => {
+            // Deleting the copy needs to know which comment it is; without a
+            // pairing, there is nothing to delete that we could identify.
+            match context.comment_link {
+                Some(_) => Step::DeleteComment,
+                None => Step::Nothing(Nothing::Unpaired),
+            }
+        }
+        crate::domain::Action::Updated => {
+            if context.comment_link.is_none() {
+                // The edit is of a comment this bridge never mirrored (the pairing
+                // is recorded when the copy is posted), so re-posting the edited
+                // text would be a duplicate rather than an edit.
+                return Step::Nothing(Nothing::Unpaired);
+            }
+            let Some(clean) = clean_comment(body.as_deref()) else {
+                return Step::Nothing(Nothing::Empty);
+            };
+            Step::UpdateComment {
+                body: render_comment(
+                    &clean,
+                    context.event.actor.as_ref(),
+                    context.event.connector.as_str(),
+                    comment_marker_id(id.as_deref(), context),
+                ),
+            }
+        }
+        crate::domain::Action::Created => {
+            if context.comment_link.is_some() {
+                // Already mirrored: this is a replay or a re-delivery.
+                return Step::Nothing(Nothing::Echo);
+            }
+            let Some(clean) = clean_comment(body.as_deref()) else {
+                return Step::Nothing(Nothing::Empty);
+            };
+            Step::Comment {
+                body: render_comment(
+                    &clean,
+                    context.event.actor.as_ref(),
+                    context.event.connector.as_str(),
+                    comment_marker_id(id.as_deref(), context),
+                ),
+            }
+        }
+        // A comment has no workflow state, so an action that moves one is not
+        // something this bridge models - and saying so is better than guessing.
+        crate::domain::Action::Closed
+        | crate::domain::Action::Reopened
+        | crate::domain::Action::Other(_) => Step::Nothing(Nothing::NotOurKind),
     }
-    Step::Comment {
-        body: render_comment(
-            clean.trim(),
-            context.event.actor.as_ref(),
-            context.event.connector.as_str(),
-            // The comment's own id when the delivery named it, else the parent's:
-            // the marker only has to be unique within one mirrored comment.
-            id.as_deref().unwrap_or(&context.event.subject.native_id),
-        ),
-    }
+}
+
+/// The comment body that travels, markers stripped, or nothing when there is
+/// nothing left to carry.
+fn clean_comment(body: Option<&str>) -> Option<String> {
+    let stripped = markers::strip(body?);
+    let trimmed = stripped.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// The id a mirrored comment's marker names: the comment's own when the delivery
+/// named one, else the parent's (the marker only has to be unique within it).
+fn comment_marker_id<'a>(id: Option<&'a str>, context: &'a Context<'_>) -> &'a str {
+    id.unwrap_or(&context.event.subject.native_id)
 }
 
 /// A mirrored comment, attributed and marked.
@@ -587,6 +643,8 @@ mod tests {
         event: Event,
         policy: Policy,
         link: Option<Link>,
+        /// The pairing a *comment* has, when the event is about one.
+        comment_link: Option<Link>,
         observed: Snapshot,
         counterpart: Snapshot,
         counterpart_connector: ConnectorId,
@@ -598,6 +656,7 @@ mod tests {
                 event: event(EntityKind::Issue, Action::Updated),
                 policy: policy(),
                 link: None,
+                comment_link: None,
                 observed: Snapshot::present(fields("One", &["bug"], 0), Some("In Progress".into())),
                 counterpart: Snapshot::present(fields("One", &["bug"], 0), Some("open".into())),
                 counterpart_connector: connector("forgejo"),
@@ -612,6 +671,7 @@ mod tests {
                 side,
                 policy: &self.policy,
                 link: self.link.as_ref(),
+                comment_link: self.comment_link.as_ref(),
                 observed: &self.observed,
                 counterpart: &self.counterpart,
                 counterpart_connector: &self.counterpart_connector,
@@ -677,6 +737,89 @@ mod tests {
         let mut fixture = Fixture::default();
         paired_with(&mut fixture, Side::Source);
 
+        assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Echo));
+    }
+
+    /// A comment event on the paired issue, with the comment itself paired too
+    /// (`paired: false` models a comment this bridge has never mirrored).
+    fn comment_event(action: Action, paired: bool) -> Fixture {
+        let mut fixture = Fixture {
+            event: event(EntityKind::Comment, action),
+            ..Fixture::default()
+        };
+        paired_with(&mut fixture, Side::Source);
+        fixture.event.subject = EntityRef {
+            native_id: "comment-9".into(),
+            ..reference("linear", "issue-1")
+        };
+        fixture.event.detail = EventDetail::Comment {
+            id: Some("comment-9".into()),
+            body: Some("looks good to me".into()),
+        };
+        fixture.comment_link = paired.then(|| {
+            Link::new(
+                EntityRef {
+                    connector: connector("linear"),
+                    kind: EntityKind::Comment,
+                    scope: Some("scope".into()),
+                    native_id: "comment-9".into(),
+                    url: None,
+                },
+                EntityRef {
+                    connector: connector("forgejo"),
+                    kind: EntityKind::Comment,
+                    scope: Some("scope".into()),
+                    native_id: "77".into(),
+                    url: None,
+                },
+            )
+        });
+        fixture
+    }
+
+    #[test]
+    fn a_comment_edit_edits_the_copy_instead_of_posting_a_second_one() {
+        let fixture = comment_event(Action::Updated, true);
+
+        match fixture.plan(Side::Source) {
+            Step::UpdateComment { body } => {
+                assert!(body.contains("**vedaru** wrote on linear"), "{body}");
+                assert!(body.contains("looks good to me"), "{body}");
+                // The marker is still the origin comment's, which is what makes the
+                // copy recognisable as ours when the other platform reports the edit.
+                let marker = markers::parse(&body).expect("a marker");
+                assert_eq!(marker.connector, "linear");
+                assert_eq!(marker.id, "comment-9");
+            }
+            other => panic!("expected an update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_comment_edit_this_bridge_never_mirrored_is_left_alone() {
+        // Without a pairing there is no copy to edit, and posting the text would be
+        // a duplicate rather than an edit.
+        let fixture = comment_event(Action::Updated, false);
+        assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Unpaired));
+    }
+
+    #[test]
+    fn a_comment_deletion_removes_the_copy() {
+        let fixture = comment_event(Action::Deleted, true);
+        assert_eq!(fixture.plan(Side::Source), Step::DeleteComment);
+    }
+
+    #[test]
+    fn a_comment_deletion_without_a_pairing_does_nothing() {
+        let fixture = comment_event(Action::Deleted, false);
+        assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Unpaired));
+    }
+
+    #[test]
+    fn a_comment_create_that_is_already_paired_does_not_post_again() {
+        // A provider re-delivery, or our own copy coming back: the pairing is what
+        // says this comment has already been mirrored.
+        let fixture = comment_event(Action::Created, true);
         assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Echo));
     }
 
@@ -837,6 +980,7 @@ mod tests {
         let mut fixture = Fixture::default();
         paired_with(&mut fixture, Side::Source);
         fixture.event.kind = EntityKind::Comment;
+        fixture.event.action = Action::Created;
         fixture.event.subject = EntityRef {
             native_id: "comment-9".into(),
             ..reference("linear", "issue-1")
@@ -881,6 +1025,7 @@ mod tests {
         let mut fixture = Fixture::default();
         paired_with(&mut fixture, Side::Source);
         fixture.event.kind = EntityKind::Comment;
+        fixture.event.action = Action::Created;
         fixture.event.detail = EventDetail::Comment {
             id: Some("comment-9".into()),
             body: Some("   \n".into()),

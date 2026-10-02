@@ -135,9 +135,15 @@ an internal service is copying it. The two halves of a preset:
   (how a payload becomes an event, by JSON pointer), `[freshness]` (the replay
   bound, where the platform signs a timestamp), `[capabilities]`.
 - **the write half** (`[sink]`): `base_url`, `[sink.auth]`, the issue operations
-  (`create`, `update`, `fetch`, `delete`, `comment`, `transition`, `labels`,
-  `attach`), `[sink.issue.read]`, and `[sink.issue.lookup.*]` for turning a name
-  into whatever id the platform wants.
+  (`create`, `update`, `fetch`, `delete`, `transition`, `labels`, `attach`),
+  `[sink.issue.read]`, `[sink.issue.lookup.*]` for turning a name into whatever id
+  the platform wants, and `[sink.issue.comment]` - `create` plus, where the platform
+  can, `update` and `delete`. Comment *edits* are addressed by the comment's own id,
+  which is why a mirrored comment is paired in the link store as an entity of its own
+  (kind `Comment`, deliberately with no content key: a comment is not part of the
+  issue's revision, so recording it as one would make the next issue edit look like a
+  change). A preset that declares no `comment.update` is not a bug - the mapping that
+  needs one hears it by name rather than posting the edit as a second comment.
 
 Nothing else changes: intake, the queue, the store, the status codes and the
 write path are already platform-agnostic. A new platform is validated at load

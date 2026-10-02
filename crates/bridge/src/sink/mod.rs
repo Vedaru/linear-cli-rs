@@ -69,6 +69,13 @@ pub trait Sink: Send + Sync {
 
     fn comment(&self, scope: &str, id: &str, body: &str) -> Result<RemoteRef>;
 
+    /// Edit a comment this bridge mirrored. `id` is the *comment's* id - the one
+    /// [`Sink::comment`] returned - not the issue's.
+    fn update_comment(&self, scope: &str, id: &str, body: &str) -> Result<()>;
+
+    /// Remove a comment this bridge mirrored.
+    fn delete_comment(&self, scope: &str, id: &str) -> Result<()>;
+
     fn transition(&self, scope: &str, id: &str, state: &str) -> Result<()>;
 
     fn delete_issue(&self, scope: &str, id: &str) -> Result<()>;

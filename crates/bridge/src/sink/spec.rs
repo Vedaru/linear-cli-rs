@@ -66,7 +66,7 @@ pub struct IssueSpec {
     #[serde(default)]
     pub delete: Option<Operation>,
     #[serde(default)]
-    pub comment: Option<Operation>,
+    pub comment: Option<CommentSpec>,
     /// Setting a state by name. `set.path`/`body` receive `$state` (the name) or
     /// `$state_id` (resolved through the `state` lookup) - whichever the platform
     /// needs, which is the difference between a forge and Linear written down.
@@ -107,6 +107,25 @@ pub struct Operation {
     /// Static query parameters, appended after the rendered path.
     #[serde(default)]
     pub query: BTreeMap<String, String>,
+}
+
+/// What a platform can do to a comment.
+///
+/// Three operations rather than one, because mirroring a comment is not over when
+/// it is posted: an edit has to reach the copy, and so does a deletion - and they
+/// are different requests. A preset declares the ones its platform can do, and the
+/// engine refuses the rest by name rather than inventing a request.
+///
+/// `$id` means the *issue* in `create` and the *comment* in `update`/`delete`: the
+/// create is addressed through its parent, and everything after it through itself.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommentSpec {
+    pub create: Operation,
+    #[serde(default)]
+    pub update: Option<Operation>,
+    #[serde(default)]
+    pub delete: Option<Operation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -232,7 +251,6 @@ impl SinkSpec {
             ("update", issue.update.as_ref()),
             ("fetch", issue.fetch.as_ref()),
             ("delete", issue.delete.as_ref()),
-            ("comment", issue.comment.as_ref()),
             ("transition", issue.transition.as_ref()),
             ("attach", issue.attach.as_ref()),
             ("labels", issue.labels.as_ref()),
@@ -243,6 +261,15 @@ impl SinkSpec {
         for (name, operation) in operations {
             if let Some(operation) = operation {
                 validate_operation(name, operation)?;
+            }
+        }
+        if let Some(comment) = &issue.comment {
+            validate_operation("comment.create", &comment.create)?;
+            if let Some(update) = &comment.update {
+                validate_operation("comment.update", update)?;
+            }
+            if let Some(delete) = &comment.delete {
+                validate_operation("comment.delete", delete)?;
             }
         }
         for (kind, lookup) in &issue.lookup {

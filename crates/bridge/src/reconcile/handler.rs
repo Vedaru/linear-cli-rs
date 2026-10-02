@@ -197,6 +197,15 @@ impl ReconcileHandler {
             None => event.subject.clone().with_scope(here.scope.clone()),
         };
 
+        // A comment needs its own pairing, and it is looked up from the comment's
+        // id - which the delivery carries in the detail, because the subject is the
+        // issue the comment is on.
+        let comment_ref = comment_reference(event, &subject);
+        let comment_link = match &comment_ref {
+            Some(comment) => self.store.find_link(comment, &there.connector)?,
+            None => None,
+        };
+
         // The pairing (if any), and the authoritative state of both ends. The
         // payload is a snapshot from whenever the provider queued it; these reads
         // are what the decision is actually made on.
@@ -222,6 +231,7 @@ impl ReconcileHandler {
             side,
             policy: &mapping.policy,
             link: link.as_ref(),
+            comment_link: comment_link.as_ref(),
             observed: &observed,
             counterpart: &counterpart,
             counterpart_connector: &there.connector,
@@ -308,15 +318,59 @@ impl ReconcileHandler {
                 };
                 let sink = self.sink(&there.connector)?;
                 let created = sink.comment(&there.scope, &reference.native_id, &body)?;
-                // Deliberately no link update: a comment is not part of the issue's
-                // content key, and recording it as one would make the next edit look
-                // like a change when nothing moved.
+                // The comment gets its own pairing, and deliberately no content key:
+                // a comment is not part of the issue's revision, so recording it as
+                // one would make the next issue edit look like a change. What the
+                // pairing buys is the next event about *this comment*: its edit has
+                // somewhere to go, and its deletion something to remove.
+                if let Some(comment) = &comment_ref {
+                    let mirrored = EntityRef {
+                        connector: there.connector.clone(),
+                        kind: EntityKind::Comment,
+                        scope: Some(there.scope.clone()),
+                        native_id: created.id.clone(),
+                        url: created.url.clone(),
+                    };
+                    self.store
+                        .upsert_link(&Link::new(comment.clone(), mirrored))?;
+                }
                 log::info!(
                     "mirrored comment {} -> {} {}",
                     event.subject.native_id,
                     there.connector,
                     created.id
                 );
+            }
+            Step::UpdateComment { body } => {
+                let Some(mirrored) = self.mirrored_comment(&comment_link, &comment_ref) else {
+                    return Ok(());
+                };
+                let sink = self.sink(&there.connector)?;
+                sink.update_comment(&there.scope, &mirrored.native_id, &body)?;
+                log::info!(
+                    "mirrored comment edit {} -> {} {}",
+                    event.subject.native_id,
+                    there.connector,
+                    mirrored.native_id
+                );
+            }
+            Step::DeleteComment => {
+                if let Some(mirrored) = self.mirrored_comment(&comment_link, &comment_ref) {
+                    let sink = self.sink(&there.connector)?;
+                    sink.delete_comment(&there.scope, &mirrored.native_id)?;
+                    log::info!(
+                        "deleted {} comment {} (mirroring {} {})",
+                        there.connector,
+                        mirrored.native_id,
+                        event.connector,
+                        event.subject.native_id
+                    );
+                }
+                if let Some(comment) = &comment_ref {
+                    // The copy is gone, so the pairing is: keeping it would make a
+                    // later comment with the same id edit something that is not there.
+                    self.store.delete_links(comment)?;
+                }
             }
             Step::Delete => {
                 if let Some(reference) = &counterpart_ref {
@@ -349,6 +403,19 @@ impl ReconcileHandler {
             }
         }
         Ok(())
+    }
+
+    /// The comment this event is about, as an entity - `None` for anything else.
+    ///
+    /// A comment delivery is *about* its issue (that is the subject a link pairs)
+    /// and carries the comment's own id in the detail, so the comment's identity has
+    /// to be assembled from both.
+    fn mirrored_comment(
+        &self,
+        link: &Option<Link>,
+        comment: &Option<EntityRef>,
+    ) -> Option<EntityRef> {
+        link.as_ref()?.counterpart(comment.as_ref()?).cloned()
     }
 
     /// One end's current state, as the platform reports it.
@@ -407,6 +474,23 @@ impl Handler for ReconcileHandler {
         }
         Ok(())
     }
+}
+
+/// The comment an event is about, if it is about one.
+fn comment_reference(event: &Event, subject: &EntityRef) -> Option<EntityRef> {
+    if event.kind != EntityKind::Comment {
+        return None;
+    }
+    let crate::domain::EventDetail::Comment { id: Some(id), .. } = &event.detail else {
+        return None;
+    };
+    Some(EntityRef {
+        connector: subject.connector.clone(),
+        kind: EntityKind::Comment,
+        scope: subject.scope.clone(),
+        native_id: id.clone(),
+        url: None,
+    })
 }
 
 /// The policy a mapping gets when the deployment does not say otherwise.
