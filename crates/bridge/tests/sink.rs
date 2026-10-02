@@ -45,6 +45,45 @@ fn forgejo_routes(method: &str, path: &str, _body: &Value) -> (u16, Value) {
                 { "id": 11, "name": "priority:high" }
             ]),
         ),
+        // A sweep: two pages, the second one short - which is how a numbered API
+        // says "that was the last one".
+        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=1&state=all") => (
+            200,
+            json!([
+                {
+                    "number": 12,
+                    "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12",
+                    "title": "Mirror the thing",
+                    "body": "why it matters",
+                    "due_date": "2026-10-09",
+                    "state": "open",
+                    "labels": [{ "id": 3, "name": "Bug" }, { "id": 11, "name": "priority:high" }],
+                    "assignees": [{ "login": "vedaru" }]
+                },
+                {
+                    "number": 13,
+                    "html_url": "http://forge/Vedaru/linear-cli-rs/issues/13",
+                    "title": "Second",
+                    "body": "",
+                    "due_date": "0001-01-01T00:00:00Z",
+                    "state": "closed",
+                    "labels": [],
+                    "assignees": []
+                }
+            ]),
+        ),
+        ("GET", "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=2&state=all") => (
+            200,
+            json!([{
+                "number": 14,
+                "html_url": "http://forge/Vedaru/linear-cli-rs/issues/14",
+                "title": "Third",
+                "body": "",
+                "state": "open",
+                "labels": [],
+                "assignees": []
+            }]),
+        ),
         ("POST", "/api/v1/repos/Vedaru/linear-cli-rs/issues") => (
             201,
             json!({ "number": 12, "html_url": "http://forge/Vedaru/linear-cli-rs/issues/12" }),
@@ -199,6 +238,109 @@ fn a_priority_change_rewrites_the_label_set_it_travels_in() {
 }
 
 #[test]
+fn a_sweep_reads_every_page_and_every_field() {
+    let fake = Fake::start(forgejo_routes);
+    // A page size of two, so a three-issue scope exercises the walk without a test
+    // fixture of fifty issues. The number is the preset's business, not the engine's.
+    let forgejo = presets::preset("forgejo").expect("the preset");
+    let capabilities: linear_bridge::domain::Capabilities =
+        forgejo.capabilities.resolve(forgejo.sink.as_ref());
+    let mut spec = forgejo.sink.clone().expect("the preset has a write half");
+    spec.issue
+        .list
+        .as_mut()
+        .expect("a list section")
+        .paginate
+        .as_mut()
+        .expect("pagination")
+        .page
+        .as_mut()
+        .expect("numbered pages")
+        .size = 2;
+    let sink = fake.sink_with("forgejo", spec, capabilities);
+
+    let issues = sink.list_issues("Vedaru/linear-cli-rs").expect("a sweep");
+
+    assert_eq!(issues.len(), 3, "every page was read");
+    assert_eq!(issues[0].reference.id, "12");
+    assert_eq!(issues[0].fields.title, "Mirror the thing");
+    // The priority came back out of the label set, which is where a forge keeps it.
+    assert_eq!(issues[0].fields.priority, 2);
+    assert_eq!(issues[0].fields.labels, vec!["bug"]);
+    assert_eq!(issues[0].fields.assignee.as_deref(), Some("vedaru"));
+    assert_eq!(issues[0].fields.due_date.as_deref(), Some("2026-10-09"));
+    assert_eq!(issues[0].state.as_deref(), Some("open"));
+    // A forge spells "no due date" as a zero timestamp; the neutral model says None,
+    // so a sweep does not report a due date that is not there.
+    assert_eq!(issues[1].fields.due_date, None);
+    assert_eq!(issues[2].reference.id, "14");
+
+    // Two requests, not three: the short page ended the walk.
+    let seen = fake.seen();
+    let pages: Vec<&str> = seen
+        .iter()
+        .filter(|record| record.path.contains("/issues?"))
+        .map(|record| record.path.as_str())
+        .collect();
+    assert_eq!(pages.len(), 2, "{pages:?}");
+}
+
+#[test]
+fn a_sweep_follows_a_cursor_and_believes_has_next_page() {
+    let fake = Fake::start(linear_routes);
+    let sink = fake.sink("linear");
+
+    let issues = sink.list_issues("VED").expect("a sweep");
+
+    assert_eq!(issues.len(), 2);
+    assert_eq!(issues[0].reference.id, "issue-1");
+    assert_eq!(issues[0].fields.title, "First");
+    assert_eq!(issues[0].fields.priority, 3);
+    assert_eq!(issues[0].state.as_deref(), Some("Todo"));
+    assert_eq!(issues[1].reference.id, "issue-2");
+    // `priority: 0` is "no priority", and no due date is no due date.
+    assert_eq!(issues[1].fields.priority, 0);
+    assert_eq!(issues[1].fields.assignee, None);
+    assert_eq!(issues[1].fields.due_date.as_deref(), Some("2026-11-01"));
+
+    // Two requests: the last page also carried a cursor, and was believed when it
+    // said there is no more.
+    let seen = fake.seen();
+    let pages: Vec<&str> = seen
+        .iter()
+        .filter(|record| {
+            record
+                .body
+                .get("query")
+                .and_then(Value::as_str)
+                .is_some_and(|query| query.contains("query Issues"))
+        })
+        .map(|record| record.body["variables"]["after"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(pages, vec!["", "cursor-2"], "{pages:?}");
+}
+
+#[test]
+fn a_platform_that_cannot_be_enumerated_says_so_by_name() {
+    let fake = Fake::start(forgejo_routes);
+    let forgejo = presets::preset("forgejo").expect("the preset");
+    let capabilities: linear_bridge::domain::Capabilities =
+        forgejo.capabilities.resolve(forgejo.sink.as_ref());
+    let mut spec = forgejo.sink.clone().expect("the preset has a write half");
+    spec.issue.list = None;
+    let sink = fake.sink_with("forgejo", spec, capabilities);
+
+    // "There is nothing there" and "I cannot look" must not be the same answer: a
+    // sweep that took an empty list for an empty scope would create everything again.
+    let error = sink
+        .list_issues("Vedaru/linear-cli-rs")
+        .expect_err("no list operation");
+    let message = error.to_string();
+    assert!(message.contains("list"), "{message}");
+    assert!(message.contains("forgejo"), "{message}");
+}
+
+#[test]
 fn a_fetched_issue_comes_back_as_the_neutral_field_set() {
     let fake = Fake::start(forgejo_routes);
     let sink = fake.sink("forgejo");
@@ -318,6 +460,55 @@ fn linear_routes(_method: &str, path: &str, body: &Value) -> (u16, Value) {
     assert_eq!(path, "/graphql");
     let query = body["query"].as_str().unwrap_or_default();
     match () {
+        // A cursor-paged sweep: the second page reports `hasNextPage = false`, which
+        // is what ends the walk - even though a cursor is still handed back, as some
+        // APIs do on the last page.
+        _ if query.contains("query Issues") => {
+            let after = body["variables"]["after"].as_str().unwrap_or_default();
+            assert_eq!(body["variables"]["teamId"], "uuid-team");
+            if after.is_empty() {
+                (
+                    200,
+                    json!({ "data": { "issues": {
+                    "nodes": [
+                        {
+                            "id": "issue-1",
+                            "url": "https://linear.app/vedaru/issue/VED-1",
+                            "title": "First",
+                            "description": "body",
+                            "dueDate": null,
+                            "priority": 3,
+                            "state": { "name": "Todo" },
+                            "labels": { "nodes": [{ "name": "Bug" }] },
+                            "assignee": { "email": "vedaru@example.com" }
+                        }
+                    ],
+                    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-2" }
+                } } }),
+                )
+            } else {
+                assert_eq!(after, "cursor-2", "the cursor came from the previous page");
+                (
+                    200,
+                    json!({ "data": { "issues": {
+                    "nodes": [
+                        {
+                            "id": "issue-2",
+                            "url": "https://linear.app/vedaru/issue/VED-2",
+                            "title": "Second",
+                            "description": "",
+                            "dueDate": "2026-11-01",
+                            "priority": 0,
+                            "state": { "name": "Done" },
+                            "labels": { "nodes": [] },
+                            "assignee": null
+                        }
+                    ],
+                    "pageInfo": { "hasNextPage": false, "endCursor": "cursor-3" }
+                } } }),
+                )
+            }
+        }
         _ if query.contains("query Teams") => (
             200,
             json!({ "data": { "teams": { "nodes": [

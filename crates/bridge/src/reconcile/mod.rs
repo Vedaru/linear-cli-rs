@@ -721,6 +721,7 @@ mod tests {
                 counterpart_connector: connector("forgejo"),
                 target: Capabilities {
                     states: crate::domain::StateModel::OpenClosed,
+                    list: true,
                     labels: true,
                     due_dates: true,
                     priorities: false,

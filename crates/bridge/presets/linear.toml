@@ -132,6 +132,30 @@ path = ""
 query = "query Issue($id: String!) { issue(id: $id) { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } } }"
 variables = { id = "$id" }
 
+# Every issue of the team, for a sweep. Linear pages by cursor, so the walk follows
+# `pageInfo` rather than counting pages - and `hasNextPage` is what ends it.
+[sink.issue.list.request]
+method = "POST"
+path = ""
+items = "/data/issues/nodes"
+[sink.issue.list.request.body]
+query = "query Issues($teamId: String!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } } pageInfo { hasNextPage endCursor } } }"
+variables = { teamId = "$scope_id", after = "$cursor" }
+[sink.issue.list.paginate.cursor]
+next = "/data/issues/pageInfo/endCursor"
+more = "/data/issues/pageInfo/hasNextPage"
+max_pages = 40
+[sink.issue.list.read]
+id = "/id"
+url = "/url"
+title = "/title"
+body = "/description"
+state = "/state/name"
+due_date = "/dueDate"
+priority = "/priority"
+labels = { path = "/labels/nodes", pick = "/name" }
+assignee = "/assignee/email"
+
 # Linear has no delete: `issueArchive` is how an issue is retired, and it keeps
 # the issue recoverable, which is the safe direction for a mirror.
 [sink.issue.delete]

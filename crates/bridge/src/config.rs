@@ -121,7 +121,7 @@ impl PlatformConfig {
             self.name.clone(),
             spec,
             Some(token),
-            self.spec.capabilities.into(),
+            self.spec.capabilities.resolve(self.spec.sink.as_ref()),
         ))
     }
 }

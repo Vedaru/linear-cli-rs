@@ -49,6 +49,14 @@ pub trait Sink: Send + Sync {
     /// returns. `Ok(None)` means the platform says it is gone.
     fn fetch_issue(&self, scope: &str, id: &str) -> Result<Option<RemoteIssue>>;
 
+    /// Every issue in a scope.
+    ///
+    /// What a *sweep* starts from, as opposed to a delivery: an id known in advance.
+    /// A platform that cannot be enumerated refuses by name rather than returning an
+    /// empty list, because "there is nothing there" and "I cannot look" must not be
+    /// the same answer to a caller that is about to create things.
+    fn list_issues(&self, scope: &str) -> Result<Vec<RemoteIssue>>;
+
     /// Create an issue, optionally in a given state (the initial state a new
     /// mirror should land in, rather than the platform's default).
     fn create_issue(

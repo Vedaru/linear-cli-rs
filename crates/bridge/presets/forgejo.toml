@@ -145,6 +145,33 @@ assignees = "$assignees"
 method = "GET"
 path = "/repos/{scope}/issues/{id}"
 
+# Every issue in the repository, for a sweep. `state = "all"` because a mirror cares
+# about closed issues too: an issue closed on the other side must be found, not
+# re-created as a fresh open one.
+[sink.issue.list.request]
+method = "GET"
+path = "/repos/{scope}/issues"
+query = { state = "all", page = "$page", limit = "50" }
+# A forge pages by number, and a page shorter than the limit is the last one - so
+# the walk needs no extra request to find out where it ends.
+[sink.issue.list.paginate.page]
+param = "page"
+size = 50
+size_param = "limit"
+max_pages = 40
+
+# Pointers *inside each item*, unlike `[sink.issue.read]` above.
+[sink.issue.list.read]
+id = "/number"
+url = "/html_url"
+title = "/title"
+body = "/body"
+due_date = "/due_date"
+state = "/state"
+labels = { path = "/labels", pick = "/name" }
+assignee = "/assignees/0/login"
+priority = { from_labels = true }
+
 [sink.issue.delete]
 method = "DELETE"
 path = "/repos/{scope}/issues/{id}"

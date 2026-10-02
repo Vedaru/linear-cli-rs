@@ -78,6 +78,10 @@ pub struct IssueSpec {
     /// Replacing an issue's labels wholesale.
     #[serde(default)]
     pub labels: Option<Operation>,
+    /// Reading a whole scope, for a sweep. Absent means this platform cannot be
+    /// enumerated, which a sweep reports rather than works around.
+    #[serde(default)]
+    pub list: Option<ListSpec>,
     #[serde(default)]
     pub read: Option<ReadSpec>,
     /// Name -> id resolution, keyed by the kind a preset asks for: `label`,
@@ -126,6 +130,107 @@ pub struct CommentSpec {
     pub update: Option<Operation>,
     #[serde(default)]
     pub delete: Option<Operation>,
+}
+
+/// Reading every issue in a scope.
+///
+/// A different question from `fetch` (one entity whose id is known) and from a
+/// `lookup` (a name resolved to an id): a sweep starts from "everything here", so it
+/// needs the collection, a way to read one item out of it, and how to walk to the
+/// next page - because pagination is the one part of this that is genuinely each
+/// platform's own.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListSpec {
+    /// The request that lists, with `$page` or `$cursor` available to it whichever
+    /// this platform pages with. Its `items` pointer says where the collection is in
+    /// the response - the same place a `lookup` declares it, which is why this key is
+    /// `request` and not a second `list`.
+    pub request: Operation,
+    /// Pointers **inside each item** - unlike `[sink.issue.read]`, which reads one
+    /// issue from the root of a single-issue response.
+    pub read: ReadSpec,
+    #[serde(default)]
+    pub paginate: Option<PaginateSpec>,
+}
+
+/// How to ask for the next page.
+///
+/// Two shapes rather than a general grammar, because they are what the platforms in
+/// use actually offer: a page number in a query string, or an opaque cursor in a
+/// GraphQL variable. Guessing at a third would be inventing requirements.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaginateSpec {
+    #[serde(default)]
+    pub page: Option<NumberedPage>,
+    #[serde(default)]
+    pub cursor: Option<CursorPage>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumberedPage {
+    /// The query parameter carrying the page number (1-based).
+    pub param: String,
+    /// How many items a full page holds. A short page is how a numbered API says
+    /// "that was the last one", and it costs no extra request to find out.
+    pub size: usize,
+    /// The parameter carrying the size, when the platform wants to be told.
+    #[serde(default)]
+    pub size_param: Option<String>,
+    /// Stop after this many pages whatever the platform claims, so a platform that
+    /// always reports a full page cannot spin forever.
+    #[serde(default = "default_max_pages")]
+    pub max_pages: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CursorPage {
+    /// Pointer to the next cursor in the response. Where it *goes* is the request's
+    /// own business: `$cursor` in its `variables` or its query.
+    pub next: String,
+    /// Pointer to the platform's "there are more" flag, when it has one. Without it
+    /// the walk stops at the first empty cursor.
+    #[serde(default)]
+    pub more: Option<String>,
+    #[serde(default = "default_max_pages")]
+    pub max_pages: usize,
+}
+
+fn default_max_pages() -> usize {
+    50
+}
+
+impl PaginateSpec {
+    /// How many pages one walk may read, whichever way this platform pages.
+    pub fn max_pages(&self) -> usize {
+        self.page
+            .as_ref()
+            .map(|page| page.max_pages)
+            .or_else(|| self.cursor.as_ref().map(|cursor| cursor.max_pages))
+            .unwrap_or(1)
+    }
+
+    /// Exactly one way of paging, and the fields that way needs.
+    pub fn validate(&self, label: &str) -> std::result::Result<(), String> {
+        match (&self.page, &self.cursor) {
+            (Some(_), Some(_)) => Err(format!(
+                "{label}: `paginate` declares both a page number and a cursor, and a platform pages one way"
+            )),
+            (None, None) => Err(format!(
+                "{label}: `paginate` declares neither a page number nor a cursor"
+            )),
+            (Some(page), None) if page.size == 0 || page.max_pages == 0 => Err(format!(
+                "{label}: `paginate.page` needs a size and a page budget above zero"
+            )),
+            (None, Some(cursor)) if cursor.max_pages == 0 => Err(format!(
+                "{label}: `paginate.cursor.max_pages` is 0, so a sweep would read nothing"
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -263,6 +368,17 @@ impl SinkSpec {
                 validate_operation(name, operation)?;
             }
         }
+        if let Some(list) = &issue.list {
+            validate_operation("list", &list.request)?;
+            if list.read.id.is_none() {
+                // Every item has to be identifiable, or a sweep cannot tell what it
+                // is looking at and cannot pair anything.
+                return Err("list.read.id is required: a sweep pairs by id".into());
+            }
+            if let Some(paginate) = &list.paginate {
+                paginate.validate("list.paginate")?;
+            }
+        }
         if let Some(comment) = &issue.comment {
             validate_operation("comment.create", &comment.create)?;
             if let Some(update) = &comment.update {
@@ -301,7 +417,12 @@ impl SinkSpec {
                 .iter()
                 // Both key and value are single components here: a `/` inside a
                 // query parameter is data, unlike in a path.
-                .map(|(key, value)| format!("{}={}", encode(key), encode(value)))
+                // Values are templates, so a paginated preset can write
+                // `page = "$page"`; a literal passes through unchanged.
+                .map(|(key, value)| {
+                    let rendered = template::render_component(value, values).unwrap_or_default();
+                    format!("{}={}", encode(key), encode(&rendered))
+                })
                 .collect();
             url.push(if url.contains('?') { '&' } else { '?' });
             url.push_str(&query.join("&"));
@@ -401,6 +522,12 @@ fn validate_operation(name: &str, operation: &Operation) -> std::result::Result<
     }
     if let Some(body) = &operation.body {
         template::validate(body).map_err(|error| format!("{name}: {error}"))?;
+    }
+    // Query values are rendered too (that is how `$page` reaches a request), so a
+    // typo there is as much a load error as one in the body.
+    for (key, value) in &operation.query {
+        template::validate_component(value)
+            .map_err(|error| format!("{name}: query `{key}`: {error}"))?;
     }
     Ok(())
 }

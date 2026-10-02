@@ -159,6 +159,7 @@ mod tests {
     fn forgejo() -> Capabilities {
         Capabilities {
             states: StateModel::OpenClosed,
+            list: true,
             labels: true,
             due_dates: true,
             priorities: false,

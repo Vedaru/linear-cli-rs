@@ -134,7 +134,8 @@ an internal service is copying it. The two halves of a preset:
   `[delivery]`/`[event]` (where the ids and the event name live), `[[event.rule]]`
   (how a payload becomes an event, by JSON pointer), `[freshness]` (the replay
   bound, where the platform signs a timestamp), `[capabilities]`.
-- **the write half** (`[sink]`): `base_url`, `[sink.auth]`, the issue operations
+- **the API half** (`[sink]`, which holds reads as well as writes): `base_url`,
+  `[sink.auth]`, the issue operations
   (`create`, `update`, `fetch`, `delete`, `transition`, `labels`, `attach`),
   `[sink.issue.read]`, `[sink.issue.lookup.*]` for turning a name into whatever id
   the platform wants, and `[sink.issue.comment]` - `create` plus, where the platform
@@ -144,6 +145,15 @@ an internal service is copying it. The two halves of a preset:
   issue's revision, so recording it as one would make the next issue edit look like a
   change). A preset that declares no `comment.update` is not a bug - the mapping that
   needs one hears it by name rather than posting the edit as a second comment.
+- **enumeration** (`[sink.issue.list]`): the request that lists a scope, the pointers
+  *inside each item* (unlike `[sink.issue.read]`, which reads one issue from the root of
+  a single-issue response), and how to walk to the next page - a page number, where a
+  short page ends the walk, or a cursor with the platform's own `hasNextPage`. This is
+  what a *sweep* starts from, as opposed to a delivery. Whether a platform can be swept
+  is derived from this section rather than declared separately (`capabilities.list`), so
+  the two cannot disagree, and a platform without it refuses by name - "there is nothing
+  there" and "I cannot look" must not be the same answer to a caller about to create
+  things.
 
 Nothing else changes: intake, the queue, the store, the status codes and the
 write path are already platform-agnostic. A new platform is validated at load

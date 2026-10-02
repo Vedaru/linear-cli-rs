@@ -31,6 +31,11 @@ pub enum Field {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub states: StateModel,
+    /// Whether the platform can be *enumerated* - the difference between a mirror
+    /// that reacts to deliveries and one that can sweep a scope. Derived from the
+    /// preset's `[sink.issue.list]` rather than declared separately: two places to
+    /// say it is two places to disagree.
+    pub list: bool,
     pub labels: bool,
     pub due_dates: bool,
     pub priorities: bool,
@@ -58,6 +63,9 @@ impl Capabilities {
     /// Human-readable list of what is supported, for logs and `--json` output.
     pub fn describe(&self) -> Vec<&'static str> {
         let mut out = vec!["title", "body", "assignees"];
+        if self.list {
+            out.push("list");
+        }
         if self.labels {
             out.push("labels");
         }
@@ -88,6 +96,7 @@ mod tests {
     fn forgejo_like() -> Capabilities {
         Capabilities {
             states: StateModel::OpenClosed,
+            list: true,
             labels: true,
             due_dates: true,
             priorities: false,

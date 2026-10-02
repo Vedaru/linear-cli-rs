@@ -19,13 +19,13 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    canonical_labels, labels_to_priority, priority_to_label, Capabilities, Change, ConnectorId,
-    IssueFields, Patch, Secret,
+    canonical_labels, labels_to_priority, normalise_due_date, priority_to_label, Capabilities,
+    Change, ConnectorId, IssueFields, Patch, Secret,
 };
 use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
 use crate::pointer::{resolve, resolve_string};
-use crate::sink::spec::{LookupSpec, Operation, ReadField, ReadSpec, SinkSpec};
+use crate::sink::spec::{LookupSpec, Operation, PaginateSpec, ReadField, ReadSpec, SinkSpec};
 use crate::sink::{RemoteIssue, RemoteRef, Sink};
 
 /// A lookup a spec declares: the kinds the engine will resolve.
@@ -96,7 +96,12 @@ impl DeclarativeSink {
     }
 
     fn operation<'a>(&self, name: &str, operation: Option<&'a Operation>) -> Result<&'a Operation> {
-        operation.ok_or_else(|| Error::Unsupported(name.to_string(), self.id.clone()))
+        self.declared(name, operation)
+    }
+
+    /// A spec section this platform has to have declared, or an error naming it.
+    fn declared<'a, T>(&self, name: &str, section: Option<&'a T>) -> Result<&'a T> {
+        section.ok_or_else(|| Error::Unsupported(name.to_string(), self.id.clone()))
     }
 
     /// The cache, used in short scopes only - never held across a request.
@@ -208,6 +213,12 @@ impl DeclarativeSink {
         }
         if let Some(comment) = call.comment {
             values["body"] = json!(comment);
+        }
+        if let Some(page) = call.page {
+            values["page"] = json!(page);
+        }
+        if let Some(cursor) = call.cursor {
+            values["cursor"] = json!(cursor);
         }
         if let Some(title) = call.title {
             values["title"] = json!(title);
@@ -432,6 +443,67 @@ impl Lookups {
 /// Free functions rather than methods: they are pure, they are the part of the
 /// write path worth testing without a server, and keeping them out of the engine
 /// means a test cannot accidentally reach the network.
+/// Read one issue out of whatever the response already narrowed to.
+///
+/// The root is the whole response for `fetch` and a single item for a sweep, which is
+/// the only difference between the two reads: the pointers in a
+/// `[sink.issue.list.read]` are relative to the item.
+fn read_issue(root: &Value, read: &ReadSpec, fallback_id: &str) -> RemoteIssue {
+    let reference = RemoteRef {
+        id: read
+            .id
+            .as_deref()
+            .and_then(|pointer| resolve_string(root, pointer))
+            .unwrap_or_else(|| fallback_id.to_string()),
+        url: read
+            .url
+            .as_deref()
+            .and_then(|pointer| resolve_string(root, pointer)),
+    };
+    RemoteIssue {
+        reference,
+        fields: read_fields(root, read),
+        state: read_text(root, read.state.as_ref()),
+    }
+}
+
+/// Which request to make next, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Next {
+    Page(usize),
+    Cursor(String),
+}
+
+/// Where the walk goes after a page - the one part of enumeration that is genuinely
+/// each platform's own.
+fn next_page(
+    paginate: Option<&PaginateSpec>,
+    body: &Value,
+    items: usize,
+    page: usize,
+) -> Option<Next> {
+    let paginate = paginate?;
+    if let Some(cursor) = &paginate.cursor {
+        // A platform that says "no more" is believed, even if it also handed back a
+        // cursor - which some do on the last page.
+        if let Some(more) = cursor
+            .more
+            .as_deref()
+            .and_then(|pointer| resolve(body, pointer))
+        {
+            if more.as_bool() != Some(true) {
+                return None;
+            }
+        }
+        let next = resolve_string(body, &cursor.next)?;
+        return (!next.is_empty()).then_some(Next::Cursor(next));
+    }
+    let numbered = paginate.page.as_ref()?;
+    // A short page is how a numbered API says "that was the last one", and it costs
+    // no extra request to find out.
+    (items >= numbered.size).then_some(Next::Page(page + 1))
+}
+
 fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
     let raw_labels = read_labels(body, read.labels.as_ref());
     // The priority is derived from the labels *before* they are normalised: the
@@ -451,7 +523,11 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         title: read_text(body, read.title.as_ref()).unwrap_or_default(),
         body: read_text(body, read.body.as_ref()).unwrap_or_default(),
         priority,
-        due_date: read_text(body, read.due_date.as_ref()),
+        // Normalised, not read raw: a forge spells "no due date" as
+        // `0001-01-01T00:00:00Z`, and taken literally that is a due date the source
+        // does not have - a difference that never converges, which is the same trap
+        // an unwritable assignee sets.
+        due_date: normalise_due_date(read_text(body, read.due_date.as_ref()).as_deref()),
         assignee: read_text(body, read.assignee.as_ref()),
     }
 }
@@ -522,23 +598,47 @@ impl Sink for DeclarativeSink {
         }
 
         let read = self.spec.issue.read.clone().unwrap_or_default();
-        let reference = RemoteRef {
-            id: read
-                .id
-                .as_deref()
-                .and_then(|pointer| resolve_string(&response.body, pointer))
-                .unwrap_or_else(|| id.to_string()),
-            url: read
-                .url
-                .as_deref()
-                .and_then(|pointer| resolve_string(&response.body, pointer)),
-        };
-        let state = read_text(&response.body, read.state.as_ref());
-        Ok(Some(RemoteIssue {
-            reference,
-            fields: read_fields(&response.body, &read),
-            state,
-        }))
+        Ok(Some(read_issue(&response.body, &read, id)))
+    }
+
+    fn list_issues(&self, scope: &str) -> Result<Vec<RemoteIssue>> {
+        let list = self
+            .declared("list", self.spec.issue.list.as_ref())?
+            .clone();
+        let mut issues = Vec::new();
+        let mut page = 1usize;
+        let mut cursor: Option<String> = None;
+
+        // Bounded by construction: a platform that always answers "there is more"
+        // must not be able to turn one sweep into an unbounded walk.
+        let budget = list.paginate.as_ref().map_or(1, PaginateSpec::max_pages);
+        for _ in 0..budget {
+            let values = self.context(
+                &list.request,
+                &Call::new(scope).page(page).cursor(cursor.as_deref()),
+            )?;
+            let request = self
+                .spec
+                .request(&list.request, &values, self.secret.as_ref())?;
+            let response = self.send(&request)?;
+            // An empty page is a legitimate answer (nothing in this scope yet), so a
+            // missing collection is not worth failing the walk over.
+            let items: Vec<Value> = match &list.request.items {
+                Some(pointer) => resolve(&response.body, pointer).and_then(Value::as_array),
+                None => response.body.as_array(),
+            }
+            .cloned()
+            .unwrap_or_default();
+            for item in &items {
+                issues.push(read_issue(item, &list.read, ""));
+            }
+            match next_page(list.paginate.as_ref(), &response.body, items.len(), page) {
+                Some(Next::Page(next)) => page = next,
+                Some(Next::Cursor(next)) => cursor = Some(next),
+                None => break,
+            }
+        }
+        Ok(issues)
     }
 
     fn create_issue(
@@ -667,6 +767,8 @@ impl Sink for DeclarativeSink {
 struct Call<'a> {
     scope: &'a str,
     id: Option<&'a str>,
+    page: Option<usize>,
+    cursor: Option<&'a str>,
     fields: Option<&'a IssueFields>,
     patch: Option<&'a Patch>,
     /// The priority the issue will end up with, whether or not this call sets it.
@@ -702,6 +804,16 @@ impl<'a> Call<'a> {
 
     fn priority(mut self, priority: Option<u8>) -> Self {
         self.priority = priority;
+        self
+    }
+
+    fn page(mut self, page: usize) -> Self {
+        self.page = Some(page);
+        self
+    }
+
+    fn cursor(mut self, cursor: Option<&'a str>) -> Self {
+        self.cursor = cursor;
         self
     }
 
@@ -826,7 +938,9 @@ mod tests {
         assert_eq!(fields.labels, vec!["bug"]);
         assert_eq!(fields.priority, 2, "priority comes from the label");
         assert_eq!(fields.assignee.as_deref(), Some("vedaru"));
-        assert_eq!(fields.due_date.as_deref(), Some("2026-10-02T00:00:00Z"));
+        // The timestamp a forge sends for a real due date is normalised to the
+        // `YYYY-MM-DD` the neutral model holds.
+        assert_eq!(fields.due_date.as_deref(), Some("2026-10-02"));
     }
 
     #[test]

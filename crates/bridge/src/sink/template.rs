@@ -63,6 +63,15 @@ pub fn render(template: &Value, values: &Value) -> Value {
     }
 }
 
+/// One component rendered on its own, for the places that are not a JSON tree - a
+/// query parameter, for instance.
+pub fn render_component(text: &str, values: &Value) -> Option<String> {
+    match render_string(text, values)? {
+        Value::String(rendered) => Some(rendered),
+        other => Some(other.to_string()),
+    }
+}
+
 /// One string: a literal, or a directive that resolved (or did not).
 fn render_string(text: &str, values: &Value) -> Option<Value> {
     let Some(name) = text.strip_prefix('$') else {
@@ -105,6 +114,10 @@ pub const DIRECTIVES: &[&str] = &[
     "id",
     "url",
     "name",
+    // Pagination, for a `[sink.issue.list]` request: whichever of the two this
+    // platform pages with, and never both.
+    "page",
+    "cursor",
 ];
 
 /// The directive a string names, if it is a directive at all: `$name` or
@@ -115,6 +128,19 @@ pub fn directive_name(text: &str) -> Option<&str> {
     let name = text.strip_prefix('$')?;
     let name = name.strip_suffix('!').unwrap_or(name);
     (!name.is_empty()).then_some(name)
+}
+
+/// Check one rendered component - a query value, say - which is not part of a JSON
+/// tree and so cannot be walked by [`validate`].
+pub fn validate_component(text: &str) -> Result<(), String> {
+    if !text.starts_with('$') {
+        return Ok(());
+    }
+    match directive_name(text) {
+        Some(name) if DIRECTIVES.contains(&name) => Ok(()),
+        Some(name) => Err(format!("`${name}` is not a known directive")),
+        None => Err("`$` is not a directive".to_string()),
+    }
 }
 
 /// Check a template against [`DIRECTIVES`] and report the first unknown one.

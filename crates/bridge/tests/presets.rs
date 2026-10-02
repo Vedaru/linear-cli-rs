@@ -399,6 +399,28 @@ fn gitlab_uses_a_shared_token_instead_of_a_body_signature() {
 }
 
 #[test]
+fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
+    // The capability follows the operation, so the two cannot disagree - and a sweep
+    // asks "can I look?" rather than discovering it on the first run.
+    for name in ["linear", "forgejo"] {
+        let preset = presets::preset(name).expect("the preset loads");
+        let capabilities = preset.capabilities.resolve(preset.sink.as_ref());
+        assert!(capabilities.list, "{name} declares a list operation");
+        assert!(capabilities.describe().contains(&"list"), "{name}");
+    }
+
+    // The intake-only presets cannot be enumerated, and they say so: their API half
+    // is a separate piece of work, and a sweep running against one must refuse
+    // rather than report an empty scope.
+    for name in ["github", "gitlab"] {
+        let preset = presets::preset(name).expect("the preset loads");
+        assert!(preset.sink.is_none(), "{name} is intake-only today");
+        let capabilities = preset.capabilities.resolve(preset.sink.as_ref());
+        assert!(!capabilities.list, "{name} cannot be swept");
+    }
+}
+
+#[test]
 fn every_preset_is_reachable_as_a_configured_platform() {
     // The point of the presets is that a deployment selects one by name; if a
     // name in the list did not resolve, `type = "<name>"` would fail at startup.

@@ -201,6 +201,20 @@ pub enum StateKind {
     OpenClosed,
 }
 
+impl CapabilitySpec {
+    /// The capabilities as the engine reads them, with enumeration taken from the
+    /// sink.
+    ///
+    /// Whether a platform can be swept is a property of its `[sink.issue.list]`, so
+    /// asking a preset author to also set `capabilities.list` would be asking them to
+    /// keep two facts in agreement.
+    pub fn resolve(&self, sink: Option<&crate::sink::spec::SinkSpec>) -> Capabilities {
+        let mut capabilities: Capabilities = (*self).into();
+        capabilities.list = sink.is_some_and(|sink| sink.issue.list.is_some());
+        capabilities
+    }
+}
+
 impl From<CapabilitySpec> for Capabilities {
     fn from(spec: CapabilitySpec) -> Self {
         Capabilities {
@@ -208,6 +222,8 @@ impl From<CapabilitySpec> for Capabilities {
                 StateKind::Named => StateModel::Named,
                 StateKind::OpenClosed => StateModel::OpenClosed,
             },
+            // Filled in by `resolve`, which can see the sink half.
+            list: false,
             labels: spec.labels,
             due_dates: spec.due_dates,
             priorities: spec.priorities,
@@ -620,7 +636,7 @@ impl Source for DeclarativeSource {
     }
 
     fn capabilities(&self) -> Capabilities {
-        self.spec.capabilities.into()
+        self.spec.capabilities.resolve(self.spec.sink.as_ref())
     }
 
     /// The event name arrived in a header (a forge) or in the body (Linear). Only
