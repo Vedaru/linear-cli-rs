@@ -26,6 +26,8 @@ use linear_bridge::sources::presets;
 use linear_bridge::store::sqlite::SqliteStore;
 use linear_bridge::store::Store;
 
+mod support;
+
 const LINEAR_SECRET: &str = "0123456789abcdef";
 const FORGEJO_SECRET: &str = "fedcba9876543210";
 const BODY_LIMIT: usize = 4096;
@@ -193,12 +195,18 @@ fn sign(secret: &str, body: &[u8]) -> String {
         .collect()
 }
 
+/// The body Linear really sends, read from the fixture the rest of the suite uses.
+///
+/// This file tests the engine, not the preset, so the payload is not its business: taking
+/// it from `presets/fixtures/linear.toml` means the bytes here and the bytes the conformance
+/// suite checks cannot drift apart.
 fn linear_body(delivery_timestamp_ms: u128) -> Vec<u8> {
-    format!(
-        r#"{{"action":"create","type":"Issue","webhookTimestamp":{delivery_timestamp_ms},
-            "data":{{"id":"issue-uuid","identifier":"VED-1","team":{{"key":"VED"}}}}}}"#
-    )
-    .into_bytes()
+    support::fixture_for("linear")
+        .deliveries
+        .into_iter()
+        .find(|delivery| delivery.event.as_deref() == Some("Issue"))
+        .expect("the linear fixture declares an Issue delivery")
+        .body_at(delivery_timestamp_ms as i64)
 }
 
 fn now_millis() -> u128 {
