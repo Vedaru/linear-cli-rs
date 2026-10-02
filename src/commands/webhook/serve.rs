@@ -176,7 +176,7 @@ pub fn run(args: ServeArgs) -> Result<()> {
 /// One per worker thread, and each with its own connection: the queue owns the
 /// connection it claims deliveries on, and a handler that shared it would couple
 /// its transactions to the queue's.
-fn reconcile_factory(
+pub(crate) fn reconcile_factory(
     sources: &[Arc<dyn Source>],
     sinks: &[Arc<dyn Sink>],
     mappings: &[Mapping],

@@ -209,6 +209,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
 ```sh
 LINEAR_WEBHOOK_SECRET=... FORGEJO_WEBHOOK_SECRET=... linear webhook serve
 linear webhook serve --check      # resolve the config, print it, do not bind
+linear webhook replay 41          # run a stored delivery again, as the provider sent it
 
 linear sync                       # or work on demand, with no service at all:
 linear sync --apply               #   the plan, and then the plan carried out
@@ -226,6 +227,13 @@ drained or filled, which look identical from outside because both answer a webho
 and neither writes anything. It reads the same store the service writes, prints the queue and
 the mappings, and lists the deliveries the queue gave up on with the error that stopped each
 one. A store it cannot read is a failure, not a zero.
+
+`linear webhook replay <id>` is for after the fix: the store keeps every delivery's raw body,
+so a delivery can be run again against exactly what the provider sent rather than against what
+it looked like to the code that failed. It goes through the same handler the service builds - a
+replay that took a different path could reach a different conclusion, which would make it
+useless for the one thing it is for - and records the outcome the way the worker would, so
+`sync status` keeps telling the truth about a delivery that has been re-run.
 
 A config for this shape needs no webhook secrets at all - just the credentials it writes
 with - because a sweep never verifies a delivery. The same file is still refused by

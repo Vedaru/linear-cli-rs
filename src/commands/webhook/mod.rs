@@ -5,6 +5,7 @@
 //! the bridge lives in a library crate rather than inside a command module - the
 //! reconcile loop must be usable without argv.
 
+pub mod replay;
 pub mod serve;
 
 use clap::{Args, Subcommand};
@@ -22,11 +23,14 @@ pub struct WebhookArgs {
 pub enum WebhookCommand {
     /// Accept webhook deliveries from the configured platforms
     Serve(serve::ServeArgs),
+    /// Run a stored delivery again, against the body the provider sent
+    Replay(replay::ReplayArgs),
 }
 
 pub fn run(args: WebhookArgs) -> Result<()> {
     match args.command {
         Some(WebhookCommand::Serve(args)) => serve::run(args),
+        Some(WebhookCommand::Replay(args)) => replay::run(args),
         None => {
             output::line("Use `linear webhook serve --help` for the available options");
             Ok(())

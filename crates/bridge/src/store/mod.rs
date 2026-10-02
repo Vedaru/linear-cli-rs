@@ -162,6 +162,9 @@ pub trait Store: Send {
 
     fn counts(&mut self) -> Result<Counts>;
 
+    /// One delivery by the row id an operator reads from `sync status` or a log line.
+    fn find_delivery(&mut self, id: i64) -> Result<Option<Delivery>>;
+
     /// The deliveries the queue has given up on, most recently seen first.
     ///
     /// A count of failures is not a lead. These carry the body the provider sent and the error

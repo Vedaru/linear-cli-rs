@@ -172,6 +172,17 @@ impl Store for SqliteStore {
         Ok(claimed)
     }
 
+    fn find_delivery(&mut self, id: i64) -> Result<Option<Delivery>> {
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {DELIVERY_COLUMNS} FROM deliveries WHERE id = ?1"
+        ))?;
+        let mut rows = statement.query_map(params![id], delivery_from_row)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     fn dead_deliveries(&mut self, limit: usize) -> Result<Vec<Delivery>> {
         let mut statement = self.conn.prepare(&format!(
             "SELECT {DELIVERY_COLUMNS} FROM deliveries
@@ -525,6 +536,27 @@ mod tests {
             ..issue.clone()
         };
         assert!(!store.reference_exists(&commit, &elsewhere).unwrap());
+    }
+
+    #[test]
+    fn a_delivery_is_found_by_the_id_a_log_line_names() {
+        let mut store = SqliteStore::open_in_memory().unwrap();
+        store.migrate().unwrap();
+
+        let inserted = store.insert_delivery(&new_delivery("d-9")).unwrap();
+        assert_eq!(inserted, InsertOutcome::Inserted);
+        let claimed = store.claim_due(1, Duration::from_secs(30)).unwrap();
+        let id = claimed[0].id;
+
+        let found = store.find_delivery(id).unwrap().expect("the row is there");
+        assert_eq!(found.delivery_id, "d-9");
+        // The body comes back too: a re-run has to work on what the provider sent, not on a
+        // summary of it.
+        assert_eq!(found.body, "{\"action\":\"opened\"}");
+        assert!(
+            store.find_delivery(id + 1000).unwrap().is_none(),
+            "and an id nobody has is nobody's"
+        );
     }
 
     #[test]
