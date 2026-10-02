@@ -87,9 +87,14 @@ fn check(config: &Config, env: &[(String, String)], remove: &[&str]) -> CliOutpu
 /// fixture that cannot name a writable file is a test that only passes on unix.
 const STORE: &str = concat!(env!("CARGO_TARGET_TMPDIR"), "/linear-serve-test.db");
 
-/// The fixture with its store named for this platform.
+/// The fixture with its store named for this platform - and named the way TOML can carry it.
+///
+/// A Windows path arrives with backslashes, and a TOML basic string reads those as escapes, so
+/// `store = "D:\a\..."` is a parse error, not a path. Forward slashes are valid in a Windows
+/// path and mean nothing to TOML, which is why the separator is normalised here rather than the
+/// fixture being left to name `/tmp`.
 fn document() -> String {
-    DOCUMENT.replace("/tmp/linear-serve-test.db", STORE)
+    DOCUMENT.replace("/tmp/linear-serve-test.db", &STORE.replace('\\', "/"))
 }
 
 const DOCUMENT: &str = r#"

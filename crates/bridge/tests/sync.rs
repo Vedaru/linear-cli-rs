@@ -405,7 +405,15 @@ fn a_delivery_then_a_sweep_has_nothing_left_to_do() {
         "Issue",
         &linear_issue_event("issue-A", "Deploy the widget", "create"),
     );
-    assert_eq!(harness.forge_writes(), 1, "the delivery mirrored the issue");
+    // What the forge actually received, not just how many writes there were: a create that
+    // never arrives is a different defect from one that arrives wrong, and only one of those
+    // is visible in a count.
+    assert_eq!(
+        harness.forge_writes(),
+        1,
+        "the delivery mirrored the issue; the forge saw: {:?}",
+        harness.forge.seen()
+    );
     assert_eq!(harness.forge_issues().len(), 1);
 
     let survey = harness.handler.survey(0).expect("a survey");
