@@ -349,7 +349,7 @@ impl UserMap {
     /// The key this identity is known by on `onto`, if the user map says.
     ///
     /// The target matters: with three platforms configured, "the counterpart" is
-    /// ambiguous, and picking the first one would send a GitHub login to Forgejo.
+    /// would send one platform's login to another.
     pub fn counterpart_for(&self, identity: &Identity, onto: &ConnectorId) -> Option<&Identity> {
         self.other_in_group(identity, Some(onto))
     }
@@ -530,7 +530,7 @@ mod tests {
 
         // A key that is configured for a different connector must not match.
         assert_eq!(
-            map.counterpart(&Identity::new("github", "vedaru")),
+            map.counterpart(&Identity::new("codeberg", "vedaru")),
             None,
             "connectors are not interchangeable"
         );
@@ -543,7 +543,7 @@ mod tests {
         let map = UserMap::from_groups([vec![
             Identity::new("linear", "loner@example.com"),
             Identity::new("forgejo", "vedaru"),
-            Identity::new("github", "vedaru-gh"),
+            Identity::new("codeberg", "vedaru-cb"),
         ]]);
         assert_eq!(map.len(), 1);
         assert_eq!(map.keys_for(&ConnectorId::new("linear")).len(), 1);
@@ -557,19 +557,19 @@ mod tests {
             .expect("known on forgejo");
         assert_eq!(on_forge.key, "vedaru");
 
-        let on_github = map
+        let on_codeberg = map
             .counterpart_for(
                 &Identity::new("linear", "loner@example.com"),
-                &ConnectorId::new("github"),
+                &ConnectorId::new("codeberg"),
             )
-            .expect("known on github");
-        assert_eq!(on_github.key, "vedaru-gh");
+            .expect("known on codeberg");
+        assert_eq!(on_codeberg.key, "vedaru-cb");
 
         // A connector this person is not known on must not borrow another's key.
         assert_eq!(
             map.counterpart_for(
                 &Identity::new("linear", "loner@example.com"),
-                &ConnectorId::new("gitlab"),
+                &ConnectorId::new("gitea"),
             ),
             None
         );

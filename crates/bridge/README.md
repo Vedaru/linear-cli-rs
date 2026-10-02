@@ -222,11 +222,11 @@ config files and no Rust:
 ```toml
 [proof]                       # what the platform really signs with
 algorithm = "hmac-sha256"     # or `token`, for a shared secret in a header
-header = "X-Hub-Signature-256"
-prefix = "sha256="            # where the platform wraps the digest, if it does
+header = "X-Gitea-Signature"  # the header the digest travels in
+prefix = ""                   # where the platform wraps the digest, if it does
 
 [headers]                     # the headers an ordinary delivery carries
-"X-GitHub-Event" = "issues"
+"X-Gitea-Event" = "issues"
 
 [[delivery]]                  # a delivery it sends, and what it must become
 event = "issues"
@@ -274,17 +274,18 @@ means the value really was lost).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `linear` | named workflow states | yes | yes | yes | one | no native PRs | yes - `issueArchive`, its API has no delete | yes |
 | `forgejo`, `codeberg`, `gitea` | open / closed | yes | yes | emulated as a `priority:*` label | one | yes | push only, cannot be observed | yes |
-| `github` | open / closed | yes | not claimed | not claimed | many | yes | not claimed | intake only |
-| `gitlab` | open / closed | yes | yes | not claimed | many | yes | not claimed | intake only |
 
 The limits worth stating out loud, because each one is a real thing a deployment will meet:
 
-- **GitHub and GitLab have no write half yet.** They verify, parse and store deliveries
-  today; their API halves are separate work. `capabilities.list` is derived from the
-  operation, so a sweep against one refuses by name instead of reporting an empty scope.
-- **A shared token cannot detect a changed body.** GitLab proves itself with a header that
-  travels alongside the payload, so the platform has to be trusted for the body's integrity;
-  the conformance suite asserts that instead of implying otherwise.
+- **A platform Linear integrates through its own app is deliberately not a preset here.**
+  Bridging it would duplicate that integration rather than add to it. A preset is written for a
+  platform this deployment actually talks to, and nothing in the engine is shaped around any
+  particular one - which is why removing a platform is removing a file.
+- **A shared token cannot detect a changed body.** Some platforms prove themselves with a
+  static header rather than a signature over the body. The engine supports both schemes; a
+  preset that declares the token scheme is trusting the platform for the body's integrity, and
+  the suite asserts the consequence for any preset that declares it rather than implying
+  otherwise.
 - **Forgejo emits no webhook when an issue is deleted**, so a deletion can be pushed *to* it
   and never observed *from* it.
 - **An action this deployment does not model keeps its own name** (`milestoned` arrives as

@@ -797,7 +797,7 @@ sink = "forgejo:Vedaru/linear-cli-rs"
     #[test]
     fn an_identity_naming_platforms_this_mapping_does_not_connect_is_refused() {
         let config = parse(&document(
-            "\n[[mapping.identity]]\ngithub = \"vedaru\"\ngitlab = \"vedaru\"\n",
+            "\n[[mapping.identity]]\ncodeberg = \"vedaru\"\ngitea = \"vedaru\"\n",
         ))
         .expect("the document itself is valid");
         let error = config
@@ -1117,7 +1117,7 @@ id = "/ticket/id"
     fn a_mapping_naming_an_undeclared_platform_is_refused() {
         let text = document("").replace(
             "sink = \"forgejo:Vedaru/linear-cli-rs\"",
-            "sink = \"github:o/r\"",
+            "sink = \"codeberg:o/r\"",
         );
         let error = parse(&text).unwrap_err().to_string();
         assert!(error.contains("not declared"), "{error}");

@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(found.counterpart(&linear), Some(&forgejo));
         assert_eq!(
             store
-                .find_link(&linear, &ConnectorId::new("github"))
+                .find_link(&linear, &ConnectorId::new("other"))
                 .unwrap(),
             None,
             "a counterpart on an unmapped connector is not this link"

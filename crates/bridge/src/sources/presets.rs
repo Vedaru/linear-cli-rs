@@ -15,8 +15,6 @@ pub const PRESETS: &[(&str, &str)] = &[
     // Codeberg and Gitea are the same API and the same webhook shape.
     ("codeberg", include_str!("../../presets/forgejo.toml")),
     ("gitea", include_str!("../../presets/forgejo.toml")),
-    ("github", include_str!("../../presets/github.toml")),
-    ("gitlab", include_str!("../../presets/gitlab.toml")),
 ];
 
 /// The names a config may use, for error messages.
@@ -92,19 +90,33 @@ mod tests {
         let names = sink_preset_names();
         assert!(names.contains(&"forgejo"), "{names:?}");
         assert!(names.contains(&"linear"), "{names:?}");
-        // A preset without a sink is still a valid connector: reading is the
-        // half that every platform has.
+        // Reading is the half every platform has, so a spec may stop there. This is that
+        // shape, taken from a shipped preset minus its write half - not from a platform this
+        // build ships, because every one of them can be written to.
+        let read_only = source_without_sink("forgejo");
         assert!(
-            preset_sink("github").unwrap().is_none(),
-            "github has no write half yet"
+            read_only.sink.is_none(),
+            "the write half is absent, and the spec is still a connector"
         );
+    }
+
+    /// A shipped preset with everything from `[sink]` on removed: the shape of a platform a
+    /// deployment can only be told about, never written to.
+    fn source_without_sink(name: &str) -> SourceSpec {
+        let text = preset_text(name).expect("the preset is shipped");
+        let head: String = text
+            .lines()
+            .take_while(|line| !line.starts_with("[sink"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        SourceSpec::from_toml(&head).expect("a source-only spec is still a spec")
     }
 
     #[test]
     fn an_unknown_preset_lists_the_known_ones() {
         let error = preset("bitbucket").unwrap_err().to_string();
         assert!(error.contains("linear"), "{error}");
-        assert!(error.contains("gitlab"), "{error}");
+        assert!(error.contains("forgejo"), "{error}");
     }
 
     #[test]

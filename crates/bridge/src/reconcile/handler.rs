@@ -1104,7 +1104,7 @@ mod tests {
         assert_eq!(mapping.side_of(&event("linear", "OPS")), None);
         assert_eq!(mapping.side_of(&event("forgejo", "Vedaru/other")), None);
         // And an unrelated platform is nobody's.
-        assert_eq!(mapping.side_of(&event("github", "VED")), None);
+        assert_eq!(mapping.side_of(&event("other", "VED")), None);
     }
 
     #[test]

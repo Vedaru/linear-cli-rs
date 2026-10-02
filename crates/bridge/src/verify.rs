@@ -59,7 +59,7 @@ fn verify_hmac_hex(
         .map_err(|_| Reject::BadSignature)
 }
 
-/// Verify a shared secret sent verbatim in a header (GitLab's `X-Gitlab-Token`).
+/// Verify a shared secret sent verbatim in a header (a token scheme, not a signature).
 fn verify_token(secret: &Secret, provided: &str) -> Result<(), Reject> {
     let expected = secret.expose().as_bytes();
     let provided = provided.trim().as_bytes();
@@ -203,18 +203,18 @@ mod tests {
     #[test]
     fn a_configured_prefix_is_required_and_stripped() {
         let scheme = SignatureScheme {
-            headers: vec!["x-hub-signature-256".into()],
+            headers: vec!["x-signature-256".into()],
             algorithm: Algorithm::HmacSha256,
             prefix: Some("sha256=".into()),
         };
         let secret = Secret::new(SECRET);
         let prefixed = format!("sha256={}", sign(SECRET, BODY));
-        let headers = HeaderMap::from_pairs([("X-Hub-Signature-256", prefixed.clone())]);
+        let headers = HeaderMap::from_pairs([("X-Signature-256", prefixed.clone())]);
         assert_eq!(verify(&secret, &scheme, &headers, BODY), Ok(()));
 
         // The same digest without its prefix is refused rather than accepted by
         // a lenient fallback.
-        let bare = HeaderMap::from_pairs([("X-Hub-Signature-256", sign(SECRET, BODY))]);
+        let bare = HeaderMap::from_pairs([("X-Signature-256", sign(SECRET, BODY))]);
         assert_eq!(
             verify(&secret, &scheme, &bare, BODY),
             Err(Reject::BadSignature)
@@ -224,21 +224,21 @@ mod tests {
     #[test]
     fn a_token_scheme_compares_the_secret_verbatim() {
         let scheme = SignatureScheme {
-            headers: vec!["x-gitlab-token".into()],
+            headers: vec!["x-shared-token".into()],
             algorithm: Algorithm::Token,
             prefix: None,
         };
         let secret = Secret::new(SECRET);
-        let right = HeaderMap::from_pairs([("X-Gitlab-Token", SECRET.to_string())]);
+        let right = HeaderMap::from_pairs([("X-Shared-Token", SECRET.to_string())]);
         assert_eq!(verify(&secret, &scheme, &right, BODY), Ok(()));
 
-        let wrong = HeaderMap::from_pairs([("X-Gitlab-Token", "aaaaaaaaaaaaaaaa".to_string())]);
+        let wrong = HeaderMap::from_pairs([("X-Shared-Token", "aaaaaaaaaaaaaaaa".to_string())]);
         assert_eq!(
             verify(&secret, &scheme, &wrong, BODY),
             Err(Reject::BadSignature)
         );
 
-        let short = HeaderMap::from_pairs([("X-Gitlab-Token", "0123".to_string())]);
+        let short = HeaderMap::from_pairs([("X-Shared-Token", "0123".to_string())]);
         assert_eq!(
             verify(&secret, &scheme, &short, BODY),
             Err(Reject::BadSignature)
@@ -247,7 +247,7 @@ mod tests {
         let missing = HeaderMap::default();
         assert_eq!(
             verify(&secret, &scheme, &missing, BODY),
-            Err(Reject::MissingHeader("x-gitlab-token".into()))
+            Err(Reject::MissingHeader("x-shared-token".into()))
         );
     }
 

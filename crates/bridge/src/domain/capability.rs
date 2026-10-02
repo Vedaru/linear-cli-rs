@@ -3,8 +3,8 @@
 //! refused at configuration time when a mapping asks for them, rather than
 //! silently dropping the value at sync time.
 
-/// A platform's state model. Linear has named workflow states; Forgejo, GitHub
-/// and GitLab have open/closed. The reconciler maps between the two, so the
+/// A platform's state model. Linear has named workflow states; a forge has
+/// open/closed. The reconciler maps between the two, so the
 /// difference has to be visible rather than encoded in an `if platform == ..`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateModel {

@@ -183,7 +183,7 @@ pub struct Proof {
     pub algorithm: String,
     /// The header the platform sends it in, spelled as the platform spells it.
     pub header: String,
-    /// What wraps the digest, if anything (`sha256=` on GitHub).
+    /// What wraps the digest, if anything - a platform that prefixes it with its scheme.
     #[serde(default)]
     pub prefix: Option<String>,
 }

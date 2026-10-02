@@ -40,8 +40,8 @@ impl HeaderMap {
     }
 
     /// First header present among `names`, in order. Providers rename headers
-    /// across versions (`X-Forgejo-*` before `X-Gitea-*`, `X-Hub-Signature-256`
-    /// beside `X-Hub-Signature`), and the alternatives belong in one place - the
+    /// across versions, sending a digest under one name and its predecessor
+    /// under another, and the alternatives belong in one place - the
     /// platform's configuration - rather than in each call site.
     pub fn get_any(&self, names: &[&str]) -> Option<&str> {
         names.iter().find_map(|name| self.get(name))
@@ -59,7 +59,7 @@ impl HeaderMap {
 /// How a provider authenticates its deliveries.
 ///
 /// Two algorithms cover every platform this ships: an HMAC over the raw body
-/// (Linear, the forges, GitHub) and a plain shared secret in a header (GitLab).
+/// (Linear, the forges) and a plain shared secret in a header.
 /// Anything else is a new variant here plus a branch in
 /// [`crate::verify`] - one place, not one per platform.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -77,7 +77,7 @@ pub struct SignatureScheme {
     /// Header names to try, in order of preference.
     pub headers: Vec<String>,
     pub algorithm: Algorithm,
-    /// Optional prefix stripped before decoding, e.g. GitHub's `sha256=`.
+    /// Optional prefix stripped before decoding, where a platform wraps the digest.
     pub prefix: Option<String>,
 }
 

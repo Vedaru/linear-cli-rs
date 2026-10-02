@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use linear_bridge::connector::Source;
 use linear_bridge::domain::Secret;
-use linear_bridge::sources::declarative::DeclarativeSource;
+use linear_bridge::sources::declarative::{DeclarativeSource, SourceSpec};
 use linear_bridge::sources::presets;
 
 mod support;
@@ -43,12 +43,6 @@ fn source(name: &str) -> DeclarativeSource {
     )
 }
 
-// --- Linear -----------------------------------------------------------------
-
-// --- Forgejo ----------------------------------------------------------------
-
-// --- GitHub and GitLab ------------------------------------------------------
-
 #[test]
 fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
     // The capability follows the operation, so the two cannot disagree - and a sweep
@@ -60,15 +54,20 @@ fn enumeration_is_derived_from_the_sink_rather_than_declared_twice() {
         assert!(capabilities.describe().contains(&"list"), "{name}");
     }
 
-    // The intake-only presets cannot be enumerated, and they say so: their API half
-    // is a separate piece of work, and a sweep running against one must refuse
-    // rather than report an empty scope.
-    for name in ["github", "gitlab"] {
-        let preset = presets::preset(name).expect("the preset loads");
-        assert!(preset.sink.is_none(), "{name} is intake-only today");
-        let capabilities = preset.capabilities.resolve(preset.sink.as_ref());
-        assert!(!capabilities.list, "{name} cannot be swept");
-    }
+    // A spec with no write half cannot be enumerated, and says so: a sweep against one must
+    // refuse by name rather than report an empty scope. Taken from a shipped preset minus its
+    // sink, because every platform this build ships can be written to - reading is the half
+    // every platform has, writing is the half some have.
+    let head: String = presets::preset_text("forgejo")
+        .expect("the preset is shipped")
+        .lines()
+        .take_while(|line| !line.starts_with("[sink"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let read_only = SourceSpec::from_toml(&head).expect("a source-only spec parses");
+    assert!(read_only.sink.is_none(), "no write half");
+    let capabilities = read_only.capabilities.resolve(read_only.sink.as_ref());
+    assert!(!capabilities.list, "a spec with no sink cannot be swept");
 }
 
 #[test]

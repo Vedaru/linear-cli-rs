@@ -232,7 +232,7 @@ liveness and delivery counts.
 signature lives, where its event name lives, and how to address the entity in the payload
 (JSON pointers for the id, scope, URL, actor, comment body, reference text, and an optional
 fan-out array for a push). The presets in [`crates/bridge/presets/`](crates/bridge/presets)
-- `linear`, `forgejo`/`gitea`/`codeberg`, `github`, `gitlab` - are exactly that description,
+- `linear`, `forgejo`/`gitea`/`codeberg` - are exactly that description,
 so `type = "forgejo"` and an inline `[platform.<name>.spec]` run the same engine, and a
 platform nobody has written a preset for costs a configuration change rather than a pull
 request. See [crates/bridge/README.md](crates/bridge/README.md).
