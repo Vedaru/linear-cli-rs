@@ -20,6 +20,7 @@ pub mod project;
 pub mod project_update;
 pub mod roadmap;
 pub mod schema;
+pub mod sprint;
 #[cfg(feature = "service")]
 pub mod sync;
 pub mod team;
@@ -49,6 +50,7 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Team(args)) => team::run(args),
         Some(Command::User(args)) => user::run(args),
         Some(Command::Cycle(args)) => cycle::run(args),
+        Some(Command::Sprint(args)) => sprint::run(args),
         Some(Command::Milestone(args)) => milestone::run(args),
         Some(Command::Initiative(args)) => initiative::run(args),
         Some(Command::InitiativeUpdate(args)) => initiative_update::run(args),

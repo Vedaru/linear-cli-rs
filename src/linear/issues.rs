@@ -769,6 +769,7 @@ query ExportIssues($filter: IssueFilter, $sort: [IssueSortInput!], $first: Int, 
       priority
       estimate
       dueDate
+      completedAt
       url
       createdAt
       updatedAt

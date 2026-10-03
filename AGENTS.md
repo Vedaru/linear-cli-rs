@@ -168,6 +168,14 @@ one is the missing half of a group that could only move one way.
   differ — so re-importing an unchanged export makes no requests at all. The columns
   it does not write (`cycle`, `milestone`, the timestamps, the ids) are named in its
   module doc rather than silently ignored.
+- `sprint status`, `sprint progress`, `sprint carry-over`, `sprint burndown`,
+  `sprint velocity` — figures over a team's cycles, computed from the issues and the
+  cycle's own window. Upstream ships the same five as ASCII charts; here the numbers
+  are the product and the chart is a rendering of them, so every one answers `--json`.
+  `carry-over` is the only writer (it moves unfinished issues into the next cycle), so
+  it is a dry run unless `--apply` and names each issue it would move. `velocity`
+  averages only the cycles that have *ended* — including the cycle in flight would
+  report a velocity nobody achieved, which is the number a team would plan with.
 - `cycle create`, `cycle complete` — `cycleCreate`, and `cycleUpdate` with
   `completedAt`. Upstream's cycle group only reads. `create` checks its window
   against the team's existing cycles and refuses an overlap *by name*, because the

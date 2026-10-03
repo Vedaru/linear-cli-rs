@@ -56,6 +56,9 @@ pub enum Command {
     /// Manage Linear team cycles
     #[command(alias = "cy")]
     Cycle(crate::commands::cycle::CycleArgs),
+    /// Sprint figures for a team's cycles: status, progress, carry-over, burndown, velocity
+    #[command(alias = "sp")]
+    Sprint(crate::commands::sprint::SprintArgs),
     /// Manage Linear project milestones
     #[command(alias = "m")]
     Milestone(crate::commands::milestone::MilestoneArgs),

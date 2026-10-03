@@ -291,6 +291,13 @@ query GetTeamCycleWindows($teamId: String!, $first: Int, $after: String) {
     key
     name
     cyclesEnabled
+    activeCycle {
+      id
+      number
+      name
+      startsAt
+      endsAt
+    }
     cycles(first: $first, after: $after) {
       nodes {
         id
@@ -300,6 +307,10 @@ query GetTeamCycleWindows($teamId: String!, $first: Int, $after: String) {
         endsAt
         completedAt
         archivedAt
+        isActive
+        isNext
+        isPast
+        isFuture
       }
       pageInfo {
         hasNextPage

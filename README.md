@@ -124,7 +124,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is on 76 of the 131 leaf commands**, and the other 55 are listed *with a reason* in
+- **`--json` is on 81 of the 136 leaf commands**, and the other 55 are listed *with a reason* in
   `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
   not data (a credential, a reference document, a scaffold, the raw API response) never will
   carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
@@ -157,7 +157,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-25 groups, 131 leaf commands. Run `linear <group> --help` for flags — the help text
+26 groups, 136 leaf commands. Run `linear <group> --help` for flags — the help text
 is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
 every addition and every deliberate deviation.
 
@@ -171,6 +171,7 @@ every addition and every deliberate deviation.
 | `team` | `create` · `delete` · `update` (the API's teamUpdate; upstream can create and delete a team but never correct one) · `list` · `id` · `autolinks` (gh) · `members` · `states` workflow states |
 | `user` | `list` workspace members |
 | `cycle` | `list` · `view` · `create` · `complete` · `update` · `archive` (archiving is irreversible — the API has no unarchive, and no `cycleDelete` exists to wrap) |
+| `sprint` | `status` · `progress` · `carry-over` (a dry run unless `--apply`) · `burndown` · `velocity` — every figure is the product and the chart is a rendering of it, so all five answer `--json` |
 | `milestone` | `list` · `view` · `create` · `update` · `delete` |
 | `initiative` | `list` · `view` · `create` · `update` · `archive` · `unarchive` · `delete` · `add-project` · `remove-project` · `comment` |
 | `initiative-update` | `create` · `list` initiative timeline posts |
