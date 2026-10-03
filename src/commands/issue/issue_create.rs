@@ -105,12 +105,108 @@ fn falsy(option: &Option<String>) -> bool {
     option.as_deref().map_or(true, str::is_empty)
 }
 
-pub fn run(args: IssueCreateArgs) -> Result<()> {
+/// A string field of a local template, ignoring an empty one.
+fn text_field(fields: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    fields
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub fn run(mut args: IssueCreateArgs) -> Result<()> {
     // Validate that description and descriptionFile are not both provided.
     if args.description.is_some() && args.description_file.is_some() {
         return Err(CliError::validation(
             "Cannot specify both --description and --description-file",
         ));
+    }
+
+    // A local template is a file of flags, applied here on this side of the API: the rest of this
+    // function then sees an ordinary flag invocation and nothing downstream has to know. The file
+    // wins over a workspace template of the same name, and the one it shadows is *named* rather
+    // than silently losing - "which of my two `bug` templates just ran" is the question a
+    // shadowed name creates.
+    if let Some(name) = args.template.clone() {
+        if let Some(local_template) = tmpl::local::find(&name)? {
+            let fields = &local_template.fields;
+            let mut filled: Vec<&str> = Vec::new();
+            if falsy(&args.title) {
+                if let Some(value) = text_field(fields, "title") {
+                    args.title = Some(value);
+                    filled.push("title");
+                }
+            }
+            if falsy(&args.description) && args.description_file.is_none() {
+                if let Some(value) = text_field(fields, "description") {
+                    args.description = Some(value);
+                    filled.push("description");
+                }
+            }
+            for (key, target) in [
+                ("assignee", &mut args.assignee),
+                ("team", &mut args.team),
+                ("project", &mut args.project),
+                ("state", &mut args.state),
+                ("cycle", &mut args.cycle),
+                ("milestone", &mut args.milestone),
+                ("parent", &mut args.parent),
+                ("due_date", &mut args.due_date),
+            ] {
+                if target.is_none() {
+                    if let Some(value) = text_field(fields, key) {
+                        *target = Some(value);
+                        filled.push(key);
+                    }
+                }
+            }
+            if args.priority.is_none() {
+                if let Some(value) = fields.get("priority").and_then(Value::as_i64) {
+                    args.priority = Some(value);
+                    filled.push("priority");
+                }
+            }
+            if args.estimate.is_none() {
+                if let Some(value) = fields.get("estimate").and_then(Value::as_i64) {
+                    args.estimate = Some(value);
+                    filled.push("estimate");
+                }
+            }
+            if args.label.is_empty() {
+                if let Some(labels) = fields.get("labels").and_then(Value::as_array) {
+                    args.label = labels
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    if !args.label.is_empty() {
+                        filled.push("labels");
+                    }
+                }
+            }
+
+            if !filled.is_empty() && !args.json {
+                output::line(&format!(
+                    "Using local template {name}: {}",
+                    filled.join(", ")
+                ));
+            }
+            if let Some(workspace) = tmpl::find_workspace_by_name(&name)? {
+                if !args.json {
+                    output::warn(&format!(
+                        "a workspace template named \"{}\" also exists and is shadowed by the local file",
+                        tmpl::template_name(&workspace)
+                    ));
+                }
+            }
+            // A local template takes the place of the team's default template for the same reason
+            // an explicit workspace `--template` does: the caller named what should fill this
+            // issue, and letting the server's default also apply would fill it a second time.
+            args.use_default_template = false;
+            // Done with it: from here the invocation is flags, and a local template is not a
+            // server-side template id to send.
+            args.template = None;
+        }
     }
 
     // Read description from file if provided.

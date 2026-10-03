@@ -124,7 +124,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is on 81 of the 136 leaf commands**, and the other 55 are listed *with a reason* in
+- **`--json` is on 85 of the 140 leaf commands**, and the other 55 are listed *with a reason* in
   `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
   not data (a credential, a reference document, a scaffold, the raw API response) never will
   carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
@@ -157,7 +157,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-26 groups, 136 leaf commands. Run `linear <group> --help` for flags — the help text
+26 groups, 140 leaf commands. Run `linear <group> --help` for flags — the help text
 is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
 every addition and every deliberate deviation.
 
@@ -176,7 +176,7 @@ every addition and every deliberate deviation.
 | `initiative` | `list` · `view` · `create` · `update` · `archive` · `unarchive` · `delete` · `add-project` · `remove-project` · `comment` |
 | `initiative-update` | `create` · `list` initiative timeline posts |
 | `label` | `list` · `create` · `delete` · `update` (rename, recolour, redescribe) |
-| `template` | `list` · `view` what a template pre-fills |
+| `template` | `list` · `view` what a workspace template pre-fills · `show` · `create` · `update` · `delete` — local templates live under the config directory and are the default, `--workspace` addresses Linear's own, and a local name that shadows a workspace one says so |
 | `document` | `list` · `view` · `create` · `update` · `delete` · `comment` |
 | `view` | `list` · `view` · `create` · `update` · `delete` custom views — and **apply** one to a listing with `issue query --view <name\|id>` |
 | `export` | `issues` · `projects` as csv (default), json, ndjson (issues only) or markdown — the JSON document is the one `issue query --json` prints, so it re-imports |

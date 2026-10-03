@@ -15,7 +15,12 @@ use serde_json::{json, Map, Value};
 use crate::errors::{CliError, Result};
 use crate::{graphql, linear, output};
 
+pub mod local;
+mod template_create;
+mod template_delete;
 mod template_list;
+mod template_show;
+mod template_update;
 mod template_view;
 
 pub(crate) const GET_TEMPLATES_QUERY: &str = r#"
@@ -95,6 +100,14 @@ pub enum TemplateCommand {
     /// Show a template and what it pre-fills. Pass its name or ID.
     #[command(alias = "v")]
     View(template_view::TemplateViewArgs),
+    /// Read a template, local or workspace (the unified lookup, naming a shadowed one)
+    Show(template_show::TemplateShowArgs),
+    /// Write a template: a local file by default, Linear's own with --workspace
+    Create(Box<template_create::TemplateCreateArgs>),
+    /// Change a template's fields (local by default; --workspace for Linear's)
+    Update(template_update::TemplateUpdateArgs),
+    /// Delete a template (local by default; --workspace for Linear's)
+    Delete(template_delete::TemplateDeleteArgs),
 }
 
 pub fn run(args: TemplateArgs) -> Result<()> {
@@ -112,7 +125,50 @@ pub fn run(args: TemplateArgs) -> Result<()> {
         TemplateCommand::View(args) => {
             template_view::run(args).map_err(|error| error.with_context("Failed to view template"))
         }
+        TemplateCommand::Show(args) => {
+            template_show::run(args).map_err(|error| error.with_context("Failed to show template"))
+        }
+        // Boxed: this variant carries every field `issue create` accepts, and the enum is built
+        // once per process - but clippy is right that the difference is real, and a pointer costs
+        // nothing here.
+        TemplateCommand::Create(args) => template_create::run(*args)
+            .map_err(|error| error.with_context("Failed to create template")),
+        TemplateCommand::Update(args) => template_update::run(args)
+            .map_err(|error| error.with_context("Failed to update template")),
+        TemplateCommand::Delete(args) => template_delete::run(args)
+            .map_err(|error| error.with_context("Failed to delete template")),
     }
+}
+
+/// The workspace template with this name, if Linear has one.
+///
+/// Used only to *report* a shadowed name (`issue create --template`, `template show`), so a
+/// workspace with several templates of the same name answers the first one rather than refusing -
+/// the local file is the template being applied either way.
+pub(crate) fn find_workspace_by_name(name: &str) -> Result<Option<Value>> {
+    let wanted = name.to_lowercase();
+    Ok(fetch_templates()?
+        .into_iter()
+        .find(|template| template_name(template).to_lowercase() == wanted))
+}
+
+/// A JSON document read from a file (`-` for stdin), for `--data-file`.
+pub(crate) fn read_json_file(path: &str) -> Result<Value> {
+    let text = if path == "-" {
+        use std::io::Read;
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|error| CliError::cli(format!("Failed to read stdin: {error}")))?;
+        text
+    } else {
+        std::fs::read_to_string(path).map_err(|error| {
+            CliError::validation(format!("Failed to read {path}"))
+                .suggestion(format!("Error: {error}"))
+        })?
+    };
+    serde_json::from_str(&text)
+        .map_err(|error| CliError::validation(format!("{path} is not valid JSON: {error}")))
 }
 
 /// Every template in the workspace, team-scoped and workspace-level alike.

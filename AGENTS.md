@@ -168,6 +168,18 @@ one is the missing half of a group that could only move one way.
   differ — so re-importing an unchanged export makes no requests at all. The columns
   it does not write (`cycle`, `milestone`, the timestamps, the ids) are named in its
   module doc rather than silently ignored.
+- `template show`, `template create`, `template update`, `template delete` — local
+  templates (one TOML file per template under `<config>/linear/templates/`, holding the
+  field names `issue create` takes as flags) and Linear's own via `--workspace`. Upstream
+  only reads workspace templates, so a template could be applied but never written. Three
+  rules are load-bearing: a template *name* is a file name and is validated rather than
+  joined (no path traversal), local writes go through `crate::atomic`, and a local template
+  that shadows a workspace one of the same name is *named* rather than silently winning.
+  `issue create --template <name>` applies a local template on this side of the API (it is
+  flags, not a `templateId`), which is also why it suppresses the team's default template -
+  the caller named what should fill the issue. Workspace writes take the API's `templateData`
+  document from `--data-file` (`TemplateCreateInput.templateData` is `JSON!`, a
+  ProseMirror-shaped document, so assembling it from flags is not this command's job).
 - `sprint status`, `sprint progress`, `sprint carry-over`, `sprint burndown`,
   `sprint velocity` — figures over a team's cycles, computed from the issues and the
   cycle's own window. Upstream ships the same five as ASCII charts; here the numbers
