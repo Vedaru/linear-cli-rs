@@ -79,6 +79,17 @@ behaviour), `tests/json_coverage.rs` (which commands answer `--json`) and
 `tests/docs_coverage.rs` (the docs' command table and examples checked against the binary) for the
 pattern.
 
+- **A parity guard against upstream** (`tests/upstream_parity.rs`, in the gate): upstream's command
+  tree and its long flags are pinned in `tests/fixtures/upstream-surface.txt`, rendered from a
+  checkout of `schpet/linear-cli` at a recorded commit with the refresh recipe in the file's header
+  (`/opt/data/.tmp-lin/gen-upstream-surface.py` does the rendering; it stays outside this repository
+  because it reads another one). The test walks *our* tree and fails **by name** when an upstream
+  command cannot be reached or an upstream flag is not accepted - a renamed flag or a dropped
+  subcommand breaks prompts written against upstream, which is the premise this port is built on.
+  Gaps are allowed only by being listed in the test with a reason, and that list may only shrink.
+  Measured when it landed: 95 upstream command paths, 74 flags, none unreachable, three flags
+  unaccepted (`issue mine`'s assignee filters).
+
 ## Known deviations from upstream
 
 - There is no terminal markdown renderer equivalent to `@littletof/charmd`;

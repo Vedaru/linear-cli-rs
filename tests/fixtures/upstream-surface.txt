@@ -1,0 +1,190 @@
+# Upstream linear-cli's command surface, pinned - the input to tests/upstream_parity.rs.
+#
+# Source:  https://github.com/schpet/linear-cli @ d4fe6fa7358f018fd1da0c6b96ec2b022247e898 (2026-09-22)
+# Format:  one command path per line, then one line per long flag of that command
+#          (`<path> --flag`). Lines beginning with `#` are comments.
+# Refresh: clone upstream, regenerate, review the diff -
+#            git clone --depth 1 https://github.com/schpet/linear-cli /tmp/upstream-lcl
+#            python3 /opt/data/.tmp-lin/gen-upstream-surface.py /tmp/upstream-lcl/src
+#          The generator is deliberately kept out of this repository (it reads another
+#          repository); the recipe above and the notes below are what make it reproducible.
+#
+# What the generator cannot see, and why this is a reviewed fixture rather than a proof:
+#   * a command built inline (`new Command()` in its parent's chain) contributes its path but not
+#     its flags;
+#   * an identifier is resolved within the file that declares it, because upstream reuses names
+#     (`listCommand` exists in several groups) - the first run of the generator attributed
+#     `project`'s `--project` to `auth list`, which is a good example of what reviewing catches;
+#   * `.option()` calls chained after a `.command(…)` group belong to the parent in cliffy's model,
+#     which is how upstream declares its own group-level flags.
+#
+# A change to this file is a decision about what "parity" means; it is meant to show up as a diff.
+api
+api --paginate
+api --silent
+api --variable
+api --variables-json
+auth
+auth default
+auth list
+auth login
+auth login --key
+auth login --plaintext
+auth logout
+auth logout --force
+auth migrate
+auth token
+auth whoami
+completions
+config
+cycle
+cycle list
+cycle view
+document
+document comment
+document create
+document delete
+document list
+document update
+document view
+initiative
+initiative add-project
+initiative add-project --sort-order
+initiative archive
+initiative comment
+initiative create
+initiative delete
+initiative list
+initiative remove-project
+initiative remove-project --force
+initiative unarchive
+initiative unarchive --force
+initiative update
+initiative view
+initiative-update
+initiative-update create
+initiative-update list
+issue
+issue agent-session
+issue agent-session list
+issue agent-session list --json
+issue agent-session list --status
+issue agent-session view
+issue agent-session view --json
+issue archive
+issue attach
+issue attach --comment
+issue attach --public
+issue attach --title
+issue comment
+issue commits
+issue create
+issue delete
+issue describe
+issue describe --ref
+issue describe --references
+issue id
+issue link
+issue link --title
+issue mine
+issue mine --all-assignees
+issue mine --all-states
+issue mine --app
+issue mine --assignee
+issue mine --created-after
+issue mine --cycle
+issue mine --label
+issue mine --limit
+issue mine --milestone
+issue mine --no-pager
+issue mine --project
+issue mine --project-label
+issue mine --sort
+issue mine --state
+issue mine --team
+issue mine --unassigned
+issue mine --updated-after
+issue mine --web
+issue pull-request
+issue pull-request --base
+issue pull-request --draft
+issue pull-request --head
+issue pull-request --no-template
+issue pull-request --template
+issue pull-request --title
+issue pull-request --web
+issue query
+issue query --all-assignees
+issue query --all-states
+issue query --all-teams
+issue query --assignee
+issue query --created-after
+issue query --cycle
+issue query --include-archived
+issue query --json
+issue query --label
+issue query --limit
+issue query --milestone
+issue query --no-pager
+issue query --project
+issue query --project-label
+issue query --search
+issue query --search-comments
+issue query --sort
+issue query --state
+issue query --team
+issue query --unassigned
+issue query --updated-after
+issue relation
+issue relation add
+issue relation delete
+issue relation list
+issue start
+issue start --all-assignees
+issue start --branch
+issue start --from-ref
+issue start --unassigned
+issue title
+issue update
+issue url
+issue view
+label
+label create
+label delete
+label list
+markdown
+milestone
+milestone create
+milestone delete
+milestone list
+milestone update
+milestone view
+project
+project comment
+project create
+project delete
+project list
+project update
+project view
+project-update
+project-update create
+project-update list
+schema
+schema --json
+schema --output
+team
+team autolinks
+team create
+team delete
+team id
+team list
+team members
+team members --all
+team members --json
+team states
+team states --json
+template
+template list
+template view
+user
+user list
