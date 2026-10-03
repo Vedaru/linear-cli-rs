@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use crate::connector::Source;
 use crate::domain::{
-    markers, parse_connector_ref, references, Capabilities, Change, ConnectorId, EntityKind,
-    EntityRef, Event, EventDetail, IssueFields, Patch, UserMap,
+    markers, references, Capabilities, Change, ConnectorId, EntityKind, EntityRef, Event,
+    EventDetail, IssueFields, Patch, UserMap,
 };
 use crate::error::{Error, Result};
 use crate::queue::Handler;
 use crate::reconcile::projection::{Projected, Projection, Skipped};
-use crate::reconcile::route::{Identity, Location, Placement, Routes};
+use crate::reconcile::route::{Identity, Placement, Routes};
 use crate::reconcile::survey::{Action, Entry, Survey};
 use crate::reconcile::sweep::{self, Found};
 use crate::reconcile::{
@@ -26,100 +26,15 @@ use crate::reconcile::{
 use crate::sink::{CardColumn, RemoteIssue, Sink};
 use crate::store::{Delivery, Link, ReferenceLink, Store};
 
-/// One end of a mapping: a platform, and the container inside it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Endpoint {
-    pub connector: ConnectorId,
-    /// A team key, a `owner/name`, whatever the platform calls the container.
-    pub scope: String,
-}
+mod decide;
+mod endpoint;
 
-impl Endpoint {
-    /// `connector:scope`.
-    pub fn parse(reference: &str) -> Result<Self> {
-        let (connector, scope) = parse_connector_ref(reference)
-            .map_err(|error| Error::Config(format!("mapping endpoint `{reference}`: {error}")))?;
-        Ok(Self {
-            connector,
-            scope: scope.to_string(),
-        })
-    }
-
-    pub fn describe(&self) -> String {
-        format!("{}:{}", self.connector, self.scope)
-    }
-}
-
-/// A pairing the reconciler acts on.
-#[derive(Clone, Debug)]
-pub struct Mapping {
-    pub name: String,
-    pub source: Endpoint,
-    pub sink: Endpoint,
-    pub policy: Policy,
-    /// How a person is known on each platform. Empty is meaningful: it means the
-    /// deployment has not said, so assignee sync is off rather than guessed.
-    pub users: UserMap,
-    /// Declarative routes: which sink scope an entity's project's mirror lives in.
-    /// Empty means every entity stays in the mapping's own sink scope.
-    pub routes: Routes,
-    /// The sink platform's URL shape, when its preset declares one: a project that
-    /// links to a location in this shape is routed to the scope the URL names. `None`
-    /// means links are never consulted.
-    pub sink_location: Option<Location>,
-}
-
-impl Mapping {
-    /// The end an event arrived on, if it arrived on one of them.
-    ///
-    /// Scope matters as much as the connector: one Linear workspace and one forge
-    /// can be paired several times over (per team, per repository), and a mapping
-    /// that ignored the scope would mirror the wrong repository's issues.
-    ///
-    /// The sink side is matched against *every* scope this mapping writes through -
-    /// its default and each route's - because a routed repository is still this
-    /// mapping's, and an event from it must be claimed here rather than nowhere.
-    pub fn side_of(&self, event: &Event) -> Option<Side> {
-        // A scope the platform did not report is not a mismatch: a Linear comment
-        // payload names the issue but not the team, and the link - not the scope -
-        // is what disambiguates when several mappings share a connector.
-        let scope_matches = |scope: &str| {
-            event
-                .subject
-                .scope
-                .as_deref()
-                .is_none_or(|scope_on_event| scope_on_event.eq_ignore_ascii_case(scope))
-        };
-        if event.connector == self.source.connector && scope_matches(&self.source.scope) {
-            Some(Side::Source)
-        } else if event.connector == self.sink.connector
-            && self.sink_scopes().iter().any(|scope| scope_matches(scope))
-        {
-            Some(Side::Sink)
-        } else {
-            None
-        }
-    }
-
-    /// Every scope on the sink this mapping reads and writes through: its default
-    /// container, then each route's, distinct and in declaration order.
-    pub fn sink_scopes(&self) -> Vec<&str> {
-        let mut scopes = vec![self.sink.scope.as_str()];
-        for scope in self.routes.scopes() {
-            if !scopes.contains(&scope) {
-                scopes.push(scope);
-            }
-        }
-        scopes
-    }
-
-    fn endpoint(&self, side: Side) -> &Endpoint {
-        match side {
-            Side::Source => &self.source,
-            Side::Sink => &self.sink,
-        }
-    }
-}
+// The move must not change how the rest of the crate names these: `config.rs` imports
+// `crate::reconcile::handler::{Endpoint, Mapping}` and continues to.
+use decide::*;
+pub use endpoint::{Endpoint, Mapping};
+// The integration tests build a policy through this path; it stays public and stays here.
+pub use decide::default_policy;
 
 /// A sweep's two ends: what each can hold, and the sink scope the entry is written
 /// in. One struct rather than separate references, so the judging functions do not
@@ -1814,207 +1729,6 @@ impl ReconcileHandler {
         }
         Ok(None)
     }
-}
-
-/// The comment an event is about, if it is about one.
-fn comment_reference(event: &Event, subject: &EntityRef) -> Option<EntityRef> {
-    if event.kind != EntityKind::Comment {
-        return None;
-    }
-    let crate::domain::EventDetail::Comment { id: Some(id), .. } = &event.detail else {
-        return None;
-    };
-    Some(EntityRef {
-        connector: subject.connector.clone(),
-        kind: EntityKind::Comment,
-        scope: subject.scope.clone(),
-        native_id: id.clone(),
-        url: None,
-    })
-}
-
-/// The policy a mapping gets when the deployment does not say otherwise.
-pub fn default_policy(names: Sides<StateNames>) -> Policy {
-    Policy {
-        direction: Direction::Both,
-        sync_issues: true,
-        sync_projects: false,
-        git_automation: true,
-        delete_sync: false,
-        names,
-        columns: Default::default(),
-    }
-}
-
-fn describe_nothing(reason: Nothing) -> &'static str {
-    match reason {
-        Nothing::NotOurKind => "nothing to do: not a kind this bridge mirrors",
-        Nothing::Unpaired => "nothing to do: not part of a mirrored pair",
-        Nothing::Echo => "nothing to do: this is the echo of our own write",
-        Nothing::AlreadyEqual => "nothing to do: both sides already agree",
-        Nothing::Direction => "nothing to do: the mapping does not mirror this direction",
-        Nothing::SwitchedOff => "nothing to do: this class of syncing is switched off",
-        Nothing::Empty => "nothing to do: nothing to carry",
-        Nothing::Unsupported => "nothing to do: the far platform cannot do this",
-    }
-}
-
-/// The entry for a pair that needs no write.
-///
-/// It still records a revision, so the next sweep has a baseline rather than asking
-/// "who moved?" about two sides it cannot date.
-fn in_step(
-    source: &Found,
-    sink: &Found,
-    expected: &IssueFields,
-    sink_names: &StateNames,
-    sink_scope: &str,
-) -> Entry {
-    Entry {
-        subject: source.reference.clone(),
-        side: Side::Source,
-        counterpart: Some(sink.reference.clone()),
-        counterpart_state: sink.state.clone(),
-        action: Action::InStep,
-        step: None,
-        record: Some(content_key(expected, sink.state.as_deref(), sink_names)),
-        sink_scope: sink_scope.to_string(),
-        source_project: None,
-    }
-}
-
-/// Both ends changed since the bridge last wrote: reported, never resolved.
-fn conflict(source: &Found, sink: &Found, sink_scope: &str) -> Entry {
-    Entry {
-        subject: source.reference.clone(),
-        side: Side::Source,
-        counterpart: Some(sink.reference.clone()),
-        counterpart_state: sink.state.clone(),
-        action: Action::Conflict,
-        step: None,
-        record: None,
-        sink_scope: sink_scope.to_string(),
-        source_project: None,
-    }
-}
-
-/// The step for a pair whose winner is known, and the entry that describes it.
-fn decide(
-    mapping: &Mapping,
-    winner: Side,
-    observed: &Found,
-    counterpart: Option<&Found>,
-    expected: &Projected,
-    ends: Ends<'_>,
-    recorded: Option<&str>,
-) -> Entry {
-    // The target is the winner's *other* end: the platform the step writes to.
-    let target = match winner {
-        Side::Source => ends.sink,
-        Side::Sink => ends.source,
-    };
-    let counterpart_state = counterpart.and_then(|found| found.state.clone());
-    let counterpart_snapshot = match counterpart {
-        Some(found) => Snapshot::present(found.fields.clone(), found.state.clone()),
-        None => Snapshot::gone(),
-    };
-    let step = converge(
-        &Pairwise {
-            side: winner,
-            policy: &mapping.policy,
-            observed: &Snapshot::present(observed.fields.clone(), observed.state.clone()),
-            counterpart: &counterpart_snapshot,
-            expected,
-            target,
-        },
-        recorded,
-    );
-
-    let (action, record) = match &step {
-        Step::Create { .. } => (Action::Create, None),
-        Step::Update { patch, state, .. } => {
-            let mut touched: Vec<String> = patch
-                .touched()
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect();
-            if state.is_some() {
-                touched.push("state".into());
-            }
-            (Action::Write { touched }, None)
-        }
-        Step::Nothing(reason) => match reason {
-            Nothing::Echo | Nothing::AlreadyEqual | Nothing::Empty => (
-                Action::InStep,
-                Some(content_key(
-                    &expected.fields,
-                    counterpart_state.as_deref(),
-                    mapping.policy.names.of(winner.other()),
-                )),
-            ),
-            other => (
-                Action::NotMirrored {
-                    why: describe_nothing(*other).to_string(),
-                },
-                None,
-            ),
-        },
-        // Unreachable in practice: a sweep never reaches for a comment, an attachment
-        // or a deletion - those come from deliveries, where an event says what happened.
-        other => (
-            Action::Write {
-                touched: vec![format!("{other:?}")],
-            },
-            None,
-        ),
-    };
-
-    Entry {
-        subject: observed.reference.clone(),
-        side: winner,
-        counterpart: counterpart.map(|found| found.reference.clone()),
-        counterpart_state,
-        action,
-        step: (!matches!(step, Step::Nothing(_))).then_some(step),
-        record,
-        sink_scope: ends.sink_scope.to_string(),
-        // Only an issue the source side names a project for, being written to the
-        // sink: the id is resolved to the sink's own when the write is carried out.
-        source_project: (winner == Side::Source && observed.reference.kind == EntityKind::Issue)
-            .then(|| observed.fields.project.clone())
-            .flatten(),
-    }
-}
-
-/// A body that carries our marker.
-///
-/// The marker is how a copy is recognised *without* the store - a scope can be swept,
-/// and a lost link table does not mean losing every pairing. Both the content signature
-/// and the field diff ignore it, so stamping changes nothing about what the two sides
-/// compare, and a body is never re-sent because of it.
-fn stamped(mut fields: IssueFields, subject: &EntityRef) -> IssueFields {
-    fields.body = with_marker(&fields.body, subject);
-    fields
-}
-
-/// The same for the body a patch carries, when it carries one.
-fn stamped_patch(mut patch: Patch, subject: &EntityRef) -> Patch {
-    if let Change::Set(body) = patch.body {
-        patch.body = Change::Set(with_marker(&body, subject));
-    }
-    patch
-}
-
-fn with_marker(body: &str, subject: &EntityRef) -> String {
-    markers::with_marker(
-        body,
-        &markers::OriginMarker::new(subject.connector.as_str(), subject.native_id.clone()),
-    )
-}
-
-/// `connector:scope`, as the report and the config both write an endpoint.
-fn describe_end(end: &Endpoint) -> String {
-    format!("{}:{}", end.connector, end.scope)
 }
 
 #[cfg(test)]
