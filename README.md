@@ -25,7 +25,7 @@ linear api 'query { viewer { name } }'          # raw GraphQL escape hatch
 | `--json` preserves GraphQL field names | payloads are `camelCase` exactly as Linear's API docs describe them, so they concatenate cleanly into agent context |
 | one-shot process, no state | nothing is resident between calls; commands are safe to run concurrently |
 | no runtime to install | a single ~5 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
-| small memory footprint | ~10.5 MiB peak for typical commands and ~16 MiB for the heaviest, `schema` (the kernel's `VmHWM`, measured against this build) |
+| small memory footprint | ~10.7 MiB peak for a command that touches nothing but its own binary (`--help`, `completions`, `markdown`) and ~16.2 MiB for the heaviest, `schema`, which loads credentials and parses Linear's ~2.7 MB introspection document (`schema --json` streams it and peaks ~13.2 MiB). Measured as the kernel's `ru_maxrss`, one fresh process per command with a scratch `HOME`, because measuring in a shared process reports the running maximum of every child instead of the child — and the floor is the *process*, not the data: a 5.25 MB binary plus libc and the Rust runtime |
 | pipeline-safe | a closed reader (`linear issue list | head`) ends the process the conventional way — no panic, no panic message on stderr |
 | bounded network behaviour | every outbound call has a deadline and a shorter connect deadline; a **read** that fails on a 429/5xx or a transport error is retried up to three times with jittered backoff, while a mutation is sent exactly once — a retried create is a duplicate |
 
