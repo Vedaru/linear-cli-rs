@@ -71,6 +71,10 @@ pub struct IssueMineArgs {
     /// Disable automatic paging for long output
     #[arg(long = "no-pager", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub pager: bool,
+    /// Output issue data as JSON (an addition: upstream's `issue mine` has no
+    /// machine-readable form, so the shape is ours and pinned by a fixture)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: IssueMineArgs) -> Result<()> {
@@ -208,6 +212,17 @@ fn mine(args: &IssueMineArgs) -> Result<()> {
     };
 
     let result = linear::fetch_issues_for_state(&team_key, state_selection.as_ref(), &options)?;
+
+    // The raw GraphQL shape, exactly as `issue query --json` emits it: the two
+    // commands answer the same question ("the issues in this window") and an
+    // agent that can parse one can parse the other. That also means an empty
+    // result is an empty `nodes` array rather than the sentence the table path
+    // prints, because a caller that asked for JSON is parsing, not reading.
+    if args.json {
+        output::print_json(&result);
+        return Ok(());
+    }
+
     let issues: Vec<Value> = result
         .pointer("/issues/nodes")
         .and_then(Value::as_array)

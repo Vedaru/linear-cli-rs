@@ -1,7 +1,7 @@
 //! `linear issue url` — print the issue URL for the current branch.
 //! Port of `src/commands/issue/issue-url.ts`.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::errors::{CliError, Result};
 use crate::linear;
@@ -12,6 +12,10 @@ pub struct IssueUrlArgs {
     /// Issue ID (e.g., ENG-123)
     #[arg(value_name = "issueId")]
     pub issue_id: Option<String>,
+    /// Output issue data as JSON (an addition to upstream; the shape is
+    /// `{"identifier": ..., "url": ...}`)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: IssueUrlArgs) -> Result<()> {
@@ -22,6 +26,10 @@ pub fn run(args: IssueUrlArgs) -> Result<()> {
         };
         let details = linear::fetch_issue_details(&resolved_id, false)?;
         let url = details.get("url").and_then(Value::as_str).unwrap_or("");
+        if args.json {
+            output::print_json(&json!({ "identifier": resolved_id, "url": url }));
+            return Ok(());
+        }
         output::line(url);
         Ok(())
     })();

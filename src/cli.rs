@@ -126,7 +126,11 @@ pub enum AuthCommand {
     /// Print the configured API token
     Token,
     /// Print information about the authenticated user
-    Whoami,
+    Whoami {
+        /// Output the raw viewer shape as JSON (an addition to upstream)
+        #[arg(short = 'j', long)]
+        json: bool,
+    },
     /// Migrate plaintext credentials to system keyring
     Migrate,
 }

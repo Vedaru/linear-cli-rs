@@ -1,7 +1,7 @@
 //! `linear issue title` — print the issue title for the current branch.
 //! Port of `src/commands/issue/issue-title.ts`.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::errors::{CliError, Result};
 use crate::linear;
@@ -12,6 +12,10 @@ pub struct IssueTitleArgs {
     /// Issue ID (e.g., ENG-123)
     #[arg(value_name = "issueId")]
     pub issue_id: Option<String>,
+    /// Output issue data as JSON (an addition to upstream; the shape is
+    /// `{"identifier": ..., "title": ...}`)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: IssueTitleArgs) -> Result<()> {
@@ -22,6 +26,13 @@ pub fn run(args: IssueTitleArgs) -> Result<()> {
         };
         let details = linear::fetch_issue_details(&resolved_id, false)?;
         let title = details.get("title").and_then(Value::as_str).unwrap_or("");
+        if args.json {
+            // The identifier travels with the title even though it is a bare
+            // string in the text form: a caller parsing this has no branch to
+            // re-resolve it from.
+            output::print_json(&json!({ "identifier": resolved_id, "title": title }));
+            return Ok(());
+        }
         output::line(title);
         Ok(())
     })();

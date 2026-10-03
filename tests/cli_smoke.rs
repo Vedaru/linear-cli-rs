@@ -649,3 +649,85 @@ fn issue_mine_rejects_removed_assignee_flag() {
         out.stderr
     );
 }
+
+/// The `--json` forms added where upstream prints a bare string. Each is an addition, so the shape
+/// is ours and is pinned here: a caller parsing `issue title --json` has no branch to re-resolve
+/// the identifier from, so it travels with the value.
+#[test]
+fn issue_title_json_carries_the_identifier() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "GetIssueDetails",
+        json!({ "data": { "issue": {
+            "id": "0f0f0f0f-0000-4000-8000-000000000000",
+            "identifier": "ENG-9",
+            "title": "Flaky upload",
+            "url": "https://linear.app/acme/issue/ENG-9/flaky-upload"
+        } } }),
+    )]);
+
+    let out = run_cli(
+        &["issue", "title", "ENG-9", "--json"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["identifier"], "ENG-9");
+    assert_eq!(value["title"], "Flaky upload");
+    assert_eq!(
+        value.as_object().expect("an object").len(),
+        2,
+        "two keys, no more: {value}"
+    );
+}
+
+#[test]
+fn issue_url_json_carries_the_identifier() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "GetIssueDetails",
+        json!({ "data": { "issue": {
+            "id": "0f0f0f0f-0000-4000-8000-000000000000",
+            "identifier": "ENG-9",
+            "title": "Flaky upload",
+            "url": "https://linear.app/acme/issue/ENG-9/flaky-upload"
+        } } }),
+    )]);
+
+    let out = run_cli(
+        &["issue", "url", "ENG-9", "--json"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["identifier"], "ENG-9");
+    assert_eq!(
+        value["url"],
+        "https://linear.app/acme/issue/ENG-9/flaky-upload"
+    );
+}
+
+/// `auth whoami --json` emits the viewer's raw shape, so all the fields the text form prints are
+/// there once, in the document the API returned.
+#[test]
+fn auth_whoami_json_is_the_raw_viewer_shape() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "AuthStatus",
+        json!({ "data": { "viewer": {
+            "name": "Ada",
+            "displayName": "Ada L",
+            "email": "ada@example.com",
+            "admin": true,
+            "guest": false,
+            "organization": { "name": "Acme", "urlKey": "acme", "logoUrl": null }
+        } } }),
+    )]);
+
+    let out = run_cli(&["auth", "whoami", "--json"], &common::mock_env(&server));
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["viewer"]["name"], "Ada");
+    assert_eq!(value["viewer"]["organization"]["urlKey"], "acme");
+    assert_eq!(value["viewer"]["admin"], true);
+}

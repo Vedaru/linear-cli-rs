@@ -96,8 +96,8 @@ pub fn run(args: AuthArgs) -> Result<()> {
         AuthCommand::Token => {
             token().map_err(|error| error.with_context("Failed to get API token"))
         }
-        AuthCommand::Whoami => {
-            whoami().map_err(|error| error.with_context("Failed to get user info"))
+        AuthCommand::Whoami { json } => {
+            whoami(json).map_err(|error| error.with_context("Failed to get user info"))
         }
         AuthCommand::Migrate => {
             migrate().map_err(|error| error.with_context("Failed to migrate credentials"))
@@ -496,9 +496,16 @@ fn token() -> Result<()> {
     }
 }
 
-fn whoami() -> Result<()> {
+fn whoami(as_json: bool) -> Result<()> {
     let client = graphql::client()?;
     let result = client.request(WHOAMI_VIEWER_QUERY, json!({}))?;
+    if as_json {
+        // The viewer's raw shape: workspace, user and role in one document, so
+        // a caller does not have to parse the labelled text below or make a
+        // second call to learn which workspace it is talking to.
+        output::print_json(&result);
+        return Ok(());
+    }
     print_viewer(&result)
 }
 
