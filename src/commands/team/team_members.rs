@@ -14,50 +14,10 @@ use crate::graphql;
 use crate::linear::{get_team_key, resolve_team};
 use crate::output;
 
-const GET_TEAM_MEMBERS_QUERY: &str = r#"
-  query GetTeamMembers(
-    $teamKey: String!
-    $includeDisabled: Boolean!
-    $first: Int
-    $after: String
-  ) {
-    team(id: $teamKey) {
-      members(
-        includeDisabled: $includeDisabled
-        first: $first
-        after: $after
-      ) {
-        nodes {
-          id
-          name
-          displayName
-          email
-          active
-          initials
-          description
-          timezone
-          lastSeen
-          statusEmoji
-          statusLabel
-          guest
-          isAssignable
-          admin
-          owner
-          isMe
-          url
-          # The shared copy in `linear/queries.rs` fetched this and the command copy did not, so
-          # collapsing the two in either direction used to lose a field. Added here first: the
-          # collapse is VED-111, and it must not be a commit that breaks a caller on the way.
-          avatarUrl
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
-    }
-  }
-"#;
+// The document lives in `linear/queries.rs`, where the shared member lookup uses it too; the local
+// name stays so the call sites above read the same. VED-111 collapsed the two definitions into one,
+// and `tests/graphql_document_names.rs` fails if a second one ever appears.
+const GET_TEAM_MEMBERS_QUERY: &str = crate::linear::GET_TEAM_MEMBERS_QUERY;
 
 #[derive(clap::Args, Debug)]
 pub struct MembersArgs {

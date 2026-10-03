@@ -21,27 +21,13 @@ use std::path::{Path, PathBuf};
 /// Operation names defined in more than one file, with why, and what removes it.
 ///
 /// Shrinking this list is the work; growing it fails the test.
-const KNOWN_DUPLICATES: &[(&str, &str)] = &[
-    (
-        "GetTeamMembers",
-        "DEFECT: the copies differ twice over - five fields from $teamId in linear/queries.rs versus \
-         eighteen from $teamKey with includeDisabled in commands/team/team_members.rs, and the \
-         response is read at a different path in each. `avatarUrl` was added to the rich copy so it \
-         is at least a superset; the collapse also has to rename the shared caller's variable and \
-         follow the path. VED-111.",
-    ),
-    (
-        "GetOrganizationMembers",
-        "DEFECT: same shape as GetTeamMembers - the shared copy reads `users` at the top level, the \
-         command's reads `viewer.organization.users`, and their variables differ. VED-111.",
-    ),
-    (
-        "GetTeamCycles",
-        "DEFECT: the copies differ - the shared one asks for the team's key, cyclesEnabled and \
+const KNOWN_DUPLICATES: &[(&str, &str)] = &[(
+    "GetTeamCycles",
+    "DEFECT: the copies differ - the shared one asks for the team's key, cyclesEnabled and \
          activeCycle with a hard-coded first: 250, the command's asks for $first and per-cycle \
-         endsAt/completedAt/isActive/isFuture/isPast. VED-111.",
-    ),
-];
+         endsAt/completedAt/isActive/isFuture/isPast. Neither is a superset of the other, so this \
+         one gets two distinct names rather than a merge. VED-111.",
+)];
 
 /// Every `r#"..."#` literal in a file, which is how this codebase embeds a GraphQL document.
 fn raw_strings(text: &str) -> Vec<&str> {

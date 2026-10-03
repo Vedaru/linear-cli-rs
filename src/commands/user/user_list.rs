@@ -12,42 +12,10 @@ use serde_json::{json, Map, Value};
 use crate::errors::Result;
 use crate::{display, graphql, output};
 
-const GET_ORGANIZATION_MEMBERS_QUERY: &str = r#"
-query GetOrganizationMembers($includeDisabled: Boolean!, $first: Int, $after: String) {
-  viewer {
-    organization {
-      users(includeDisabled: $includeDisabled, first: $first, after: $after) {
-        nodes {
-          id
-          name
-          displayName
-          email
-          active
-          initials
-          description
-          timezone
-          lastSeen
-          statusEmoji
-          statusLabel
-          guest
-          isAssignable
-          admin
-          owner
-          isMe
-          url
-          # See `team_members`: the shared `GetOrganizationMembers` had this and the command copy
-          # did not. Added so the two are comparable before VED-111 collapses them.
-          avatarUrl
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
-    }
-  }
-}
-"#;
+// One definition, in `linear/queries.rs`; see `team_members` for the same collapse. The shared
+// member lookup reads the same document through the same path, so the two cannot disagree about
+// which fields a member has.
+const GET_ORGANIZATION_MEMBERS_QUERY: &str = crate::linear::GET_ORGANIZATION_MEMBERS_QUERY;
 
 #[derive(Args, Debug)]
 pub struct UserListArgs {

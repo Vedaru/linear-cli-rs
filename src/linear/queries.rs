@@ -520,38 +520,82 @@ query GetTeamLabels($teamId: String!) {
 "#;
 
 pub(crate) const GET_TEAM_MEMBERS_QUERY: &str = r#"
-query GetTeamMembers($teamId: String!, $first: Int, $after: String) {
-  team(id: $teamId) {
-    members(first: $first, after: $after) {
-      nodes {
-        id
-        name
-        displayName
-        email
-        avatarUrl
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
+query GetTeamMembers(
+    $teamKey: String!
+    $includeDisabled: Boolean!
+    $first: Int
+    $after: String
+  ) {
+    team(id: $teamKey) {
+      members(
+        includeDisabled: $includeDisabled
+        first: $first
+        after: $after
+      ) {
+        nodes {
+          id
+          name
+          displayName
+          email
+          # This is the union of what the two copies asked for; `avatarUrl` came from the copy that
+          # served `linear/…`, and the rest from the one that served `team members`. One home for
+          # both, so neither caller can lose a field to the other's shape (VED-111).
+          avatarUrl
+          active
+          initials
+          description
+          timezone
+          lastSeen
+          statusEmoji
+          statusLabel
+          guest
+          isAssignable
+          admin
+          owner
+          isMe
+          url
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
     }
   }
-}
 "#;
 
 pub(crate) const GET_ORGANIZATION_MEMBERS_QUERY: &str = r#"
-query GetOrganizationMembers($first: Int, $after: String) {
-  users(first: $first, after: $after) {
-    nodes {
-      id
-      name
-      displayName
-      email
-      avatarUrl
-    }
-    pageInfo {
-      hasNextPage
-      endCursor
+query GetOrganizationMembers($includeDisabled: Boolean!, $first: Int, $after: String) {
+  viewer {
+    organization {
+      users(includeDisabled: $includeDisabled, first: $first, after: $after) {
+        nodes {
+          id
+          name
+          displayName
+          email
+          # See `GetTeamMembers`: the union of both copies, so the workspace listing and the member
+          # lookup cannot drift apart.
+          avatarUrl
+          active
+          initials
+          description
+          timezone
+          lastSeen
+          statusEmoji
+          statusLabel
+          guest
+          isAssignable
+          admin
+          owner
+          isMe
+          url
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
     }
   }
 }
