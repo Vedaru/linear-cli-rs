@@ -22,6 +22,7 @@ use support::Fake;
 fn fields() -> IssueFields {
     IssueFields {
         title: "Mirror the thing".into(),
+        milestone: None,
         body: "why it matters".into(),
         labels: vec!["Bug".into(), "Urgent".into()],
         // A forge has no priority field, so this is the value that has to survive
@@ -528,6 +529,7 @@ fn linear_routes(_method: &str, path: &str, body: &Value) -> (u16, Value) {
 fn linear_fields() -> IssueFields {
     IssueFields {
         title: "Mirror the thing".into(),
+        milestone: None,
         body: "why it matters".into(),
         labels: vec!["Bug".into()],
         priority: 2,

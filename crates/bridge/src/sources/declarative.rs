@@ -175,6 +175,7 @@ pub struct CapabilitySpec {
     pub labels: bool,
     #[serde(default)]
     pub due_dates: bool,
+    pub milestones: bool,
     #[serde(default)]
     pub priorities: bool,
     #[serde(default)]
@@ -192,6 +193,7 @@ impl Default for CapabilitySpec {
             states: StateKind::OpenClosed,
             labels: false,
             due_dates: false,
+            milestones: false,
             priorities: false,
             multiple_assignees: false,
             native_pull_requests: false,
@@ -233,6 +235,7 @@ impl From<CapabilitySpec> for Capabilities {
             list: false,
             labels: spec.labels,
             due_dates: spec.due_dates,
+            milestones: spec.milestones,
             priorities: spec.priorities,
             multiple_assignees: spec.multiple_assignees,
             native_pull_requests: spec.native_pull_requests,

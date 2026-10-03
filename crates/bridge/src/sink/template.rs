@@ -102,6 +102,8 @@ pub const DIRECTIVES: &[&str] = &[
     "body",
     "labels",
     "label_ids",
+    // One milestone id, resolved from its name the same way the label ids above are.
+    "milestone_id",
     "priority",
     "due_date",
     "assignee",

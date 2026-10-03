@@ -20,6 +20,7 @@ headers = ["x-forgejo-event", "x-gitea-event"]
 states = "open-closed"
 labels = true
 due_dates = true
+milestones = true
 priorities = false
 multiple_assignees = false
 native_pull_requests = true
@@ -138,6 +139,7 @@ labels = "$label_ids"
 # `$field` disappears when the value is absent, which is what a create wants:
 # nothing to say about a due date means the field is never mentioned.
 due_date = "$due_date"
+milestone = "$milestone_id"
 assignees = "$assignees"
 
 [sink.issue.update]
@@ -182,6 +184,7 @@ url = "/html_url"
 title = "/title"
 body = "/body"
 due_date = "/due_date"
+milestone = "/milestone/title"
 state = "/state"
 labels = { path = "/labels", pick = "/name" }
 assignee = "/assignees/0/login"
@@ -239,6 +242,23 @@ assignee = "/assignees/0/login"
 # (and degrades to part of the body when the label cannot be written), so
 # reading it back is reading the labels.
 priority = { from_labels = true }
+
+# Name -> id for a milestone, which a forge addresses by id and a bridge is told about by
+# name. The repository is the scope: a milestone belongs to one, exactly as a label does.
+# `create` is here for the same reason the label's is: a milestone the mirror is told about
+# but the repository lacks is created rather than dropped.
+[sink.issue.lookup.milestone]
+name = "/title"
+id = "/id"
+[sink.issue.lookup.milestone.list]
+method = "GET"
+path = "/repos/{scope}/milestones?state=all"
+[sink.issue.lookup.milestone.create]
+method = "POST"
+path = "/repos/{scope}/milestones"
+id = "/id"
+[sink.issue.lookup.milestone.create.body]
+title = "$name"
 
 # Name -> id, for the label ids `$label_ids` needs. A label the bridge is told
 # to apply but the repository does not have is created rather than dropped:

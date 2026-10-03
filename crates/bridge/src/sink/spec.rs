@@ -368,6 +368,7 @@ pub struct ReadSpec {
     pub priority: Option<ReadField>,
     #[serde(default)]
     pub due_date: Option<ReadField>,
+    pub milestone: Option<ReadField>,
     #[serde(default)]
     pub assignee: Option<ReadField>,
     /// The project the issue is on, where the platform reports one. A platform

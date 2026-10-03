@@ -24,6 +24,7 @@ tolerance_secs = 60
 states = "named"
 labels = true
 due_dates = true
+milestones = true
 priorities = true
 multiple_assignees = false
 native_pull_requests = false
@@ -135,7 +136,7 @@ id = "/data/issueCreate/issue/id"
 url = "/data/issueCreate/issue/url"
 [sink.issue.create.body]
 query = "mutation IssueCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }"
-variables = { input = { title = "$title", description = "$body", teamId = "$scope_id", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
+variables = { input = { title = "$title", description = "$body", teamId = "$scope_id", stateId = "$state_id", projectMilestoneId = "$milestone_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
 
 [sink.issue.update]
 method = "POST"
@@ -143,7 +144,7 @@ path = ""
 id = "/data/issueUpdate/issue/id"
 [sink.issue.update.body]
 query = "mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id url } } }"
-variables = { id = "$id", input = { title = "$title", description = "$body", stateId = "$state_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
+variables = { id = "$id", input = { title = "$title", description = "$body", stateId = "$state_id", projectMilestoneId = "$milestone_id", labelIds = "$label_ids", dueDate = "$due_date", priority = "$priority", assigneeId = "$assignee_id" } }
 
 [sink.issue.fetch]
 method = "POST"
@@ -181,6 +182,7 @@ title = "/title"
 body = "/description"
 state = "/state/name"
 due_date = "/dueDate"
+milestone = "/projectMilestone/name"
 priority = "/priority"
 labels = { path = "/labels/nodes", pick = "/name" }
 assignee = "/assignee/email"
@@ -240,6 +242,7 @@ variables = { input = { issueId = "$id", url = "$url", title = "$title" } }
 title = "/data/issue/title"
 body = "/data/issue/description"
 due_date = "/data/issue/dueDate"
+milestone = "/data/issue/projectMilestone/name"
 state = "/data/issue/state/name"
 priority = "/data/issue/priority"
 labels = { path = "/data/issue/labels/nodes", pick = "/name" }
@@ -295,6 +298,20 @@ query = "mutation IssueLabelCreate($input: IssueLabelCreateInput!) { issueLabelC
 variables = { input = { name = "$name", teamId = "$scope_id" } }
 
 # The neutral assignee is an email, which is also how a Linear user is matched.
+# Name -> id for a project milestone. Linear scopes these to a project, but the
+# collection is queryable workspace-wide, which is what a lookup needs: the issue being
+# written names its milestone, not its project. One name, one milestone - the ticket
+# says what happens when two projects use the same name (nothing good, so: refuse).
+[sink.issue.lookup.milestone]
+name = "/name"
+id = "/id"
+items = "/data/projectMilestones/nodes"
+[sink.issue.lookup.milestone.list]
+method = "POST"
+path = ""
+[sink.issue.lookup.milestone.list.body]
+query = "query ProjectMilestones { projectMilestones(first: 250) { nodes { id name } } }"
+
 [sink.issue.lookup.assignee]
 name = "/email"
 id = "/id"

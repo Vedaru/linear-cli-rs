@@ -211,6 +211,7 @@ mod tests {
             list: true,
             labels: true,
             due_dates: true,
+            milestones: true,
             priorities: false,
             multiple_assignees: false,
             native_pull_requests: true,
@@ -222,6 +223,7 @@ mod tests {
         Capabilities {
             labels: false,
             due_dates: false,
+            milestones: false,
             ..forgejo()
         }
     }
@@ -233,6 +235,7 @@ mod tests {
             labels: vec!["bug".into()],
             priority: 2,
             due_date: Some("2026-10-02".into()),
+            milestone: None,
             assignee: Some("loner@example.com".into()),
             project: None,
             slug: None,

@@ -32,6 +32,9 @@ use crate::sink::{CardColumn, RemoteIssue, RemoteRef, Sink};
 /// A lookup a spec declares: the kinds the engine will resolve.
 const TEAM: &str = "team";
 const LABEL: &str = "label";
+/// A milestone, which a forge addresses by id - the same name-to-id shape as a
+/// label, except that an issue carries one rather than a set.
+const MILESTONE: &str = "milestone";
 const STATE: &str = "state";
 const ASSIGNEE: &str = "assignee";
 /// A card's column on a board: a *project* lookup, and the only one whose answer is
@@ -194,6 +197,15 @@ impl DeclarativeSink {
                 values["label_ids"] = json!(ids);
             }
         }
+        if let Change::Set(name) = &patch.milestone {
+            // Clearing a milestone is a value the platform understands, not an omission:
+            // the same reason a cleared due date is sent as null rather than left out.
+            values["milestone_id"] = if name.is_empty() {
+                Value::Null
+            } else {
+                self.resolve(MILESTONE, call.scope, name)?
+            };
+        }
         if let Change::Set(priority) = &patch.priority {
             // 0 is "no priority" on the wire, which is how one is cleared.
             values["priority"] = if *priority == 0 {
@@ -265,6 +277,15 @@ impl DeclarativeSink {
             // Forges take a list of assignees; the neutral model carries one, so
             // the list form is derived rather than asked of the sync engine.
             values["assignees"] = json!(fields.assignee.iter().collect::<Vec<_>>());
+            if uses(&operation.body, "$milestone_id") {
+                // One id, not a set: `resolve` already answers with a single value, which is
+                // why the plural `$label_ids` beside it is a loop and not another mechanism.
+                // Absent is sent as null, the same way a cleared due date is.
+                values["milestone_id"] = match fields.milestone.as_deref() {
+                    Some(name) => self.resolve(MILESTONE, scope, name)?,
+                    None => Value::Null,
+                };
+            }
 
             if uses(&operation.body, "$label_ids") {
                 let names = self.outbound_labels(fields);
@@ -662,6 +683,8 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // looking like an edit.
         labels: canonical_labels(&raw_labels),
         title: read_text(body, read.title.as_ref()).unwrap_or_default(),
+        // Where the preset says the milestone lives, by name; `None` when it says nothing.
+        milestone: read_text(body, read.milestone.as_ref()),
         body: read_text(body, read.body.as_ref()).unwrap_or_default(),
         priority,
         // Normalised, not read raw: a forge spells "no due date" as

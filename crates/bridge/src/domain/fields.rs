@@ -33,6 +33,10 @@ pub struct IssueFields {
     pub priority: u8,
     /// `YYYY-MM-DD`, or `None` for no due date.
     pub due_date: Option<String>,
+    /// The milestone the issue sits in, by name: a forge scopes milestones to a
+    /// repository and Linear scopes them to a project, so the name is the only
+    /// thing both sides can be asked for.
+    pub milestone: Option<String>,
     /// Canonical assignee token, as agreed by the user map.
     pub assignee: Option<String>,
     /// The project this issue is on, in the id space of the platform being
@@ -100,6 +104,7 @@ impl IssueFields {
             labels.as_str(),
             priority.as_str(),
             self.due_date.as_deref().unwrap_or(""),
+            self.milestone.as_deref().unwrap_or(""),
             assignee.as_str(),
             project.as_str(),
         ];
@@ -155,6 +160,7 @@ pub struct Patch {
     pub labels: Change<Vec<String>>,
     pub priority: Change<u8>,
     pub due_date: Change<String>,
+    pub milestone: Change<String>,
     pub assignee: Change<String>,
     /// The project the issue sits on. `Set` puts it on the project's board;
     /// `Clear` takes it off the one it was on. A container is a field of the issue
@@ -176,6 +182,7 @@ impl Patch {
             ("labels", !self.labels.is_leave()),
             ("priority", !self.priority.is_leave()),
             ("due_date", !self.due_date.is_leave()),
+            ("milestone", !self.milestone.is_leave()),
             ("assignee", !self.assignee.is_leave()),
             ("project", !self.project.is_leave()),
         ];
@@ -221,6 +228,7 @@ pub fn diff(source: &IssueFields, target: &IssueFields) -> Patch {
         labels: change(Some(&source_labels), Some(&target_labels)),
         priority: change(Some(&source.priority), Some(&target.priority)),
         due_date: change(source.due_date.as_ref(), target.due_date.as_ref()),
+        milestone: change(source.milestone.as_ref(), target.milestone.as_ref()),
         assignee: change(source.assignee.as_ref(), target.assignee.as_ref()),
         project: change(source.project.as_ref(), target.project.as_ref()),
     }

@@ -38,6 +38,10 @@ pub struct Capabilities {
     pub list: bool,
     pub labels: bool,
     pub due_dates: bool,
+    /// Whether milestones travel here. Both sides can hold one, so both presets say
+    /// true - the write only happens where the preset declares the directive.
+    pub milestones: bool,
+
     pub priorities: bool,
     pub multiple_assignees: bool,
     pub native_pull_requests: bool,
@@ -99,6 +103,7 @@ mod tests {
             list: true,
             labels: true,
             due_dates: true,
+            milestones: true,
             priorities: false,
             multiple_assignees: false,
             native_pull_requests: true,

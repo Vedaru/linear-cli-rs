@@ -63,6 +63,7 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
     // and the read half takes it back out, so the two ends still agree about the
     // date instead of one of them quietly losing it.
     let read = ReadSpec {
+        milestone: None,
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
             path: Some("/labels".into()),
             pick: Some("/name".into()),
@@ -98,6 +99,7 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
         states: StateModel::OpenClosed,
         labels: true,
         due_dates: false,
+        milestones: false,
         priorities: false,
         multiple_assignees: false,
         native_pull_requests: true,
@@ -137,6 +139,7 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
 #[test]
 fn read_fields_map_a_flat_response_and_a_rich_one() {
     let read = ReadSpec {
+        milestone: None,
         title: Some(ReadField::Pointer("/title".into())),
         body: Some(ReadField::Pointer("/body".into())),
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
@@ -186,6 +189,7 @@ fn read_fields_map_a_flat_response_and_a_rich_one() {
 #[test]
 fn a_linear_shaped_response_reads_the_same_fields() {
     let read = ReadSpec {
+        milestone: None,
         title: Some(ReadField::Pointer("/title".into())),
         body: Some(ReadField::Pointer("/description".into())),
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
