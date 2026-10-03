@@ -54,6 +54,22 @@ pub fn print_json(value: &Value) {
     let _ = writeln!(lock);
 }
 
+/// Write a JSON value as a single line - one object per line, the NDJSON shape.
+///
+/// Compact and flushed on purpose. Compact, because a line is a record and pretty-printing
+/// would spread one record over several lines, which is the format's promise broken. Flushed,
+/// because stdout is block-buffered when it is a pipe: without this a stream arrives at exit,
+/// which is a buffered list wearing a stream's name.
+pub fn print_json_line(value: &Value) {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if serde_json::to_writer(&mut lock, value).is_err() {
+        return;
+    }
+    let _ = writeln!(lock);
+    let _ = lock.flush();
+}
+
 /// Write a JSON value with two-space indentation to any writer.
 pub fn write_json<W: Write>(writer: &mut W, value: &Value) -> std::io::Result<()> {
     serde_json::to_writer_pretty(writer, value).map_err(std::io::Error::other)

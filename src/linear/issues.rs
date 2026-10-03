@@ -454,10 +454,20 @@ pub fn count_issues(options: &FetchIssuesForQueryOptions) -> Result<i64> {
     Ok(total)
 }
 
-/// Issues across teams in a query filter, shaped `{ nodes, pageInfo }`.
+/// Walk a query's pages, handing each page to `on_page` as it arrives, and answer the last
+/// page's `pageInfo`.
 ///
-/// `limit == Some(0)` fetches everything; `None` uses the default page size.
-pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Value> {
+/// This is the pagination loop, in one place: [`fetch_issues_for_query`] accumulates the
+/// pages and `--ndjson` writes each one out the moment it lands. A stream that waited for
+/// the last page before printing the first would be a buffered list with worse parsing, so
+/// the loop has to be here rather than behind the fetcher.
+///
+/// The limit is applied *before* a page is handed over: a consumer that writes as it goes
+/// cannot print more than was asked for and cannot un-print it afterwards.
+pub fn stream_issues_for_query(
+    options: &FetchIssuesForQueryOptions,
+    mut on_page: impl FnMut(&[Value]) -> Result<()>,
+) -> Result<Value> {
     let client = graphql::client()?;
     let filter = issue_filter(options)?;
 
@@ -466,7 +476,7 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
     let page_size: u32 = if fetch_all { 100 } else { limit.min(100) };
     let sort_payload = get_issue_sort_payload(options.sort.unwrap_or(IssueSort::Priority));
 
-    let mut all_issues: Vec<Value> = Vec::new();
+    let mut seen: usize = 0;
     let mut after: Option<String> = None;
     let mut last_page_info = json!({ "hasNextPage": false, "endCursor": null });
     let mut has_next = true;
@@ -490,8 +500,20 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
             .get("issues")
             .ok_or_else(|| CliError::cli("Linear API response did not contain issues"))?;
 
-        if let Some(nodes) = connection.get("nodes").and_then(Value::as_array) {
-            all_issues.extend(nodes.iter().cloned());
+        let no_nodes: Vec<Value> = Vec::new();
+        let page = connection
+            .get("nodes")
+            .and_then(Value::as_array)
+            .unwrap_or(&no_nodes);
+        let room = if fetch_all {
+            page.len()
+        } else {
+            (limit as usize).saturating_sub(seen)
+        };
+        let taken: Vec<Value> = page.iter().take(room).cloned().collect();
+        seen += taken.len();
+        if !taken.is_empty() {
+            on_page(&taken)?;
         }
 
         if let Some(page_info) = connection.get("pageInfo") {
@@ -508,19 +530,28 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
             has_next = false;
         }
 
-        if !fetch_all && all_issues.len() >= limit as usize {
+        if !fetch_all && seen >= limit as usize {
             break;
         }
     }
 
-    let mut nodes = if fetch_all {
-        all_issues
-    } else {
-        all_issues.into_iter().take(limit as usize).collect()
-    };
+    Ok(last_page_info)
+}
+
+/// Issues across teams in a query filter, shaped `{ nodes, pageInfo }`.
+///
+/// `limit == Some(0)` fetches everything; `None` uses the default page size.
+pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Value> {
+    let mut all_issues: Vec<Value> = Vec::new();
+    let page_info = stream_issues_for_query(options, |page| {
+        all_issues.extend(page.iter().cloned());
+        Ok(())
+    })?;
+
+    let mut nodes = all_issues;
     sort_issues_by_workflow_state(&mut nodes);
 
-    Ok(json!({ "nodes": nodes, "pageInfo": last_page_info }))
+    Ok(json!({ "nodes": nodes, "pageInfo": page_info }))
 }
 
 #[derive(Debug, Clone, Default)]

@@ -70,6 +70,31 @@ fn issues_response(nodes: Vec<Value>) -> MockResponse {
     )
 }
 
+/// The first page of a longer answer: the cursor is what makes a second request happen.
+fn first_page(nodes: Vec<Value>) -> MockResponse {
+    MockResponse::new(
+        "FetchIssues",
+        json!({ "data": { "issues": {
+            "nodes": nodes,
+            "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
+        } } }),
+    )
+    // The first request carries no `after`, which the harness reads as null.
+    .with_variables(json!({ "after": null }))
+}
+
+/// The page after `first_page`.
+fn second_page(nodes: Vec<Value>) -> MockResponse {
+    MockResponse::new(
+        "FetchIssues",
+        json!({ "data": { "issues": {
+            "nodes": nodes,
+            "pageInfo": { "hasNextPage": false, "endCursor": null }
+        } } }),
+    )
+    .with_variables(json!({ "after": "cursor-1" }))
+}
+
 #[test]
 fn count_only_takes_the_number_the_api_states() {
     // Only the stated-count request is configured: a full issue fetch would have no answer and
@@ -309,4 +334,147 @@ fn group_by_refuses_a_field_it_does_not_group_by() {
         "stderr: {}",
         output.stderr
     );
+}
+
+#[test]
+fn ndjson_writes_one_line_per_issue_across_pages() {
+    let server = MockLinearServer::start(vec![
+        find_team_mock(),
+        first_page(vec![issue("a", "ENG-1", "One", "In Progress", "started")]),
+        second_page(vec![issue("b", "ENG-2", "Two", "Done", "completed")]),
+    ]);
+
+    let output = run_cli(
+        &[
+            "issue",
+            "query",
+            "--team",
+            "ENG",
+            "--ndjson",
+            "--limit",
+            "0",
+            "--no-pager",
+        ],
+        &mock_env(&server),
+    );
+
+    assert!(output.success(), "stderr: {}", output.stderr);
+    let lines: Vec<&str> = output
+        .stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(lines.len(), 2, "one line per issue: {}", output.stdout);
+    // Each line has to stand on its own: that is what a line-oriented reader parses.
+    let first: Value = serde_json::from_str(lines[0]).expect("a document of its own");
+    let second: Value = serde_json::from_str(lines[1]).expect("a document of its own");
+    assert_eq!(first["identifier"], "ENG-1");
+    assert_eq!(second["identifier"], "ENG-2");
+}
+
+#[test]
+fn ndjson_streams_what_it_has_before_a_later_page_fails() {
+    // Page one is answered and page two deliberately is not. A command that *streams* has
+    // already written page one when the second request fails; one that buffers the result
+    // prints nothing at all. This is the only place the difference is visible from outside,
+    // which is why it is the assertion the implementation has to survive.
+    let server = MockLinearServer::start(vec![
+        find_team_mock(),
+        first_page(vec![issue("a", "ENG-1", "One", "In Progress", "started")]),
+    ]);
+
+    let output = run_cli(
+        &[
+            "issue",
+            "query",
+            "--team",
+            "ENG",
+            "--ndjson",
+            "--limit",
+            "0",
+            "--no-pager",
+        ],
+        &mock_env(&server),
+    );
+
+    assert!(!output.success(), "the missing page is an error");
+    assert!(
+        output.stdout.contains("ENG-1"),
+        "page one should already be out: {}",
+        output.stdout
+    );
+}
+
+#[test]
+fn ndjson_stops_at_the_limit_without_fetching_the_next_page() {
+    // The limit is applied before a page is handed over, and the walk stops there. Page two is
+    // not configured, so a command that fetched it anyway would fail this test.
+    let server = MockLinearServer::start(vec![
+        find_team_mock(),
+        first_page(vec![
+            issue("a", "ENG-1", "One", "In Progress", "started"),
+            issue("b", "ENG-2", "Two", "Done", "completed"),
+        ]),
+    ]);
+
+    let output = run_cli(
+        &[
+            "issue",
+            "query",
+            "--team",
+            "ENG",
+            "--ndjson",
+            "--limit",
+            "1",
+            "--no-pager",
+        ],
+        &mock_env(&server),
+    );
+
+    assert!(output.success(), "stderr: {}", output.stderr);
+    assert_eq!(
+        output
+            .stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
+        1,
+        "the limit belongs to the consumer too: {}",
+        output.stdout
+    );
+}
+
+#[test]
+fn ndjson_refuses_what_it_cannot_stream() {
+    let server = MockLinearServer::start(vec![find_team_mock()]);
+    let env = mock_env(&server);
+
+    for (flags, expected) in [
+        (
+            vec!["--ndjson", "--json"],
+            "Cannot use both --ndjson and --json",
+        ),
+        (
+            vec!["--ndjson", "--count-only"],
+            "Cannot use --ndjson with --count-only",
+        ),
+        (
+            vec!["--ndjson", "--group-by", "state"],
+            "Cannot use --ndjson with --group-by",
+        ),
+        (
+            vec!["--ndjson", "--search", "oauth"],
+            "Cannot use --ndjson with --search",
+        ),
+    ] {
+        let mut args = vec!["issue", "query", "--team", "ENG"];
+        args.extend(flags.iter().copied());
+        let output = run_cli(&args, &env);
+        assert!(!output.success(), "{flags:?} must be refused");
+        assert!(
+            output.stderr.contains(expected),
+            "{flags:?}: {}",
+            output.stderr
+        );
+    }
 }

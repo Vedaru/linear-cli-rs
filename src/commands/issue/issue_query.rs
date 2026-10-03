@@ -79,6 +79,9 @@ pub struct IssueQueryArgs {
     /// Group the results: state, priority, assignee or project
     #[arg(long = "group-by", value_name = "FIELD")]
     pub group_by: Option<String>,
+    /// Print one JSON object per line, streaming each page as it arrives
+    #[arg(long = "ndjson")]
+    pub ndjson: bool,
     /// Include archived issues
     #[arg(long = "include-archived")]
     pub include_archived: bool,
@@ -182,6 +185,34 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
     }
 
     let group_by = args.group_by.as_deref().map(GroupBy::parse).transpose()?;
+
+    // `--ndjson` is a stream, and three of the flags need the whole result before the first
+    // line can be honestly written. Each gets its own refusal naming the alternative, rather
+    // than a stream that quietly waits for the end and calls itself one.
+    if args.ndjson && args.json {
+        return Err(
+            CliError::validation("Cannot use both --ndjson and --json").suggestion(
+                "--ndjson is the streamed form - one JSON object per line instead of one document. Pick one.",
+            ),
+        );
+    }
+    if args.ndjson && args.count_only {
+        return Err(
+            CliError::validation("Cannot use --ndjson with --count-only")
+                .suggestion("A count is a single number, not a stream. Use --count-only --json."),
+        );
+    }
+    if args.ndjson && args.group_by.is_some() {
+        return Err(
+            CliError::validation("Cannot use --ndjson with --group-by").suggestion(
+                "Grouping needs every issue before it can label the first group. Use --group-by --json.",
+            ),
+        );
+    }
+    if args.ndjson && args.search.is_some() {
+        return Err(CliError::validation("Cannot use --ndjson with --search")
+            .suggestion("Search answers in one relevance-ordered page. Use --search --json."));
+    }
 
     // `--since 7d` and `--updated-after 2024-01-15` are the same bound in two notations, so
     // they resolve to one value here and nothing downstream knows the difference.
@@ -318,6 +349,19 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
             } else {
                 output::line(&total.to_string());
             }
+            return Ok(());
+        }
+
+        // Streamed rather than fetched and printed: each page is written the moment it
+        // arrives, which is the only thing NDJSON buys over a JSON array - an agent can start
+        // work on page one while page two is still in flight.
+        if args.ndjson {
+            linear::stream_issues_for_query(&options, |page| {
+                for node in page {
+                    output::print_json_line(node);
+                }
+                Ok(())
+            })?;
             return Ok(());
         }
 
