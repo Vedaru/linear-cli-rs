@@ -35,6 +35,9 @@ query GetOrganizationMembers($includeDisabled: Boolean!, $first: Int, $after: St
           owner
           isMe
           url
+          # See `team_members`: the shared `GetOrganizationMembers` had this and the command copy
+          # did not. Added so the two are comparable before VED-111 collapses them.
+          avatarUrl
         }
         pageInfo {
           hasNextPage

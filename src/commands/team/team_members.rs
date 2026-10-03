@@ -45,6 +45,10 @@ const GET_TEAM_MEMBERS_QUERY: &str = r#"
           owner
           isMe
           url
+          # The shared copy in `linear/queries.rs` fetched this and the command copy did not, so
+          # collapsing the two in either direction used to lose a field. Added here first: the
+          # collapse is VED-111, and it must not be a commit that breaks a caller on the way.
+          avatarUrl
         }
         pageInfo {
           hasNextPage

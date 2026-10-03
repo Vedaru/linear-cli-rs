@@ -24,13 +24,16 @@ use std::path::{Path, PathBuf};
 const KNOWN_DUPLICATES: &[(&str, &str)] = &[
     (
         "GetTeamMembers",
-        "DEFECT: the copies differ - five fields from $teamId in linear/queries.rs, seventeen from \
-         $teamKey with includeDisabled in commands/team/team_members.rs. Two valid documents, one \
-         name, so a fixture that matches by operation name can answer the wrong one. VED-111.",
+        "DEFECT: the copies differ twice over - five fields from $teamId in linear/queries.rs versus \
+         eighteen from $teamKey with includeDisabled in commands/team/team_members.rs, and the \
+         response is read at a different path in each. `avatarUrl` was added to the rich copy so it \
+         is at least a superset; the collapse also has to rename the shared caller's variable and \
+         follow the path. VED-111.",
     ),
     (
         "GetOrganizationMembers",
-        "DEFECT: same shape as GetTeamMembers - the shared copy is a subset of the command's. VED-111.",
+        "DEFECT: same shape as GetTeamMembers - the shared copy reads `users` at the top level, the \
+         command's reads `viewer.organization.users`, and their variables differ. VED-111.",
     ),
     (
         "GetTeamCycles",
