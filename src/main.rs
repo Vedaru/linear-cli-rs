@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 mod actions;
+mod atomic;
 mod bulk;
 mod cli;
 mod colors;
@@ -36,6 +37,7 @@ mod keyring;
 mod linear;
 mod linear_url;
 mod markdown;
+mod net;
 mod output;
 mod pager;
 mod paths;

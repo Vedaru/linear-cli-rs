@@ -126,6 +126,14 @@ one is the missing half of a group that could only move one way.
   adding or removing the authenticated API user as a watcher.
 - `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
   `commentUnresolve`, which the app's resolve button covers but no CLI did.
+- **One request policy** (`src/net.rs`, copied verbatim to `crates/bridge/src/net.rs` and compared
+  byte-for-byte by a test, because the CLI must build without the bridge crate): a global deadline,
+  a shorter connect deadline, and up to three attempts with jittered backoff — but only for a
+  request that may be repeated. The document says so itself (`query` and the `{ … }` shorthand
+  read; `mutation` and `subscription` write), a preset's REST call says so with its method, and
+  anything unrecognisable is treated as a write, because the cost of being wrong is a duplicate.
+  `LINEAR_REQUEST_TIMEOUT_SECS` and `LINEAR_CONNECT_TIMEOUT_SECS` override the deadlines, which is
+  how a test makes a hang bounded in a second rather than sixty.
 - `roadmap list`, `roadmap view` — `roadmaps` / `roadmap(id:)` with the projects read from the
   roadmap's own relation. The **write** half is deliberately absent, and not only because upstream
   has none: Linear deprecated `Roadmap` and `RoadmapToProject`, and the API refuses the writes by

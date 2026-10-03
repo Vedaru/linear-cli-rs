@@ -7,16 +7,17 @@
 //!
 //! Blocking, reuse-the-agent `ureq`, exactly like the CLI's Linear client: one
 //! concurrency model for the whole binary (D1 in the architecture decisions).
-
-use std::time::Duration;
+//!
+//! The request policy - deadlines, and which requests may be repeated - lives in
+//! [`crate::net`], which is a byte-identical copy of the CLI's `src/net.rs` and is kept that way by
+//! a test: the CLI must build without this crate, so the policy cannot be one shared item, and two
+//! hand-kept sets of numbers is how the CLI and the service end up disagreeing about what "a retry"
+//! means.
 
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-
-/// Requests are network-bound and a webhook delivery has a queue behind it, so a
-/// hung upstream must fail the delivery rather than hold a worker forever.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+use crate::net;
 
 const USER_AGENT: &str = concat!("linear-bridge/", env!("CARGO_PKG_VERSION"));
 
@@ -59,6 +60,11 @@ pub struct Request {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// Whether this request may be sent twice (see [`crate::net`]).
+    ///
+    /// A delivery that repeats a create duplicates an issue, so this is `false` unless the caller
+    /// can see that the request is a read: an idempotent method, or a GraphQL `query`.
+    pub repeatable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -101,13 +107,44 @@ impl HttpClient {
             // useful thing about a failure, and `ureq` would otherwise turn the
             // whole response into a transport error and discard it.
             .http_status_as_error(false)
-            .timeout_global(Some(REQUEST_TIMEOUT))
+            .timeout_global(Some(net::request_timeout()))
+            .timeout_connect(Some(net::connect_timeout()))
             .build()
             .into();
         Self { agent }
     }
 
     pub fn send(&self, request: &Request) -> Result<Response> {
+        let attempts = if request.repeatable {
+            net::MAX_ATTEMPTS
+        } else {
+            1
+        };
+
+        for attempt in 0..attempts {
+            let last_try = attempt + 1 == attempts;
+            match self.attempt(request) {
+                Ok(response) => {
+                    if last_try || !net::is_retryable_status(response.status) {
+                        return Ok(response);
+                    }
+                }
+                Err(error) => {
+                    if last_try {
+                        return Err(error);
+                    }
+                }
+            }
+            std::thread::sleep(net::backoff(attempt));
+        }
+
+        // Not reachable: the loop returns on its last attempt. Kept as a real
+        // call rather than an `unreachable!` so a future edit cannot panic a worker.
+        self.attempt(request)
+    }
+
+    /// One attempt, with transport and body failures mapped to what a caller can act on.
+    fn attempt(&self, request: &Request) -> Result<Response> {
         // Each method builder type differs by whether a body is expected, so the
         // match is on (method, body) rather than on the method alone.
         let sent = match (request.method, request.body.as_ref()) {

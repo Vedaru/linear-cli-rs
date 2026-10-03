@@ -130,7 +130,7 @@ fn run_inner() -> Result<()> {
          issue_sort = \"{sort_choice}\"\n"
     );
 
-    std::fs::write(&file_path, toml_content).map_err(|error| {
+    crate::atomic::write(&file_path, toml_content.as_bytes()).map_err(|error| {
         CliError::cli(format!("Failed to write {}: {error}", file_path.display())).cause(error)
     })?;
 

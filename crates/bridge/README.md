@@ -9,6 +9,12 @@ test or from an agent.
 
 ## Layering, and the rule that keeps it
 
+Outbound HTTP goes through `crate::net` — a byte-identical copy of the CLI's `src/net.rs`, held to
+that by a test: deadlines on every call, and retries only for a request the caller knows may be
+repeated (an idempotent method, or a GraphQL `query`). A duplicated policy is not a nice thing to
+need; it exists because the CLI must build without this crate, and one shared copy is not available
+without a third crate or a non-optional dependency.
+
 ```text
 http  ->  connector::Source  ->  domain::Event  ->  store  ->  queue  ->  Handler
                                                                              |

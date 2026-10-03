@@ -255,7 +255,9 @@ pub(crate) fn download_linear_file(url: &str, destination: &Path, label: &str) -
     let mut bytes = Vec::new();
     std::io::copy(&mut response.body_mut().as_reader(), &mut bytes)
         .map_err(|error| CliError::cli(format!("Failed to read {label} body: {error}")))?;
-    std::fs::write(destination, &bytes)
+    // Staged and renamed rather than written in place: a reader - including the next run, which
+    // treats an existing file as a cache hit - must never see a prefix of this download.
+    crate::atomic::write(destination, &bytes)
         .map_err(|error| CliError::cli(format!("Failed to write {label}: {error}")))?;
     Ok(())
 }
@@ -263,7 +265,8 @@ pub(crate) fn download_linear_file(url: &str, destination: &Path, label: &str) -
 fn upload_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_global(Some(graphql::REQUEST_TIMEOUT))
+        .timeout_global(Some(crate::net::request_timeout()))
+        .timeout_connect(Some(crate::net::connect_timeout()))
         .build()
         .new_agent()
 }

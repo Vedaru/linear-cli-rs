@@ -467,7 +467,8 @@ fn post(endpoint: &str, api_key: &str, body: &Value) -> Result<(u16, String)> {
     let user_agent = format!("{}/{}", consts::USER_AGENT_PREFIX, consts::VERSION);
     let agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_global(Some(graphql::REQUEST_TIMEOUT))
+        .timeout_global(Some(crate::net::request_timeout()))
+        .timeout_connect(Some(crate::net::connect_timeout()))
         .build()
         .new_agent();
 

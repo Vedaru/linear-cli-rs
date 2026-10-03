@@ -11,17 +11,13 @@
 //! * **Every request has a deadline.** `timeout_global` is set on the agent so
 //!   a stalled API call cannot hang a cron job or an agent session forever.
 
-use std::time::Duration;
-
 use serde_json::{json, Value};
 
 use crate::config;
 use crate::consts;
 use crate::credentials;
 use crate::errors::{CliError, GraphQlError, Result};
-
-/// Wall-clock budget for one HTTP request, including connect and body read.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+use crate::net;
 
 const USER_AGENT: &str = consts::USER_AGENT_PREFIX;
 
@@ -100,7 +96,8 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         // Read 4xx/5xx bodies ourselves so Linear's error payload survives.
         .http_status_as_error(false)
-        .timeout_global(Some(REQUEST_TIMEOUT))
+        .timeout_global(Some(net::request_timeout()))
+        .timeout_connect(Some(net::connect_timeout()))
         .build()
         .new_agent()
 }
@@ -114,19 +111,59 @@ pub struct Client {
 }
 
 impl Client {
+    /// Send one document, retrying only when the policy says a repeat is safe.
+    ///
+    /// This is the chokepoint the whole CLI goes through, which is why the retry rule lives here
+    /// rather than at two hundred call sites: a read is repeated when the network or the API
+    /// stumbles, a mutation is sent exactly once - a retried create is a duplicate.
+    fn send(&self, document: &str, payload: &Value) -> Result<ureq::http::Response<ureq::Body>> {
+        let repeatable = net::is_repeatable_document(document);
+        let attempts = if repeatable { net::MAX_ATTEMPTS } else { 1 };
+        let mut last_failure: Option<String> = None;
+
+        for attempt in 0..attempts {
+            let last_try = attempt + 1 == attempts;
+            match self
+                .agent
+                .post(&self.endpoint)
+                .header("Authorization", &self.api_key)
+                .header("User-Agent", USER_AGENT)
+                .header("Content-Type", "application/json")
+                .send_json(payload)
+            {
+                Ok(response) => {
+                    let status = response.status().as_u16();
+                    if !repeatable || last_try || !net::is_retryable_status(status) {
+                        return Ok(response);
+                    }
+                    last_failure = Some(format!("HTTP {status}"));
+                }
+                Err(error) => {
+                    if !repeatable || last_try {
+                        return Err(CliError::cli(format!(
+                            "Failed to reach Linear API: {error}"
+                        )));
+                    }
+                    last_failure = Some(error.to_string());
+                }
+            }
+
+            std::thread::sleep(net::backoff(attempt));
+        }
+
+        // Only reachable if a retryable failure somehow survived the last attempt above.
+        Err(CliError::cli(format!(
+            "Failed to reach Linear API: {}",
+            last_failure.unwrap_or_else(|| "no attempt was made".to_string())
+        )))
+    }
+
     /// Execute `query` with `variables`, returning the `data` object.
     pub fn request(&self, query: &str, variables: Value) -> Result<Value> {
         let variables_json = serde_json::to_string_pretty(&variables).ok();
         let payload = json!({ "query": query, "variables": variables });
 
-        let mut response = self
-            .agent
-            .post(&self.endpoint)
-            .header("Authorization", &self.api_key)
-            .header("User-Agent", USER_AGENT)
-            .header("Content-Type", "application/json")
-            .send_json(&payload)
-            .map_err(|error| CliError::cli(format!("Failed to reach Linear API: {error}")))?;
+        let mut response = self.send(query, &payload)?;
 
         let status = response.status().as_u16();
         let body = response.body_mut().read_to_string().map_err(|error| {
@@ -196,14 +233,7 @@ impl Client {
         let variables_json = serde_json::to_string_pretty(&variables).ok();
         let payload = json!({ "query": query, "variables": variables });
 
-        let mut response = self
-            .agent
-            .post(&self.endpoint)
-            .header("Authorization", &self.api_key)
-            .header("User-Agent", USER_AGENT)
-            .header("Content-Type", "application/json")
-            .send_json(&payload)
-            .map_err(|error| CliError::cli(format!("Failed to reach Linear API: {error}")))?;
+        let mut response = self.send(query, &payload)?;
 
         let status = response.status().as_u16();
         let body = response.body_mut().read_to_vec().map_err(|error| {

@@ -38,6 +38,7 @@ pub mod error;
 pub mod http;
 pub mod http_client;
 pub mod logging;
+pub mod net;
 pub mod pointer;
 pub mod queue;
 pub mod reconcile;

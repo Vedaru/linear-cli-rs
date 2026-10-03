@@ -281,7 +281,8 @@ pub fn upload_file(filepath: &str, options: &UploadOptions) -> Result<UploadResu
 fn upload_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_global(Some(graphql::REQUEST_TIMEOUT))
+        .timeout_global(Some(crate::net::request_timeout()))
+        .timeout_connect(Some(crate::net::connect_timeout()))
         .build()
         .new_agent()
 }

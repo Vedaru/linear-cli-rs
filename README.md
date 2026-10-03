@@ -27,6 +27,7 @@ linear api 'query { viewer { name } }'          # raw GraphQL escape hatch
 | no runtime to install | a single ~5 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
 | small memory footprint | ~10.5 MiB peak for typical commands and ~16 MiB for the heaviest, `schema` (the kernel's `VmHWM`, measured against this build) |
 | pipeline-safe | a closed reader (`linear issue list | head`) ends the process the conventional way — no panic, no panic message on stderr |
+| bounded network behaviour | every outbound call has a deadline and a shorter connect deadline; a **read** that fails on a 429/5xx or a transport error is retried up to three times with jittered backoff, while a mutation is sent exactly once — a retried create is a duplicate |
 
 ## Install
 

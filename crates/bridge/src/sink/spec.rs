@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::domain::Secret;
 use crate::error::{Error, Result};
 use crate::http_client::{Method, Request};
+use crate::net;
 use crate::sink::template;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -536,19 +537,36 @@ impl SinkSpec {
         // JSON in, JSON out; a body-less DELETE must not claim a content type.
         if let Some(body) = &operation.body {
             headers.push(("Content-Type".into(), "application/json".into()));
+            let rendered = template::render(body, values);
             return Ok(Request {
                 method,
                 url,
                 headers,
-                body: Some(template::render(body, values)),
+                repeatable: Self::is_repeatable(method, Some(&rendered)),
+                body: Some(rendered),
             });
         }
         Ok(Request {
             method,
             url,
             headers,
+            repeatable: Self::is_repeatable(method, None),
             body: None,
         })
+    }
+
+    /// Whether this request may be sent twice.
+    ///
+    /// Two ways to know, and no third: the method is idempotent by definition, or the body is a
+    /// GraphQL document that reads. A create is a POST carrying a `mutation`, and neither test
+    /// lets it be repeated - a retried create is a duplicate issue.
+    fn is_repeatable(method: Method, body: Option<&Value>) -> bool {
+        if net::is_repeatable_method(method.as_str()) {
+            return true;
+        }
+        body.and_then(|body| body.get("query"))
+            .and_then(Value::as_str)
+            .is_some_and(net::is_repeatable_document)
     }
 
     /// `base_url` + the rendered path.

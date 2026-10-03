@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
@@ -27,6 +28,14 @@ pub struct MockResponse {
     pub variables: Option<Map<String, Value>>,
     pub response: Value,
     pub status: u16,
+    /// When set, this response is removed once it has answered. That is how a
+    /// test says "fails once, then works" - a retry test needs the first answer
+    /// to stop matching, and the default (a response answers every matching
+    /// request) is what every other suite relies on.
+    pub single_use: bool,
+    /// When set, the server waits this long before answering. A test that proves
+    /// a hung upstream produces a bounded failure needs something to hang.
+    pub delay: Option<Duration>,
 }
 
 impl MockResponse {
@@ -37,6 +46,8 @@ impl MockResponse {
             variables: None,
             response,
             status: 200,
+            single_use: false,
+            delay: None,
         }
     }
 
@@ -47,6 +58,18 @@ impl MockResponse {
 
     pub fn with_query_includes(mut self, needle: impl Into<String>) -> Self {
         self.query_includes = Some(needle.into());
+        self
+    }
+
+    /// Answer once, then stop matching: the shape "fails once, then works".
+    pub fn with_single_use(mut self) -> Self {
+        self.single_use = true;
+        self
+    }
+
+    /// Wait before answering, to model an upstream that hangs.
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
         self
     }
 
@@ -237,8 +260,8 @@ fn handle_graphql(body: &[u8], state: &Arc<Mutex<ServerState>>) -> (u16, Value) 
     let variables = parsed.get("variables").cloned().unwrap_or(Value::Null);
     let query_name = extract_query_name(query);
 
-    let guard = state.lock().unwrap();
-    let matched = guard.responses.iter().find(|mock| {
+    let mut guard = state.lock().unwrap();
+    let matched_index = guard.responses.iter().position(|mock| {
         mock.query_name == query_name
             && match &mock.query_includes {
                 None => true,
@@ -252,20 +275,34 @@ fn handle_graphql(body: &[u8], state: &Arc<Mutex<ServerState>>) -> (u16, Value) 
             }
     });
 
-    match matched {
-        Some(mock) => (mock.status, mock.response.clone()),
-        None => (
-            200,
-            json!({ "errors": [{
-                "message": "No mock response configured for this query",
-                "extensions": {
-                    "code": "NO_MOCK_CONFIGURED",
-                    "query": query_name,
-                    "variables": variables,
-                }
-            }] }),
-        ),
+    let answer = matched_index.map(|index| {
+        let mock = if guard.responses[index].single_use {
+            guard.responses.remove(index)
+        } else {
+            guard.responses[index].clone()
+        };
+        (mock.status, mock.response, mock.delay)
+    });
+    drop(guard);
+
+    if let Some((status, response, delay)) = answer {
+        if let Some(delay) = delay {
+            thread::sleep(delay);
+        }
+        return (status, response);
     }
+
+    (
+        200,
+        json!({ "errors": [{
+            "message": "No mock response configured for this query",
+            "extensions": {
+                "code": "NO_MOCK_CONFIGURED",
+                "query": query_name,
+                "variables": variables,
+            }
+        }] }),
+    )
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, payload: &Value) -> std::io::Result<()> {

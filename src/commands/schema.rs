@@ -301,7 +301,12 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
             // Written straight into the file: the introspection JSON is several MB
             // and the SDL about 1 MB, so rendering the whole document into a
             // String first is a copy of the output that nothing reads.
-            let mut file = std::fs::File::create(path)
+            //
+            // Into a *staging* file, though: the command's own cache-shaped output must not be
+            // observable half-written either, and a reader that arrives mid-render would otherwise
+            // read a truncated schema and believe it.
+            let staged = crate::atomic::staging_path(std::path::Path::new(path));
+            let mut file = std::fs::File::create(&staged)
                 .map_err(|error| CliError::cli(format!("Failed to write {path}")).cause(error))?;
             let written = if args.json {
                 write_json_schema(&mut file, schema)
@@ -311,6 +316,7 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
             written
                 .and_then(|()| file.write_all(b"\n"))
                 .map_err(|error| CliError::cli(format!("Failed to write {path}")).cause(error))?;
+            crate::atomic::commit(&staged, std::path::Path::new(path))?;
             output::line(&format!("Schema written to {path}"));
         }
         None => {
