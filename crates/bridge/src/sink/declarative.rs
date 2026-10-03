@@ -27,7 +27,7 @@ use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
 use crate::pointer::{resolve, resolve_string};
 use crate::sink::spec::{LookupSpec, Operation, PaginateSpec, ReadField, ReadSpec, SinkSpec};
-use crate::sink::{RemoteIssue, RemoteRef, Sink};
+use crate::sink::{CardColumn, RemoteIssue, RemoteRef, Sink};
 
 /// A lookup a spec declares: the kinds the engine will resolve.
 const TEAM: &str = "team";
@@ -1026,6 +1026,51 @@ impl Sink for DeclarativeSink {
     fn remove_issue(&self, scope: &str, issue: &str, project: &str) -> Result<()> {
         self.membership("project.unassign", scope, issue, project, None)
     }
+
+    /// Which column a card sits in, read off the board the preset describes.
+    ///
+    /// The card is matched by its number, as text: one platform numbers its issues and
+    /// another names them, and a board read should not care which. Three answers, not two -
+    /// no `[sink.board]` means this sink cannot see placement at all (`Unknown`), a board it
+    /// read with the card on none of its columns means the card is genuinely adrift
+    /// (`NotOnBoard`), and only the last of those is something a sweep may act on.
+    fn card_column(&self, scope: &str, project: &str, issue: &str) -> Result<CardColumn> {
+        let Some(board) = &self.spec.board else {
+            return Ok(CardColumn::Unknown);
+        };
+        let values = json!({ "scope": scope, "id": project });
+        let request = self
+            .spec
+            .request(&board.list, &values, self.secret.as_ref())?;
+        let response = self.send(&request)?;
+        let columns = match &board.columns {
+            Some(pointer) => resolve(&response.body, pointer),
+            None => Some(&response.body),
+        }
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+        for column in columns {
+            let cards = resolve(&column, &board.cards)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let holds = cards.iter().any(|card| match card {
+                Value::Number(number) => number.to_string() == issue,
+                Value::String(text) => text == issue,
+                _ => false,
+            });
+            if holds {
+                return Ok(match resolve_string(&column, &board.title) {
+                    Some(title) => CardColumn::In(title),
+                    // A column without a name cannot be compared to one, so it is not evidence.
+                    None => CardColumn::Unknown,
+                });
+            }
+        }
+        Ok(CardColumn::NotOnBoard)
+    }
 }
 
 /// What one call knows. A struct rather than a list of `Option`s: the call sites
@@ -1235,6 +1280,7 @@ mod tests {
                     error_pointer: None,
                     issue: Default::default(),
                     project: None,
+                    board: None,
                 },
                 None,
                 capabilities.clone(),

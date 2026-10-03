@@ -176,4 +176,29 @@ pub trait Sink: Send + Sync {
     fn remove_issue(&self, _scope: &str, _issue: &str, _project: &str) -> Result<()> {
         Ok(())
     }
+
+    /// Where a card sits on a board, when this sink can see it.
+    ///
+    /// `CardColumn::Unknown` is the honest answer for a platform that does not report
+    /// placement: the sweep then has nothing to compare and says nothing.
+    fn card_column(&self, _scope: &str, _project: &str, _issue: &str) -> Result<CardColumn> {
+        Ok(CardColumn::Unknown)
+    }
+}
+
+/// Where a card sits on a board - as much of it as a sink can see.
+///
+/// The distinction that earns this type is between "the card is somewhere else" and "this sink
+/// cannot tell". The first is a difference a sweep reports and, with `--apply`, fixes; the second
+/// is a difference it must not invent, because an absence of knowledge is not evidence that
+/// somebody's card is misplaced. Collapsing the two into an `Option` would make a platform that
+/// cannot report placement look like a board whose every card had wandered off.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CardColumn {
+    /// This sink (or this platform) does not report placement at all.
+    Unknown,
+    /// The board was read and the card is on none of its columns.
+    NotOnBoard,
+    /// The board was read and the card sits in this column.
+    In(String),
 }

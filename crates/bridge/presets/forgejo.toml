@@ -335,6 +335,16 @@ id = "/id"
 method = "GET"
 path = "/repos/{scope}/projects/{id}/columns"
 
+# Where a card sits, for a sweep: the board's columns, each with the issues on it. Read
+# only - placement is *written* through `[sink.project.assign]`, so a sweep that finds a
+# card in the wrong column reports the move rather than making it in passing.
+[sink.board]
+title = "/title"
+cards = "/cards"
+[sink.board.list]
+method = "GET"
+path = "/repos/{scope}/projects/{id}/columns"
+
 [sink.project.unassign]
 method = "DELETE"
 path = "/repos/{scope}/projects/{id}/issues/{index}"

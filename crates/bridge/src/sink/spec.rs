@@ -54,6 +54,29 @@ pub struct SinkSpec {
     /// asks it to refuses by name.
     #[serde(default)]
     pub project: Option<IssueSpec>,
+    /// How to read a *board*: which column a card sits in. Absent means the platform
+    /// does not report placement, and a sweep then has no opinion about it - the same
+    /// degradation as a platform that cannot be enumerated at all.
+    #[serde(default)]
+    pub board: Option<BoardSpec>,
+}
+
+/// A board, read: a container (a project) whose members are its *columns*, each holding
+/// the issues on it. Enough to answer "where is this card?", which is the one question a
+/// sweep has about placement.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSpec {
+    /// The request that lists the board. `{scope}` and `{id}` are the repository and the
+    /// project, as they are for any other container operation.
+    pub list: Operation,
+    /// Pointer to the array of columns; the whole response when omitted.
+    #[serde(default)]
+    pub columns: Option<String>,
+    /// Pointer inside a column to the title a mapping names columns by.
+    pub title: String,
+    /// Pointer inside a column to its cards, each being an issue's number.
+    pub cards: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -342,6 +342,17 @@ pub enum Step {
     /// Remove the mirrored copy of a comment.
     DeleteComment,
     Delete,
+    /// Move a card to another column of a board it is already on.
+    ///
+    /// Its own step rather than a field of an update, because placement is its own
+    /// request: a board's column is not part of an issue's fields, and a sweep that finds
+    /// a card where the mapping says it should not be has exactly one thing to say.
+    Place {
+        /// The project (the board) the card is on, as the sink names it.
+        project: String,
+        /// The column the mapping names for the issue's state.
+        column: String,
+    },
     Attach {
         url: String,
         title: String,

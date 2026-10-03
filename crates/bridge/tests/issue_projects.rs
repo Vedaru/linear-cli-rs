@@ -22,7 +22,7 @@ use linear_bridge::connector::Source;
 use linear_bridge::domain::{ConnectorId, EntityKind, EntityRef, Secret, UserMap};
 use linear_bridge::queue::Handler;
 use linear_bridge::reconcile::handler::{default_policy, Endpoint, Mapping, ReconcileHandler};
-use linear_bridge::reconcile::{Sides, StateNames};
+use linear_bridge::reconcile::{Sides, StateNames, Step};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::declarative::DeclarativeSource;
 use linear_bridge::sources::presets;
@@ -43,6 +43,10 @@ struct World {
     issue: Option<Value>,
     /// The forge issue the bridge created, as its own API returns it.
     forge_issue: Option<Value>,
+    /// Where the board says the mirrored card sits. `Some` only when a test cares: a board
+    /// the fake never had anybody drag a card across reports the card on no column, which is
+    /// the truth about a placement this fake never recorded.
+    card_in: Option<String>,
 }
 
 fn state() -> Arc<Mutex<World>> {
@@ -74,6 +78,51 @@ fn linear_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u1
             let world = world.lock().expect("not poisoned");
             return (200, json!({ "data": { "issue": world.issue } }));
         }
+        // A sweep lists a team's issues and resolves the team by key first; a delivery never
+        // had to, which is why these two only appeared when a survey ran in this harness.
+        if query.contains("query Teams") {
+            return (
+                200,
+                json!({ "data": { "teams": { "nodes": [{ "id": "team-uuid", "key": "VED" }] } } }),
+            );
+        }
+        if query.contains("query Projects(") {
+            // The survey mirrors projects too, so it lists them. The harness's paired project
+            // exists only when a test said so - which is the issue carrying it.
+            let world = world.lock().expect("not poisoned");
+            let carries =
+                |issue: &Value| issue.get("project").map(|p| !p.is_null()).unwrap_or(false);
+            let nodes: Vec<Value> = world
+                .issue
+                .as_ref()
+                .filter(|issue| carries(issue))
+                .map(|_| {
+                    vec![json!({
+                        "id": "project-uuid",
+                        "slugId": "widget",
+                        "name": "The widget",
+                        "description": "",
+                        "state": "started",
+                        "url": "https://linear.app/vedaru/project/widget",
+                        "externalLinks": { "nodes": [] }
+                    })]
+                })
+                .unwrap_or_default();
+            return (
+                200,
+                json!({ "data": { "projects": { "nodes": nodes, "pageInfo": {
+                    "hasNextPage": false, "endCursor": null } } } }),
+            );
+        }
+        if query.contains("query Issues(") {
+            let world = world.lock().expect("not poisoned");
+            let nodes: Vec<Value> = world.issue.clone().into_iter().collect();
+            return (
+                200,
+                json!({ "data": { "issues": { "nodes": nodes, "pageInfo": {
+                    "hasNextPage": false, "endCursor": null } } } }),
+            );
+        }
         (
             200,
             json!({ "errors": [{ "message": format!("unrouted: {query}") }] }),
@@ -101,23 +150,67 @@ fn forgejo_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u
             world.forge_issue = Some(issue.clone());
             return (201, issue);
         }
+        // The collection: a survey reads it to find the counterpart of each source issue, where
+        // a delivery only ever read back the one issue it had just written.
+        if path == issues && method == "GET" {
+            let listed: Vec<Value> = world.forge_issue.clone().into_iter().collect();
+            return (200, json!(listed));
+        }
         if path.starts_with(&issues) {
             return match world.forge_issue.clone() {
                 Some(issue) => (200, issue),
                 None => (404, json!({ "message": "no such issue" })),
             };
         }
+        // `GET /projects` and `GET /projects/{id}`: a survey lists the boards (the mirror keeps
+        // them paired) where a delivery only ever needed to place a card on one.
+        if path.ends_with("/projects") && method == "GET" {
+            return (
+                200,
+                json!([{
+                    "id": 4,
+                    "title": "The widget",
+                    "description": "",
+                    "is_closed": false,
+                    "html_url": "http://forge/Vedaru/linear-cli-rs/projects/4",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                }]),
+            );
+        }
+        if path.ends_with("/projects/4") && method == "GET" {
+            return (
+                200,
+                json!({
+                    "id": 4,
+                    "title": "The widget",
+                    "description": "",
+                    "is_closed": false,
+                    "html_url": "http://forge/Vedaru/linear-cli-rs/projects/4",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                }),
+            );
+        }
         // `GET /projects/{id}/columns`: what a board calls its columns, which is what a
         // placement resolves a column *name* against. Per project, as the real endpoint
-        // is: the harness has one board, but the path names it.
+        // is: the harness has one board, but the path names it. Each column carries its
+        // cards, because that is what a *sweep* reads to see a card somebody moved.
         if path.ends_with("/columns") && method == "GET" {
+            let cards = |title: &str| -> Value {
+                if world.card_in.as_deref() == Some(title) {
+                    json!([12])
+                } else {
+                    json!([])
+                }
+            };
             return (
                 200,
                 json!([
-                    { "id": 30, "title": "Backlog", "default": true, "cards": [] },
-                    { "id": 31, "title": "To Do", "default": false, "cards": [] },
-                    { "id": 32, "title": "In Progress", "default": false, "cards": [] },
-                    { "id": 33, "title": "Done", "default": false, "cards": [] }
+                    { "id": 30, "title": "Backlog", "default": true, "cards": cards("Backlog") },
+                    { "id": 31, "title": "To Do", "default": false, "cards": cards("To Do") },
+                    { "id": 32, "title": "In Progress", "default": false, "cards": cards("In Progress") },
+                    { "id": 33, "title": "Done", "default": false, "cards": cards("Done") }
                 ]),
             );
         }
@@ -294,6 +387,14 @@ impl Harness {
             })
             .map(|record| record.body)
             .collect()
+    }
+
+    /// Somebody drags the card to another column, as the board would then report it.
+    ///
+    /// Not a request the bridge makes: this is the human edit no delivery announces, which
+    /// is exactly why placement is something only a sweep can notice.
+    fn card_dragged_to(&self, column: &str) {
+        self.world.lock().expect("not poisoned").card_in = Some(column.to_string());
     }
 }
 
@@ -474,5 +575,79 @@ fn a_state_with_no_column_named_places_the_card_without_touching_its_column() {
         placements[0].get("column_id").is_none(),
         "the body must say nothing about the column: {:?}",
         placements[0]
+    );
+}
+
+/// A card somebody dragged stays where they put it - until a sweep says otherwise, and one
+/// only moves it when it is *asked* to.
+///
+/// Placement is not a field of the issue, so no delivery announces a drag and no field diff
+/// can see one: the board is the only place that evidence lives, which is what makes this the
+/// sweep's half of "the board reads what Linear reads". The sweep's own contract survives
+/// intact - a dry run reports the move, applying the plan makes it - which is the line this
+/// test draws: the *report* is the deliverable, the move is a separate, deliberate act.
+#[test]
+fn a_sweep_reports_a_card_that_drifted_and_moves_it_only_when_asked() {
+    let mut harness = Harness::start();
+    harness.pair_projects("project-uuid", 4);
+    let mut issue = linear_issue("In flight", "why it matters", Some("project-uuid"));
+    issue["state"] = json!({ "name": "In Progress" });
+    harness.set_issue(issue);
+
+    // A delivery puts the card where the state says, and records the board it sits on.
+    harness.deliver_issue("create");
+    assert_eq!(
+        harness.placements().len(),
+        1,
+        "the delivery placed the card"
+    );
+
+    // Then somebody drags it to Backlog. Nothing tells the bridge; the board is where it shows.
+    harness.card_dragged_to("Backlog");
+
+    let survey = harness.handler.survey(0).expect("a survey");
+    let planned: Vec<(String, String)> = survey
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.step {
+            Some(Step::Place { project, column }) => Some((project.clone(), column.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        planned,
+        vec![("4".to_string(), "In Progress".to_string())],
+        "the plan has to carry the move, and only the move: {:?}",
+        survey.entries
+    );
+    assert_eq!(
+        harness.placements().len(),
+        1,
+        "a dry run reports the move and writes nothing"
+    );
+
+    // Applying what it planned is what moves the card - back to the column the state names.
+    harness
+        .handler
+        .apply_survey(0, &survey)
+        .expect("the plan applies");
+    let moves = harness.placements();
+    assert_eq!(moves.len(), 2, "one more placement: {moves:?}");
+    assert_eq!(
+        moves[1]["column_id"], 32,
+        "resolved to the board's own id, not the name: {:?}",
+        moves[1]
+    );
+
+    // And a board that agrees has nothing left to say.
+    harness.card_dragged_to("In Progress");
+    let quiet = harness.handler.survey(0).expect("a survey");
+    assert!(
+        !quiet
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.step, Some(Step::Place { .. }))),
+        "a card already in the right column is not a difference: {:?}",
+        quiet.entries
     );
 }

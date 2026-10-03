@@ -23,7 +23,7 @@ use crate::reconcile::{
     content_key, converge, plan, Context, Direction, Nothing, Openness, Pairwise, Policy, Side,
     Sides, Snapshot, StateNames, Step,
 };
-use crate::sink::{RemoteIssue, Sink};
+use crate::sink::{CardColumn, RemoteIssue, Sink};
 use crate::store::{Delivery, Link, ReferenceLink, Store};
 
 /// One end of a mapping: a platform, and the container inside it.
@@ -759,6 +759,26 @@ impl ReconcileHandler {
                     touched
                 );
             }
+            Step::Place { project, column } => {
+                // The card that moves is the *sink's* issue, which is what the pairing
+                // names at its other end.
+                let Some(reference) = pair.counterpart.cloned() else {
+                    return Ok(());
+                };
+                self.sink(&pair.there.connector)?.place_issue(
+                    &pair.there.scope,
+                    &reference.native_id,
+                    &project,
+                    Some(&column),
+                )?;
+                log::info!(
+                    "moved {} {} to column `{}` of project {}",
+                    pair.there.connector,
+                    reference.native_id,
+                    column,
+                    project
+                );
+            }
             Step::Comment { body } => {
                 let Some(reference) = pair.counterpart.cloned() else {
                     return Ok(());
@@ -1356,13 +1376,12 @@ impl ReconcileHandler {
                 },
             ) {
                 sweep::Verdict::InStep => {
-                    return Ok(in_step(
-                        source,
-                        sink,
-                        &source_as_sink.fields,
-                        sink_names,
-                        sink_scope,
-                    ))
+                    // Fields agreeing is not the whole story: a card somebody dragged is a
+                    // difference the field diff cannot see, so the placement check rides on
+                    // exactly this path - the one that would otherwise say "nothing to do".
+                    let entry =
+                        in_step(source, sink, &source_as_sink.fields, sink_names, sink_scope);
+                    return self.judge_placement(mapping, pairing, source, sink, entry, sink_scope);
                 }
                 sweep::Verdict::Conflict => return Ok(conflict(source, sink, sink_scope)),
                 sweep::Verdict::Moved(side) => side,
@@ -1381,7 +1400,7 @@ impl ReconcileHandler {
                 (sink, source, &sink_as_source)
             }
         };
-        Ok(decide(
+        let entry = decide(
             mapping,
             winner,
             observed,
@@ -1389,7 +1408,72 @@ impl ReconcileHandler {
             expected,
             ends,
             recorded.as_deref(),
-        ))
+        );
+        self.judge_placement(mapping, pairing, source, sink, entry, ends.sink_scope)
+    }
+
+    /// A board is a field of the issue like the rest, so a sweep has to see it.
+    ///
+    /// Checked only when the pair has nothing else to do: a write that moves the state
+    /// re-places the card already (`settle_project`), and reporting a second time would
+    /// say the same thing twice. What this catches is the card nobody's edit will move -
+    /// the one a human dragged to the wrong column, or one placed before the mapping had
+    /// a `[mapping.columns]` table.
+    ///
+    /// Reported, never made in passing: the entry carries the move as its *step*, so a dry
+    /// run says "would move" and `--apply` is what moves it. A sweep that moved cards
+    /// silently would be the same class of bug as an assignee cleared in passing.
+    fn judge_placement(
+        &mut self,
+        mapping: &Mapping,
+        pairing: &sweep::Pairing,
+        source: &Found,
+        sink: &Found,
+        entry: Entry,
+        sink_scope: &str,
+    ) -> Result<Entry> {
+        if sink.reference.kind != EntityKind::Issue || mapping.policy.columns.is_empty() {
+            return Ok(entry);
+        }
+        if entry.step.as_ref().is_some_and(|step| !step.is_nothing()) {
+            // Something else is already being written, and it will place the card.
+            return Ok(entry);
+        }
+        let Some(column) = mapping.policy.column_for(source.state.as_deref()) else {
+            return Ok(entry);
+        };
+        // The board to look at is the one the pairing recorded: a forge reports an issue's
+        // project nowhere, and a card is only readable through the board it is on.
+        let Some(project) = pairing.link.as_ref().and_then(|link| link.project.clone()) else {
+            return Ok(entry);
+        };
+        let here = self.sink(&mapping.sink.connector)?.card_column(
+            sink_scope,
+            &project,
+            &sink.reference.native_id,
+        )?;
+        match here {
+            // Where the mapping says it belongs: nothing to report.
+            CardColumn::In(column_name) if column_name == column => Ok(Entry {
+                action: Action::InStep,
+                ..entry
+            }),
+            // This sink cannot see placement at all. Nothing to compare, so nothing to say:
+            // an absence of knowledge is not evidence that somebody's card is misplaced.
+            CardColumn::Unknown => Ok(entry),
+            // Somewhere else, or on no column at all - both are the difference this rule
+            // exists for, and both are reported (and applied, if asked) as a placement.
+            CardColumn::In(_) | CardColumn::NotOnBoard => Ok(Entry {
+                action: Action::Write {
+                    touched: vec!["column".to_string()],
+                },
+                step: Some(Step::Place {
+                    project,
+                    column: column.to_string(),
+                }),
+                ..entry
+            }),
+        }
     }
 
     /// One end present: mirror it, or say why the mapping does not.
