@@ -156,6 +156,7 @@ state = "$state"
 # silently clearing a due date nobody touched. A due date the other side really did
 # clear arrives as an explicit null and is written.
 due_date = "$due_date"
+milestone = "$milestone_id"
 assignees = "$assignees"
 
 [sink.issue.fetch]
@@ -235,6 +236,7 @@ state = "$state"
 title = "/title"
 body = "/body"
 due_date = "/due_date"
+milestone = "/milestone/title"
 state = "/state"
 labels = { path = "/labels", pick = "/name" }
 assignee = "/assignees/0/login"
