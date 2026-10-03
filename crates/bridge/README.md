@@ -316,6 +316,22 @@ means the value really was lost).
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `linear` | named workflow states | yes | yes | yes | one | no native PRs | yes - `issueArchive`, its API has no delete | yes |
 | `forgejo`, `codeberg`, `gitea` | open / closed | yes | yes | emulated as a `priority:*` label | one | yes | push only, cannot be observed | yes |
+| `github` | open / closed | yes | **no** - emulated as a `due:*` label | emulated as a `priority:*` label | **several** (up to ten) | yes | push only, cannot be observed | **read half only** - see below |
+
+`github` is the platform that tests the claim rather than restating it: it is neither Linear nor a
+forge, and adding it was writing `presets/github.toml` and `presets/fixtures/github.toml` and one
+line in the `PRESETS` table. It differs from every existing preset in ways the engine did not have to
+learn: a prefixed digest (`sha256=<hex>`, which the spec's `prefix` strips - the fixture's `[proof]`
+block declares it, so the suite holds the preset to the real header rather than to itself), its own
+action vocabulary (`labeled`, `assigned`, `synchronize`), several assignees, and **no due date on an
+issue at all** - a milestone has one and a milestone is not an issue, so a date travels emulated and
+is *reported* as emulated rather than dropped.
+
+Its write half is deliberately not declared. GitHub addresses labels by name rather than id and its
+boards are Projects v2, which is GraphQL - so a GitHub *sink* is not the same shape of configuration
+a forge's is, and the honest place to record that is the preset file, not a half-declared `[sink]`
+that would fail on the first label. A spec may declare reading and stop; the suite asserts that a
+read-only spec is still a connector.
 
 The limits worth stating out loud, because each one is a real thing a deployment will meet:
 

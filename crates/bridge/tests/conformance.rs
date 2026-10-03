@@ -292,9 +292,17 @@ fn every_declared_delivery_is_read_as_its_fixture_says() {
                     .map(|(header, value)| (header.clone(), value.clone()))
                     .collect()
             } else {
+                // The fixture's headers are what the platform normally sends; a delivery's own
+                // header is what it sends *for this delivery*, so it replaces the default instead
+                // of being appended to it. That matters for any platform with a single spelling of
+                // its event header: such a fixture can only carry more than one kind of delivery if
+                // a delivery's own header wins, and `HeaderMap::from_pairs` keeps the *first* value
+                // under a name (real HTTP may repeat a header, and for a real request that is the
+                // safer reading). So the override is built here.
                 fixture
                     .headers
                     .iter()
+                    .filter(|(header, _)| !delivery.headers.contains_key(*header))
                     .chain(delivery.headers.iter())
                     .map(|(header, value)| (header.clone(), value.clone()))
                     .collect()

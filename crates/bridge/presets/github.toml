@@ -1,0 +1,114 @@
+# GitHub webhook preset.
+#
+# The read half only, and that is a supported shape rather than an unfinished file: the loader
+# allows a spec to declare reading and stop (`sources/presets.rs`, and the test that asserts a
+# read-only spec is still a connector). GitHub's write half is not configuration *of the kind a
+# forge's is* - it addresses labels by name rather than id, and its boards are Projects v2, which is
+# GraphQL - so it is left undeclared rather than half-declared. A platform whose write half is its
+# own protocol is a fact about that platform, and the honest place to record it is here.
+#
+# GitHub signs the raw body with HMAC-SHA256 (hex) and sends it in `X-Hub-Signature-256` as
+# `sha256=<hex>` - which is what the spec's `prefix` strips, the field that exists for exactly this
+# provider. There is no signed timestamp, so replay safety rests on `X-GitHub-Delivery` plus the
+# link store, the same as a forge.
+
+[signature]
+headers = ["x-hub-signature-256"]
+algorithm = "hmac-sha256"
+prefix = "sha256="
+
+[delivery]
+headers = ["x-github-delivery"]
+
+[event]
+headers = ["x-github-event"]
+
+[capabilities]
+states = "open-closed"
+labels = true
+# A GitHub *issue* has no due date - a milestone has one, and a milestone is not an issue. So a date
+# travels in the only way this platform can carry it: emulated (a label), and reported as emulated
+# rather than silently dropped.
+due_dates = false
+# No priority field either: `priority:*`, the same as a forge.
+priorities = false
+# The one capability GitHub has that the forges do not: several assignees on one issue.
+multiple_assignees = true
+native_pull_requests = true
+# No webhook on delete, so deletion can never be *observed* here - only pushed, which a preset may
+# not declare, because nothing should push what it cannot observe.
+deletion = false
+
+[[event.rule]]
+match = "issues"
+kind = "issue"
+[event.rule.fields]
+action = "/action"
+id = "/issue/number"
+scope = "/repository/full_name"
+url = "/issue/html_url"
+actor = "/sender/login"
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+# A label or an assignee changing is a field change: GitHub sends it as its own action, and what the
+# reconciler reads is the new state of the issue, not which field moved.
+labeled = "updated"
+unlabeled = "updated"
+assigned = "updated"
+unassigned = "updated"
+closed = "closed"
+reopened = "reopened"
+
+[[event.rule]]
+match = "issue_comment"
+kind = "comment"
+[event.rule.fields]
+action = "/action"
+# The subject is the *issue* the comment is on - what a link pairs - and not the comment itself.
+id = "/issue/number"
+comment_id = "/comment/id"
+subject_kind = "issue"
+scope = "/repository/full_name"
+url = "/comment/html_url"
+actor = "/sender/login"
+body = "/comment/body"
+[event.rule.actions]
+created = "created"
+edited = "updated"
+deleted = "deleted"
+
+[[event.rule]]
+match = "pull_request"
+kind = "reference"
+[event.rule.fields]
+action = "/action"
+id = "/pull_request/number"
+scope = "/repository/full_name"
+url = "/pull_request/html_url"
+actor = "/sender/login"
+text = ["/pull_request/title", "/pull_request/body"]
+# Where this platform says whether the request was merged. A merge arrives as `closed` with the flag
+# set, so the flag - not the action - is what says the work is finished, and it is also what tells
+# the engine this reference is a review request rather than a commit.
+merged = "/pull_request/merged"
+[event.rule.actions]
+opened = "created"
+edited = "updated"
+# GitHub spells the update of a head branch `synchronize`; a forge spells it `synchronized`.
+synchronize = "updated"
+closed = "closed"
+reopened = "reopened"
+
+# A push is the one delivery that fans out: every commit may reference an issue.
+[[event.rule]]
+match = "push"
+kind = "reference"
+action_default = "created"
+[event.rule.fields]
+fan_out = "/commits"
+id = "/id"
+text = ["/message"]
+url = "/url"
+scope = "/repository/full_name"
+actor = "/sender/login"

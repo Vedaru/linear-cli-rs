@@ -1,0 +1,224 @@
+# A delivery GitHub really sends, for the conformance suite. See linear.toml for what the
+# fields mean - this file is data, not code, and the point of it is that adding GitHub to
+# the bridge was adding this file and one line in `presets.rs`.
+
+body = '''{
+  "action": "opened",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[headers]
+# The body above is an `issues` delivery, so the base carries that event name; every delivery
+# below that is a different event overrides it, and the override is what wins.
+"X-GitHub-Event" = "issues"
+"X-GitHub-Delivery" = "0d1b1c8e-1f2a-11ef-9b3c-0e1b2f3a4b5c"
+
+# The proof this platform actually sends, so the suite holds the preset to the real contract
+# rather than to itself. GitHub wraps the hex digest in its scheme name - the `prefix` the
+# signature spec strips - and this is what proves the preset declares it and does not merely
+# happen to accept a bare hex digest.
+[proof]
+algorithm = "hmac-sha256"
+header = "X-Hub-Signature-256"
+prefix = "sha256="
+
+# --- the deliveries ---------------------------------------------------------
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "created"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issues" }
+url = "https://github.com/a/b/issues/7"
+actor = "vedaru"
+delivery_id = "0d1b1c8e-1f2a-11ef-9b3c-0e1b2f3a4b5c"
+body = '''{
+  "action": "opened",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "closed"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issues" }
+url = "https://github.com/a/b/issues/7"
+actor = "vedaru"
+body = '''{
+  "action": "closed",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+event = "issues"
+kind = "issue"
+action = "reopened"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issues" }
+url = "https://github.com/a/b/issues/7"
+actor = "vedaru"
+body = '''{
+  "action": "reopened",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+# A label change is GitHub's own action for it, and it means the issue was updated - the
+# reconciler reads the new state of the issue either way. GitHub sends `labeled`/`unlabeled`
+# and `assigned`/`unassigned` where a forge sends one `edited`.
+event = "issues"
+kind = "issue"
+action = "updated"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issues" }
+url = "https://github.com/a/b/issues/7"
+actor = "vedaru"
+body = '''{
+  "action": "labeled",
+  "label": { "name": "priority:high" },
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+# The comment's subject is the *issue*: that is what a link pairs, and a comment event whose
+# subject were the comment itself would have nothing to look up.
+event = "issue_comment"
+kind = "comment"
+action = "created"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issue_comment" }
+url = "https://github.com/a/b/issues/7#issuecomment-1234"
+actor = "vedaru"
+comment_id = "1234"
+comment_body = "looks right"
+body = '''{
+  "action": "created",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "comment": { "id": 1234, "body": "looks right", "html_url": "https://github.com/a/b/issues/7#issuecomment-1234" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+event = "issue_comment"
+kind = "comment"
+action = "deleted"
+id = "7"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "issue_comment" }
+url = "https://github.com/a/b/issues/7#issuecomment-1234"
+actor = "vedaru"
+comment_id = "1234"
+comment_body = "looks right"
+body = '''{
+  "action": "deleted",
+  "issue": { "number": 7, "title": "T", "body": "B", "html_url": "https://github.com/a/b/issues/7" },
+  "comment": { "id": 1234, "body": "looks right", "html_url": "https://github.com/a/b/issues/7#issuecomment-1234" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+event = "pull_request"
+kind = "reference"
+action = "created"
+id = "4"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "pull_request" }
+url = "https://github.com/a/b/pull/4"
+actor = "vedaru"
+body = '''{
+  "action": "opened",
+  "pull_request": { "number": 4, "title": "T", "body": "B", "merged": false, "html_url": "https://github.com/a/b/pull/4" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+# The merge. GitHub reports it as `closed` with the flag set, so the flag - not the action - is
+# what says the work is finished: the same action without it is an abandoned request, and that
+# must not move an issue to done.
+event = "pull_request"
+kind = "reference"
+action = "closed"
+id = "4"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "pull_request" }
+url = "https://github.com/a/b/pull/4"
+actor = "vedaru"
+merged = true
+body = '''{
+  "action": "closed",
+  "pull_request": { "number": 4, "title": "T", "body": "B", "merged": true, "html_url": "https://github.com/a/b/pull/4" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+event = "pull_request"
+kind = "reference"
+action = "updated"
+id = "4"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "pull_request" }
+url = "https://github.com/a/b/pull/4"
+actor = "vedaru"
+body = '''{
+  "action": "synchronize",
+  "pull_request": { "number": 4, "title": "T", "body": "B", "merged": false, "html_url": "https://github.com/a/b/pull/4" },
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+# A push fans out: every commit may reference an issue.
+event = "push"
+kind = "reference"
+action = "created"
+scope = "a/b"
+headers = { "X-GitHub-Event" = "push" }
+actor = "vedaru"
+count = 2
+# A push fans out per commit, so the subjects are the commits and not the push - which is why
+# there is no single `id` here, and why the ids are listed in the order the payload gives them.
+subject_ids = ["aaaa", "bbbb"]
+body = '''{
+  "ref": "refs/heads/main",
+  "commits": [
+    { "id": "aaaa", "message": "fix VED-64", "url": "https://github.com/a/b/commit/aaaa" },
+    { "id": "bbbb", "message": "and VED-65 too", "url": "https://github.com/a/b/commit/bbbb" }
+  ],
+  "repository": { "full_name": "a/b" },
+  "sender": { "login": "vedaru" }
+}'''
+
+[[delivery]]
+# An event the preset does not model: nothing to do, and not an error - the platform sends
+# plenty the bridge has no opinion about.
+event = "ping"
+count = 0
+headers = { "X-GitHub-Event" = "ping" }
+body = '''{ "zen": "Non-blocking is better than blocking.", "repository": { "full_name": "a/b" } }'''
+
+[[delivery]]
+# No event header at all: the platform cannot say what this is, so it is refused rather than
+# guessed at.
+reject = "missing-header"
+body = '''{ "repository": { "full_name": "a/b" }, "zen": "Keep it logically awesome." }'''
