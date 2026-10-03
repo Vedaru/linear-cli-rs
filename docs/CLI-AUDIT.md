@@ -4,6 +4,16 @@
 > added this file** - the tables record the behaviour as found. F5-F11 remain open gaps
 > (F5 = unimplemented branch-state resolution; F6-F11 are minor/behavioural).
 
+> **What has changed since this audit** (run 2026-09-29; recorded 2026-10-03, so the tables below
+> stay exactly as they were run): the command tree has grown from 18 groups / 86 help-listed
+> leaves to **20 groups / 98 leaves**. `sync status|link` and `webhook serve|replay` are whole new
+> groups, and inside existing ones `issue unarchive|subscribe|unsubscribe`, `cycle update|archive`
+> and `label update` appeared. `issue mine`, `issue describe` and `issue relation list` have
+> `--json` now, and `issue query` grew `--since`, `--group-by`, `--count-only` and `--ndjson`. The
+> summary below is a record of one afternoon, not a description of the current surface:
+> `linear <group> --help` is the description, and `tests/json_coverage.rs` keeps the machine-
+> readable half of it honest.
+
 # `linear` CLI 2.6.0 — live API audit against workspace WAVE-cloud
 
 **Summary:** 18/18 groups respond to `--help`; **86 leaf commands + 1 hidden alias (`issue list`) executed against the live API: 74 OK, 2 FAIL, 4 EXPECTED-FAIL (3× missing `gh`/`jj`, 1× cycles disabled), 7 SKIP (not run by rule)** — 73 of the OK rows are help-listed leaf commands and 1 is the hidden alias. Plus **12 flag-level/behavioural checks (6 FAIL, 1 EXPECTED-FAIL, 5 OK)** and **9/9 agent-contract checks passing**. All audit objects were named `ZZZ-AUDIT-*` and have been removed.
@@ -413,7 +423,7 @@ All other audit objects (2 labels, 1 project, 1 milestone, 1 document, 5 initiat
 
 ## 6. Method & reproducibility
 
-* Surface enumeration: `linear --help`, then `linear <group> --help` for all 18 groups, then `linear <group> <sub> --help` for every sub-command including the six nested groups (`project comment`, `initiative comment`, `issue comment`, `issue relation`, `issue agent-session`, `document comment`) — 87 help screens captured before any call.
+* Surface enumeration: `linear --help`, then `linear <group> --help` for every group it lists, then `linear <group> <sub> --help` for every sub-command including the nested groups (`project comment`, `initiative comment`, `issue comment`, `issue relation`, `issue agent-session`, `document comment`) — 87 help screens were captured before any call at the time of this audit (the tree has since grown; see the note at the top).
 * Every write was confined to objects created by this audit, all named `ZZZ-AUDIT-*`; the real board (`<project>`, team `WAV`, issues WAV-1…7) was never modified, archived or deleted (`project view`, `issue query`, `issue view`, `label list` only).
 * Credentials: never printed (the `auth token` check recorded length/prefix only), never exported, and `linear.toml` was never read or modified; all commands used per-invocation `env -u …` prefixes.
 * Not executed by design (rule 2): `team create`, `team delete`, `auth login`, `auth logout`, `auth default`, `auth migrate`, interactive `config`. For these, `--help` plus clap argument validation were recorded; no credential or workspace-structure change was attempted.

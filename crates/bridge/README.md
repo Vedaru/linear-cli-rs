@@ -135,6 +135,40 @@ the delivery counts; `GET /version` reports the build.
 Logging is `LINEAR_BRIDGE_LOG` (`error|warn|info|debug|trace|off`, default
 `info`) to stderr, deliberately without timestamps: the supervisor adds those.
 
+## Placement on a board
+
+A mirror that stops at the issue body is half a mirror: a project mirrored as a board is only
+readable if the cards are on the right columns. Placement is therefore part of what a mapping
+carries, and it is the one field that lives *outside* the issue.
+
+```toml
+# What a board calls its columns, per project - the only lookup keyed by container as well as
+# scope, because two boards in one repository may both have an "In Progress".
+[sink.project.lookup.column]
+name = "/title"
+id = "/id"
+[sink.project.lookup.column.list]
+method = "GET"
+path = "/repos/{scope}/projects/{id}/columns"
+```
+
+- **The mapping names the column, by name.** `[mapping.columns]` maps a source *state* to a sink
+  *column title* (`"In Progress" = "In Progress"`); the id the request needs is resolved against
+  the board itself. A state the table does not mention means *no opinion*: the request omits
+  `column_id` entirely rather than sending it as null - the difference between leaving a card's
+  placement alone and clearing it - and Forgejo then puts a newly assigned card in the project's
+  default column. A mapping with no columns table at all gets exactly that behaviour, which is why
+  the preset asks for the kanban template when it creates a project: a project with no column
+  cannot hold an issue.
+- **A delivery places the card** when the issue is created, when its project changes, and when its
+  *state* moves (on a board the state *is* the column). The board used is recorded on the pairing,
+  because no forge reports an issue's project anywhere else.
+- **A sweep can see a card somebody dragged.** `[sink.board]` reads a board's columns and the
+  cards on them, and the sweep *reports* the difference instead of fixing it in passing: the plan
+  says "would move", and applying the plan is what moves it. A board a sink cannot read answers
+  `unknown`, which is a different answer from `not on the board` - an absence of knowledge is not
+  evidence that somebody's card is misplaced, and only the second is something a sweep acts on.
+
 ## Operational shape
 
 - **Intake never does the work.** Verify -> persist -> `202`. Real work happens

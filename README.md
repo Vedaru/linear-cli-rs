@@ -24,8 +24,8 @@ linear api 'query { viewer { name } }'          # raw GraphQL escape hatch
 | no blocking prompts | commands that would confirm interactively require an explicit `--force` / `--yes`; without a terminal they fail fast with a message instead of waiting on stdin |
 | `--json` preserves GraphQL field names | payloads are `camelCase` exactly as Linear's API docs describe them, so they concatenate cleanly into agent context |
 | one-shot process, no state | nothing is resident between calls; commands are safe to run concurrently |
-| no runtime to install | a single ~4.8 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
-| small memory footprint | ~5 MiB peak for typical commands (measured with the kernel's VmHWM); the heaviest command, `schema`, peaks ~15 MiB |
+| no runtime to install | a single 4.94 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
+| small memory footprint | ~10.5 MiB peak for typical commands and ~16 MiB for the heaviest, `schema` (the kernel's `VmHWM`, measured against this build) |
 | pipeline-safe | a closed reader (`linear issue list | head`) ends the process the conventional way — no panic, no panic message on stderr |
 
 ## Install
@@ -49,12 +49,12 @@ cargo build --release        # target/release/linear — the CLI, and nothing el
 cargo install --path .       # onto PATH
 ```
 
-That is the whole CLI: no store, no intake server, no SQLite (4.91 MiB). The bridge half — the
+That is the whole CLI: no store, no intake server, no SQLite (4.94 MiB). The bridge half — the
 mirroring engine behind `linear sync` and the webhook service behind `linear webhook` — is behind
 one optional feature, so it stays out of a binary that only talks to Linear:
 
 ```sh
-cargo build --release --features service    # adds `sync`, `webhook`; 6.83 MiB
+cargo build --release --features service    # adds `sync`, `webhook`; 7.00 MiB
 ```
 
 The published release tarball is built **with** it, because the deployment that consumes that
@@ -94,13 +94,16 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is not universal**: it exists where a machine-readable payload makes sense
-  (`issue query`, `issue view`, `project list`, `team list`, `label list`, `user list`,
-  `cycle list`, `milestone list`, `initiative list`, `document list`, `template list`,
-  the status-update lists, `auth list`, `schema`) but **not on every subcommand**:
-  `issue list`, `issue mine` and `issue relation list` have no `--json` at all, so use
-  `issue query --json` for machine-readable issue work. Always check
-  `linear <group> <sub> --help` before scripting a flag.
+- **`--json` is on 43 of the 98 leaf commands**, and the other 55 are listed *with a reason* in
+  `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
+  not data (a credential, a reference document, a scaffold, the raw API response) never will
+  carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
+  that list grows. `issue query` is the machine-readable issue lister, and it carries the levers
+  an agent needs on top of the filter flags: `--count-only` (how many match, without fetching
+  them), `--group-by state|priority|assignee|project`, `--since 7d`, and `--ndjson` (one JSON
+  object per line, streamed page by page). Note that `issue list` is a **hidden alias** of
+  `issue mine` (it answers `Usage: linear issue mine`), so scripts can use either name. Always
+  check `linear <group> <sub> --help` before scripting a flag.
 - **Empty results**: with `--json` you always get JSON (an empty `nodes` array); on human
   output a listing prints a notice such as `No issues found.` instead. Parse the JSON
   rather than scraping text.
@@ -124,29 +127,32 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-Eighteen groups, ninety subcommands. Run `linear <group> --help` for flags — the help text
-is the authoritative reference, and it mirrors upstream verbatim.
+Twenty groups, ninety-eight leaf commands. Run `linear <group> --help` for flags — the help text
+is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
+every addition and every deliberate deviation.
 
 | Group | Subcommands |
 |---|---|
 | `auth` | `login` add a workspace credential · `logout` · `list` configured workspaces · `default` · `token` print the configured token · `whoami` · `migrate` plaintext credentials to the keyring |
-| `issue` | `id` · `mine` · `query` structured filters · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `delete` · `create` · `update` · `comment` (add/list/…) · `attach` sidebar link · `link` a URL · `relation` dependencies · `agent-session` |
+| `issue` | `id` · `mine` · `query` structured filters (`--count-only`, `--group-by`, `--since`, `--ndjson`) · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `unarchive` · `delete` · `subscribe` · `unsubscribe` · `create` · `update` · `comment` (add/list/resolve…) · `attach` sidebar link · `link` a URL · `relation` dependencies · `agent-session` |
 | `project` | `list` · `view` · `create` · `update` · `delete` · `comment` |
 | `project-update` | `create` · `list` project status updates |
 | `team` | `create` · `delete` · `list` · `id` · `autolinks` (gh) · `members` · `states` workflow states |
 | `user` | `list` workspace members |
-| `cycle` | `list` · `view` |
+| `cycle` | `list` · `view` · `update` · `archive` (archiving is irreversible — the API has no unarchive) |
 | `milestone` | `list` · `view` · `create` · `update` · `delete` |
 | `initiative` | `list` · `view` · `create` · `update` · `archive` · `unarchive` · `delete` · `add-project` · `remove-project` · `comment` |
 | `initiative-update` | `create` · `list` initiative timeline posts |
-| `label` | `list` · `create` · `delete` |
+| `label` | `list` · `create` · `delete` · `update` (rename, recolour, redescribe) |
 | `template` | `list` · `view` what a template pre-fills |
 | `document` | `list` · `view` · `create` · `update` · `delete` · `comment` |
-| `config` | interactively generate `.linear.toml` (skip in automation — write the file instead) |
+| `config` | `service` print the bridge's config sections, for a `linear.toml` you already have (no questions, and never a secret) |
 | `schema` | print the GraphQL schema, or `--json` for the raw introspection result |
 | `api` | raw GraphQL request |
 | `markdown` | the Linear-flavoured markdown reference (mentions, collapsible sections) |
 | `completions` | `bash` · `zsh` · `fish` · `powershell` |
+| `webhook` | `serve` the intake service · `replay` a stored delivery again, as the provider sent it (both need the service feature) |
+| `sync` | `status` what the store holds and what it gave up on · `link` pair two entities by hand (needs the service feature) |
 
 ## Patterns worth copying
 
@@ -160,7 +166,7 @@ linear issue mine --json
 linear issue query --team ENG --state started --json
 
 # Create with a body from a file, then move it along
-linear issue create --team ENG --title "Fix login redirect" --body-file /tmp/body.md --json
+linear issue create --team ENG --title "Fix login redirect" --description-file /tmp/body.md --json
 linear issue update ENG-123 --state "In Progress"
 linear issue comment add ENG-123 --body-file /tmp/note.md
 
@@ -206,8 +212,9 @@ before you rely on something:
 
 ## Webhook service
 
-The same binary also runs as a service that accepts webhook deliveries (and, from M3,
-mirrors work between the platforms behind them). It reads the same `linear.toml`:
+The same binary also runs as a service: it accepts webhook deliveries and mirrors work between
+the platforms behind them — issues, comments, fields, and placement on a project board, where a
+card follows its issue's state onto the column the mapping names. It reads the same `linear.toml`:
 
 ```toml
 [bridge]
@@ -305,20 +312,20 @@ cargo clippy -p linear --no-default-features --all-targets --locked -- -D warnin
 ```
 
 Two shapes, and both are built and linted by CI. The default is the CLI; `--features service`
-adds the `linear-bridge` half, and five integration suites are gated on that feature
+adds the `linear-bridge` half, and six integration suites are gated on that feature
 (`#![cfg(feature = "service")]`) because they exercise commands that only exist there. That is
 exactly why the gate passes `--all-features`: without it the service tests would be skipped and
 the run would be green by absence. The reverse check - a `--no-default-features` clippy - keeps
 the shape a laptop installs from drifting into warnings nobody sees.
 
 The release profile is tuned for distribution, not for speed: `lto`, `codegen-units = 1`,
-`strip`, `opt-level = "z"` and `panic = "abort"` take the CLI from 16.22 MiB to 4.91 MiB (-70%)
+`strip`, `opt-level = "z"` and `panic = "abort"` take the CLI from 16.25 MiB to 4.94 MiB (-70%)
 against cargo's default release profile for the same source (opt-level 3, no LTO, 16 codegen
 units, unstripped, unwinding), measured with rustc 1.93.1. Every command is network-bound, so the
 slower code this generates is invisible next to an API round trip. A release-mode test run would
 need `-Z panic-abort-tests`.
 
-The bridge adds 1.92 MiB on top of that (4.91 -> 6.83 MiB): SQLite (bundled, so no system
+The bridge adds 2.06 MiB on top of that (4.94 -> 7.00 MiB): SQLite (bundled, so no system
 library is needed to run it), a small sync HTTP server, TOML parsing and HMAC. Memory is
 bounded by construction rather than by tuning - bodies are capped while reading, one
 delivery is in flight per worker, and the queue lives in the database rather than in

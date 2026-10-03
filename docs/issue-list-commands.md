@@ -99,6 +99,10 @@ Upstream `.name("query")`, alias `q`.
 `--created-after`, `--updated-after`, `--include-archived`, `-j/--json`,
 `--no-pager`.
 
+Four beyond upstream (added 2026-10-03, VED-56/VED-60 - see §"The list levers" below):
+`--since <AGE|DATE>` (ages `7d`/`2w`/`3mo`/`36h`, or an absolute date, resolving to the same
+`updatedAt` bound as `--updated-after`), `--count-only`, `--group-by <FIELD>` and `--ndjson`.
+
 ### Validation (in this exact order)
 1. `team_refs.len() > 0 && all_teams` → `"Cannot use both --team and --all-teams flags"`.
 2. more than one of `[assignee, all_assignees, unassigned]` →
@@ -117,6 +121,15 @@ Upstream `.name("query")`, alias `q`.
    `"--sort cannot be used with --search"`, suggestion
    `"Search results use relevance ordering. Remove --sort when using --search."`.
 9. `limit < 0` → `"--limit must be 0 or greater"`.
+10. `since.is_some() && updated_after.is_some()` → `"Cannot use both --since and --updated-after"`
+    (the same bound in two notations).
+11. `count_only && search.is_some()` → `"Cannot use --count-only with --search"` - Linear's search
+    returns no count, and a number nobody can compute is worse than an error.
+12. `--group-by <unknown field>` → `'Unknown --group-by field: "<field>"'` - parsed, not accepted
+    as a string, because a listing that looks grouped but is not is worse than a refusal.
+13. `--ndjson` with `--json`, `--count-only`, `--group-by` or `--search` → four refusals, each
+    naming the alternative. A stream cannot honestly produce a count or a group, cannot be merged
+    with a document, and search answers in one relevance-ordered page.
 
 ### Team scope
 - `all_teams` → `team_keys = None`, `is_multi_team = true`.
@@ -164,6 +177,44 @@ Both then:
 - Paged print as in `mine`.
 
 Error context: `"Failed to query issues"`.
+
+## The list levers (beyond upstream)
+
+Three questions an agent asks before listing anything, each answered as cheaply as the API allows.
+
+### `--count-only`
+`IssueConnection` has no count field - asking for `totalCount` is a validation error - and the only
+count in the schema is `Team.issueCount`, which takes no filter arguments. So there are two
+mechanisms, and the flag does not pretend otherwise: an **unfiltered** count is that single field
+(no nodes, no pages at all), and a **filtered** count asks for `nodes { id }` - the smallest thing
+an issue can be - and counts them, one request while the answer fits in one page and a cursor walk
+when it does not. `--count-only --search` is refused. With `--json` it prints `{"count": N}`.
+
+### `--since`
+`7d` / `2w` / `3mo` / `36h`, or an absolute date, resolved to the same `updatedAt` bound as
+`--updated-after` and refused when both are given. The age grammar lives once, in
+`src/linear/dates.rs` beside the ISO parser it falls back to - nothing in the CLI parsed an age
+before it - and a mistyped age (`7x`) teaches the age grammar rather than the date one.
+
+### `--group-by state|priority|assignee|project`
+Grouping happens in the output layer, so `--json` gets a *grouped* document rather than a flat list
+an agent would have to re-group:
+
+```json
+{ "groupedBy": "state", "total": 3,
+  "groups": [{ "label": "In Progress", "count": 2, "issues": [ ... raw nodes ... ] }] }
+```
+
+Groups keep first-seen order (the query's own sort decided what matters), the table path prints one
+table per group, and an unknown field is a validation error.
+
+### `--ndjson`
+One JSON object per line, written the moment each page arrives: the pagination loop lives in
+`stream_issues_for_query`, which hands each page to a callback, so a ten-page result starts printing
+on page one. The limit is applied *before* a page is handed over - a consumer that writes as it goes
+cannot print more than was asked for - and every line is compact and flushed, because stdout is
+block-buffered through a pipe and a stream that arrives at exit is a buffered list wearing a
+stream's name. Refused with `--json`, `--count-only`, `--group-by` and `--search`.
 
 ## Shared renderer
 

@@ -16,7 +16,7 @@ cargo clippy --workspace --all-targets --all-features  # lint
 
 `linear-bridge` is an **optional** dependency behind the `service` feature, and it is not in the
 default feature set: the CLI is the product, so `cargo build` gives the same surface as upstream -
-nothing to configure, no store, no SQLite. Five suites under `tests/` are likewise gated
+nothing to configure, no store, no SQLite. Six suites under `tests/` are likewise gated
 (`#![cfg(feature = "service")]`) because they drive `sync`/`webhook` commands that do not exist in
 the default shape. Run the suite with `--all-features` (as CI does), or those files compile to
 nothing and the run is green by absence.
@@ -74,8 +74,10 @@ port and exposes:
   the mock.
 - `MockLinearServer::uploads()` returns captured signed-URL `PUT` bodies.
 
-See `tests/mock_server.rs` (harness self-tests) and `tests/cli_smoke.rs`
-(end-to-end command tests) for the pattern.
+See `tests/mock_server.rs` (harness self-tests), `tests/cli_smoke.rs` (end-to-end
+behaviour), `tests/json_coverage.rs` (which commands answer `--json`) and
+`tests/docs_coverage.rs` (the docs' command table and examples checked against the binary) for the
+pattern.
 
 ## Known deviations from upstream
 
