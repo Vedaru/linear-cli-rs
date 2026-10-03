@@ -31,8 +31,26 @@ linear api 'query { viewer { name } }'          # raw GraphQL escape hatch
 
 ## Install
 
-From a release tarball (the archive extracts into a top-level directory containing
-`linear`, `README.md` and `AGENTS.md`):
+**Two channels, and they do not publish the same target set.** Stated rather than aspired to:
+
+| channel | targets | what it publishes |
+|---|---|---|
+| the instance's rolling release (what this deployment consumes) | `x86_64-unknown-linux-gnu` | CLI + service archives, both republished on every push to `main` |
+| GitHub Actions (`Vedaru/linear-cli-rs`, mirror) | linux `gnu`, linux `musl`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc` | the same two archives per target |
+
+"They do not have the same target set" is not an oversight to fix later: the instance's runner is a
+single Linux image, and the Apple and Windows targets need SDKs that image does not have, while the
+five-target matrix runs where free runners exist for it. "Every target on both channels" is therefore
+not reachable, and this table is the honest form of that answer.
+
+**Neither channel is on crates.io, and this is a decision rather than a gap.** Installing means
+downloading a tarball or building from source, so `cargo install linear` and `cargo binstall linear`
+are not supported and their metadata is deliberately absent instead of half-declared. Either reason
+alone would be enough: the crate name an obvious choice would want is taken, and a registry copy
+would be a third channel to keep in step with the two that exist.
+
+**From a release tarball** (the archive extracts into a top-level directory containing `linear`,
+`README.md` and `AGENTS.md`):
 
 ```sh
 tar xf linear-cli-rs-<sha>-x86_64-unknown-linux-gnu.tar.gz
@@ -43,11 +61,22 @@ Two archives are published for each build, from one commit: the plain name above
 alone**, and `linear-cli-rs-<sha>-service-x86_64-unknown-linux-gnu.tar.gz` adds the bridge half
 (`linear sync`, `linear webhook`) that a deployment installs.
 
+**From a checkout**, which works on every target today and needs no tarball:
+
+```sh
+cargo install --path .       # onto PATH
+```
+
+A one-command install straight from the URL - `curl … | tar …` or `cargo install --git …` against the
+instance - is not documented because it does not work yet: a plain request for an asset is met by the
+authenticating gateway rather than the file (that is VED-71, and it is the same rule that makes a
+hard reload slow), so the path a stranger can follow today is the GitHub mirror, which is public but
+deliberately frozen. Both halves of that sentence are temporary; the tarball recipe above is not.
+
 Or build it:
 
 ```sh
 cargo build --release        # target/release/linear — the CLI, and nothing else
-cargo install --path .       # onto PATH
 ```
 
 That is the whole CLI: no store, no intake server, no SQLite (~5 MiB). The bridge half — the

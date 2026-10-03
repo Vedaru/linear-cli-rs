@@ -4,7 +4,12 @@ version = "2.6.0"
 edition = "2021"
 description = "Unofficial Linear CLI (Rust port) built for headless agent use"
 license = "MIT"
-repository = "https://github.com/schpet/linear-cli"
+# Where *this* port lives, not the upstream project it ports: pointing a reader at
+# schpet/linear-cli from this crate's metadata sends them to a different program (a Node CLI with
+# the same name), which is the one thing a repository field must not do. The public mirror is
+# `github.com/Vedaru/linear-cli-rs` and the README says so, along with the mirror's frozen state.
+repository = "https://git.vedaru.cn/Vedaru/linear-cli-rs"
+readme = "README.md"
 rust-version = "1.80"
 
 [[bin]]
