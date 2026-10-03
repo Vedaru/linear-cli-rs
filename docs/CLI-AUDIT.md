@@ -18,6 +18,85 @@
 
 **Summary:** 18/18 groups respond to `--help`; **86 leaf commands + 1 hidden alias (`issue list`) executed against the live API: 74 OK, 2 FAIL, 4 EXPECTED-FAIL (3× missing `gh`/`jj`, 1× cycles disabled), 7 SKIP (not run by rule)** — 73 of the OK rows are help-listed leaf commands and 1 is the hidden alias. Plus **12 flag-level/behavioural checks (6 FAIL, 1 EXPECTED-FAIL, 5 OK)** and **9/9 agent-contract checks passing**. All audit objects were named `ZZZ-AUDIT-*` and have been removed.
 
+> **Read this summary as of 2026-09-29.** The binary has moved on: it now answers with **23 groups
+> and 108 leaf commands**, and six of the findings below are no longer what they were. §0 is the
+> 2026-10-03 re-measurement of the surface and of each finding's status, with its evidence — start
+> there, then read this for what was actually executed.
+
+---
+
+## 0. Re-measured 2026-10-03 — structure and finding status
+
+**What this section is.** The per-command evidence in §2–§5 is the **2026-09-29** run and has been
+left exactly as it was: it is a record of what that binary did that day, and rewriting it would
+destroy the only thing it is good for. What follows is a *re-measurement of the current binary* on
+**2026-10-03** against workspace `VED` (the audit's workspace `WAVE-cloud` is no longer the one this
+token points at), covering the two things that can be stated without re-executing the whole audit:
+the **command surface**, and the **status of each finding**, with its evidence named.
+
+**What this section is not.** It is not a re-run of the audit. Nothing here was executed against an
+audit object; the probes below target names that do not exist, so no workspace state was created,
+changed or removed. A full behavioural re-run is still owed, and until it happens the rows in §2 for
+commands the audits share should be read as 2026-09-29 facts.
+
+### 0.1 The surface, as the binary answers today
+
+| | 2026-09-29 | 2026-10-03 |
+|---|---|---|
+| groups | 18 | **23** |
+| leaf commands | 86 + 1 hidden alias | **108** |
+| leaves carrying `--json` | (not stated) | **53** |
+| groups added since | — | `view`, `roadmap`, `notification`, `sync`, `webhook` |
+
+Method, so the numbers can be re-derived: the group/leaf/`--json` counts are the ones
+`tests/docs_coverage.rs` computes from the clap tree and holds the README to, so they cannot drift
+silently. Walking `<group> --help` with the current build lists **23 groups and 93 leaves** — the
+difference from 108 is hidden aliases (`issue list` is `issue mine`) and nested subcommands
+(`issue comment add|list|resolve…`), which help does not print. Both numbers are correct; they count
+different things, and the ratchet owns the larger one.
+
+```
+auth           login logout list default token whoami migrate
+issue          id mine query title start view url describe commits pull-request archive
+               delete unarchive subscribe unsubscribe create update comment attach link
+               relation agent-session
+project        list view create update delete comment
+project-update create list
+roadmap        list view
+team           create delete list id autolinks members states
+user           list
+cycle          list view update archive
+milestone      list view create update delete
+initiative     list view create update archive unarchive delete add-project remove-project comment
+initiative-update create list
+label          list create delete update
+template       list view
+document       list view create update delete comment
+view           list view create update delete
+notification   list read archive
+config         service          schema   api   markdown   completions
+webhook        serve replay     sync     status link
+```
+
+### 0.2 Status of each finding, with what backs the status
+
+| finding | status today | evidence (2026-10-03) |
+|---|---|---|
+| F1 `label delete <NAME>` cannot find a label | **fixed** | `label delete ZZZ-NOPE-2026` → exit 1 `Label not found: ZZZ-NOPE-2026` / `Searched in team VED and workspace.` — it resolves by name and says where it looked. `src/commands/label/label_delete.rs:46` resolves through `support::resolve_label`, which now falls back to workspace labels (`support.rs:102,143`) — which is F4's lookup half as well. |
+| F2 `initiative update --status` cannot work | **fixed** | `initiative update ZZZ-NOPE-2026 --status Active` → exit 1 `Initiative not found: … Pass an initiative UUID, slug ID, or exact initiative name.` The command gets *past* the status mapping to name resolution, which is the part that could never run before. |
+| F3 `issue query --include-archived` ignored | **fixed in the code** | `include_archived` reaches the request variables on both paths (`src/commands/issue/issue_query.rs:372,394` → `src/linear/issues.rs:445` inserts `includeArchived`). A live count is *not* evidence either way here — 50 rows with and without, both capped by the default limit — so the citation is the code, not a run. |
+| F4 workspace-level labels cannot be applied | **lookup half fixed, write half not re-checked** | The resolver falls back to workspace labels and documents the multi-match rule (`label/support.rs:51,102,143`). Whether a write accepts a workspace label is not re-checked here. |
+| F5 branch-state resolution unimplemented | **partially addressed, not re-checked** | The `[issueId]`-optional commands now suggest the branch path: `issue title ZZZ-NOPE-2026` → `Could not determine issue ID` / `Please provide an issue ID like 'ENG-123'`. Whether a real branch pattern resolves is untested here (no such branch exists in this checkout). |
+| F6 `--icon` can never succeed | **changed: it now validates** | `document update ZZZ-NOPE-2026 --icon nope` → exit 1 `icon is not a valid icon.` That is a validation refusal rather than the old path, but a *valid* icon has not been re-tried, so "fixed" would be a claim this measurement does not support. |
+| F7 `pull-request` message is a tautology | **not re-checked** | Needs `gh`; not installed here. |
+| F8 `--web`/`-a` unusable in a single-workspace setup | **not re-checked** | Would open a browser; this host has none. |
+| F9 `milestone update <name>` leaks a GraphQL entity name | **still open** | `milestone update ZZZ-NOPE-2026 --name nope` → exit 1 `Could not find referenced ProjectMilestone.` — same leak, and still no suggestion. |
+| F10 `issue update <id>` with no flags reports success | **not re-checked** | Probing it means accepting a write; the safest available read of the code found no "no fields given" guard, which is weak evidence and is not claimed as one. |
+| F11 deletion described as permanent but soft-deletes | **not re-checked** | Wording is unchanged in the affected help text. |
+
+The `expected-fail` rows do not change: `jj` and `gh` are still absent from this host, and cycles
+remain disabled for the team.
+
 ---
 
 ## 1. Scope, environment and how to read this report
