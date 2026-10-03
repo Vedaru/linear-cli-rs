@@ -6,23 +6,14 @@ use crate::colors;
 use crate::display;
 use crate::errors::{CliError, Result};
 use crate::graphql;
-use crate::linear::{compare_workflow_states, get_team_key, resolve_team, WorkflowState};
+use crate::linear::{
+    compare_workflow_states, get_team_key, resolve_team, WorkflowState, GET_WORKFLOW_STATES_QUERY,
+};
 use crate::output;
 
-const GET_WORKFLOW_STATES_QUERY: &str = r#"
-query GetWorkflowStates($teamKey: String!) {
-  team(id: $teamKey) {
-    states {
-      nodes {
-        id
-        name
-        type
-        position
-      }
-    }
-  }
-}
-"#;
+// The `GetWorkflowStates` document lives in `linear/queries.rs` and is used from here: it was
+// defined in both files, byte for byte, which is the kind of twin that stops being byte for byte
+// one commit later. `tests/graphql_document_names.rs` keeps it from coming back.
 
 #[derive(clap::Args, Debug)]
 pub struct StatesArgs {
