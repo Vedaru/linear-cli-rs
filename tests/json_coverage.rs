@@ -52,6 +52,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "prints a credential, which nothing should be encouraged to parse",
     ),
     ("completions", "prints a shell script"),
+    (
+        "export issues",
+        "the output *is* the document; `--format json` is its machine-readable form",
+    ),
+    (
+        "export projects",
+        "the output *is* the document; `--format json` is its machine-readable form",
+    ),
     ("config service", "prints a configuration scaffold"),
     ("markdown", "prints a reference document"),
     (

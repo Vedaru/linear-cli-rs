@@ -75,6 +75,10 @@ pub enum Command {
     Document(crate::commands::document::DocumentArgs),
     /// List and manage custom views (Linear's saved filters)
     View(crate::commands::view::ViewArgs),
+    /// Export issues and projects as CSV, JSON, NDJSON or Markdown
+    Export(crate::commands::export::ExportArgs),
+    /// Import issues from an export (dry run unless --apply)
+    Import(crate::commands::import::ImportArgs),
     /// Notifications: what Linear told this user, and the read state that belongs to them
     Notification(crate::commands::notification::NotificationArgs),
     /// Interactively generate .linear.toml configuration

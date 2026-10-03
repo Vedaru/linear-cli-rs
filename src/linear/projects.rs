@@ -356,3 +356,95 @@ fn archive_result(data: Value, mutation: &str) -> Result<Value> {
     }
     Ok(data)
 }
+
+// ---------------------------------------------------------------------------
+// Project transfer (`linear export projects`)
+// ---------------------------------------------------------------------------
+
+const EXPORT_PROJECTS_QUERY: &str = r#"
+query ExportProjects($filter: ProjectFilter, $first: Int, $after: String) {
+  projects(filter: $filter, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      status {
+        name
+        type
+      }
+      health
+      priority
+      lead {
+        displayName
+      }
+      teams {
+        nodes {
+          key
+        }
+      }
+      startDate
+      targetDate
+      url
+      createdAt
+      updatedAt
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"#;
+
+/// Every project the filter selects, shaped `{ nodes, pageInfo }`.
+///
+/// A named team filters by `teams: { some: { key: { eq: $key } } }`; no team means the whole
+/// workspace, which is what a project export is usually for.
+pub fn fetch_projects_for_export(team_key: Option<&str>) -> Result<Value> {
+    let client = graphql::client()?;
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut after: Option<String> = None;
+    let mut last_page_info = json!({ "hasNextPage": false, "endCursor": null });
+
+    loop {
+        let mut variables = Map::new();
+        variables.insert("first".to_string(), json!(100));
+        if let Some(key) = team_key {
+            variables.insert(
+                "filter".to_string(),
+                json!({ "teams": { "some": { "key": { "eq": key } } } }),
+            );
+        }
+        if let Some(cursor) = &after {
+            variables.insert("after".to_string(), json!(cursor));
+        }
+
+        let data = client.request(EXPORT_PROJECTS_QUERY, Value::Object(variables))?;
+        let connection = data
+            .get("projects")
+            .ok_or_else(|| CliError::cli("Linear API response did not contain projects"))?;
+        if let Some(page) = connection.get("nodes").and_then(Value::as_array) {
+            nodes.extend(page.iter().cloned());
+        }
+
+        let page_info = connection.get("pageInfo");
+        let has_next = page_info
+            .and_then(|info| info.get("hasNextPage"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if let Some(info) = page_info {
+            last_page_info = info.clone();
+        }
+        if !has_next {
+            break;
+        }
+        after = page_info
+            .and_then(|info| info.get("endCursor"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if after.is_none() {
+            break;
+        }
+    }
+
+    Ok(json!({ "nodes": nodes, "pageInfo": last_page_info }))
+}

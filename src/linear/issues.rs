@@ -746,3 +746,166 @@ pub fn search_issues_by_term(term: &str, options: &SearchIssuesByTermOptions) ->
         "totalCount": total_count,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Issue transfer (`linear export issues` / `linear import issues`)
+// ---------------------------------------------------------------------------
+
+/// The issue fields a transfer needs, and the one document both directions read.
+///
+/// Deliberately *not* `FETCH_ISSUES_QUERY`: that listing answers the screen, so it carries
+/// `priorityLabel`, `initials`, `avatarUrl` and the relation graph, and it has no `description` or
+/// `dueDate` - the two fields an import can write. One document for the export and for the
+/// "what does Linear already have" read means a row and the issue it came from are read the same
+/// way, which is what makes re-importing an unchanged export a no-op.
+const EXPORT_ISSUES_QUERY: &str = r#"
+query ExportIssues($filter: IssueFilter, $sort: [IssueSortInput!], $first: Int, $after: String, $includeArchived: Boolean) {
+  issues(filter: $filter, sort: $sort, first: $first, after: $after, includeArchived: $includeArchived) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      priority
+      estimate
+      dueDate
+      url
+      createdAt
+      updatedAt
+      state {
+        id
+        name
+        type
+      }
+      assignee {
+        id
+        name
+        displayName
+      }
+      team {
+        id
+        key
+        name
+      }
+      project {
+        id
+        name
+      }
+      projectMilestone {
+        id
+        name
+      }
+      cycle {
+        id
+        number
+        name
+      }
+      labels {
+        nodes {
+          id
+          name
+        }
+      }
+      parent {
+        id
+        identifier
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"#;
+
+/// Ask Linear the same question `issue query` asks, and hand back pages as they arrive.
+///
+/// The streaming shape is the point: "large exports stream as NDJSON instead of buffering the
+/// whole team" means the caller writes each page as it lands, and the closure is where it does.
+pub fn stream_export_issues(
+    options: &FetchIssuesForQueryOptions,
+    mut on_page: impl FnMut(&[Value]) -> Result<()>,
+) -> Result<Value> {
+    let client = graphql::client()?;
+    let filter = issue_filter(options)?;
+
+    let fetch_all = options.limit == Some(0);
+    let limit = options.limit.unwrap_or(50);
+    let page_size: u32 = if fetch_all { 100 } else { limit.min(100) };
+    let sort_payload = get_issue_sort_payload(options.sort.unwrap_or(IssueSort::Priority));
+
+    let mut seen: usize = 0;
+    let mut after: Option<String> = None;
+    let mut last_page_info = json!({ "hasNextPage": false, "endCursor": null });
+
+    loop {
+        let mut variables = Map::new();
+        if !filter.is_empty() {
+            variables.insert("filter".to_string(), Value::Object(filter.clone()));
+        }
+        variables.insert("sort".to_string(), sort_payload.clone());
+        variables.insert("first".to_string(), json!(page_size));
+        if let Some(cursor) = &after {
+            variables.insert("after".to_string(), json!(cursor));
+        }
+        if let Some(include_archived) = options.include_archived {
+            variables.insert("includeArchived".to_string(), json!(include_archived));
+        }
+
+        let data = client.request(EXPORT_ISSUES_QUERY, Value::Object(variables))?;
+        let connection = data
+            .get("issues")
+            .ok_or_else(|| CliError::cli("Linear API response did not contain issues"))?;
+
+        let no_nodes: Vec<Value> = Vec::new();
+        let page = connection
+            .get("nodes")
+            .and_then(Value::as_array)
+            .unwrap_or(&no_nodes);
+        let room = if fetch_all {
+            page.len()
+        } else {
+            (limit as usize).saturating_sub(seen)
+        };
+        let taken: Vec<Value> = page.iter().take(room).cloned().collect();
+        seen += taken.len();
+        if !taken.is_empty() {
+            on_page(&taken)?;
+        }
+
+        let page_info = connection.get("pageInfo");
+        let has_next = page_info
+            .and_then(|info| info.get("hasNextPage"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if let Some(info) = page_info {
+            last_page_info = info.clone();
+        }
+        if !has_next {
+            break;
+        }
+        after = page_info
+            .and_then(|info| info.get("endCursor"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if after.is_none() {
+            break;
+        }
+        if !fetch_all && seen >= limit as usize {
+            break;
+        }
+    }
+
+    Ok(last_page_info)
+}
+
+/// The same document, collected - shaped `{ nodes, pageInfo }`, exactly like `issue query --json`.
+pub fn fetch_export_issues(options: &FetchIssuesForQueryOptions) -> Result<Value> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let page_info = stream_export_issues(options, |page| {
+        nodes.extend(page.iter().cloned());
+        Ok(())
+    })?;
+    Ok(json!({ "nodes": nodes, "pageInfo": page_info }))
+}

@@ -23,6 +23,7 @@ mod comments;
 mod config;
 mod consts;
 mod credentials;
+mod csv;
 mod display;
 mod editor;
 mod errors;
@@ -44,6 +45,7 @@ mod paths;
 mod proc;
 mod prompt;
 mod prosemirror;
+mod transfer;
 mod upload;
 mod vcs;
 

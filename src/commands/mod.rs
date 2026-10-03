@@ -7,6 +7,8 @@ pub mod completions;
 pub mod config;
 pub mod cycle;
 pub mod document;
+pub mod export;
+pub mod import;
 pub mod initiative;
 pub mod initiative_update;
 pub mod issue;
@@ -53,6 +55,8 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Label(args)) => label::run(args),
         Some(Command::Template(args)) => template::run(args),
         Some(Command::Document(args)) => document::run(args),
+        Some(Command::Export(args)) => export::run(args),
+        Some(Command::Import(args)) => import::run(args),
         Some(Command::View(args)) => view::run(args),
         Some(Command::Notification(args)) => notification::run(args),
         Some(Command::Config(args)) => config::run(args),

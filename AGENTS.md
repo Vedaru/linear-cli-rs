@@ -158,6 +158,16 @@ one is the missing half of a group that could only move one way.
   to reach for that name to do a reversible thing; `add`/`remove` read the set
   first and send it back with one name changed, while `set` is the verb that
   replaces it and the only one that asks for confirmation.
+- `export issues`, `export projects`, `import issues` — CSV, JSON, NDJSON and
+  Markdown out; CSV and JSON back in. Upstream advertises import and export and
+  ships neither. The JSON is the API's own document (`{nodes, pageInfo}`, the shape
+  `issue query --json` prints) rather than a second serialiser, so export → import
+  is identity by construction; NDJSON exists so a large team is not buffered before
+  the first line is written. `import` is a dry run unless `--apply`, matches by the
+  `identifier` column and then by (team, title), and sends only the fields that
+  differ — so re-importing an unchanged export makes no requests at all. The columns
+  it does not write (`cycle`, `milestone`, the timestamps, the ids) are named in its
+  module doc rather than silently ignored.
 - `cycle create`, `cycle complete` — `cycleCreate`, and `cycleUpdate` with
   `completedAt`. Upstream's cycle group only reads. `create` checks its window
   against the team's existing cycles and refuses an overlap *by name*, because the
