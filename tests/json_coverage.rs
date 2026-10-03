@@ -99,13 +99,15 @@ const EXEMPT: &[(&str, &str)] = &[
     ("project-update create", "posts a status update"),
     ("team create", "creates a team"),
     ("team delete", "deletes a team"),
-    // --- reads still to do (VED-60) ---
-    ("auth list", "lists the credential store's workspaces"),
-    ("issue commits", "prints jj commit log entries"),
-    ("issue describe", "prints a commit trailer"),
-    ("issue relation list", "lists an issue's relations"),
-    ("team autolinks", "lists a team's autolink templates"),
-    ("team id", "prints a team identifier"),
+    // --- never: the payload is another program's to print ---
+    (
+        "issue commits",
+        "delegates to `jj log` with an inherited terminal, so the payload is jj's",
+    ),
+    (
+        "team autolinks",
+        "configures GitHub autolinks through `gh`; that command's output is the result",
+    ),
 ];
 
 /// The subcommands a help screen lists, in order.

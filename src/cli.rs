@@ -117,7 +117,11 @@ pub enum AuthCommand {
         force: bool,
     },
     /// List configured workspaces
-    List,
+    List {
+        /// Output the workspace list as JSON (an addition to upstream)
+        #[arg(short = 'j', long)]
+        json: bool,
+    },
     /// Set the default workspace
     Default {
         /// Workspace slug to make default

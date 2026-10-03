@@ -88,8 +88,8 @@ pub fn run(args: AuthArgs) -> Result<()> {
         AuthCommand::Logout { workspace, force } => {
             logout(workspace, force).map_err(|error| error.with_context("Failed to logout"))
         }
-        AuthCommand::List => {
-            list().map_err(|error| error.with_context("Failed to list workspaces"))
+        AuthCommand::List { json } => {
+            list(json).map_err(|error| error.with_context("Failed to list workspaces"))
         }
         AuthCommand::Default { workspace } => default(workspace)
             .map_err(|error| error.with_context("Failed to set default workspace")),
@@ -363,9 +363,15 @@ fn fetch_workspace_info(
     }
 }
 
-fn list() -> Result<()> {
+fn list(as_json: bool) -> Result<()> {
     let workspaces = credentials::get_workspaces();
     if workspaces.is_empty() {
+        if as_json {
+            // A caller that asked for JSON is parsing, not reading: an empty
+            // list is an empty array, not two sentences it has to special-case.
+            output::print_json(&json!({ "default_workspace": Value::Null, "workspaces": [] }));
+            return Ok(());
+        }
         output::line("No workspaces configured");
         output::line("Run `linear auth login` to add a workspace");
         return Ok(());
@@ -383,6 +389,30 @@ fn list() -> Result<()> {
             fetch_workspace_info(workspace.clone(), is_default, api_key)
         })
         .collect();
+
+    if as_json {
+        // The same rows the table prints, as data: the error field is carried
+        // rather than folded into the ORG NAME column, so a caller can tell a
+        // workspace that failed to answer from one whose org has that name.
+        let listed: Vec<Value> = infos
+            .iter()
+            .map(|info| {
+                json!({
+                    "workspace": info.workspace,
+                    "org_name": info.org_name,
+                    "user_name": info.user_name,
+                    "email": info.email,
+                    "default": info.is_default,
+                    "error": info.error,
+                })
+            })
+            .collect();
+        output::print_json(&json!({
+            "default_workspace": default_workspace,
+            "workspaces": listed,
+        }));
+        return Ok(());
+    }
 
     let workspace_width = infos
         .iter()

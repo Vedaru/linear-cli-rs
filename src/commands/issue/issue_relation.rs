@@ -59,6 +59,9 @@ pub struct RelationListArgs {
     /// Issue ID (e.g., ENG-123)
     #[arg(value_name = "issueId")]
     pub issue_id: Option<String>,
+    /// Output the relations as JSON (an addition to upstream)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 const RELATION_TYPES: [&str; 4] = ["blocks", "blocked-by", "related", "duplicate"];
@@ -339,6 +342,15 @@ fn list_relations(args: RelationListArgs) -> Result<()> {
     let Some(issue) = data.get("issue").filter(|value| !value.is_null()) else {
         return Err(CliError::not_found("Issue", &identifier_input));
     };
+
+    if args.json {
+        // The raw GraphQL shape: `identifier`, `relations` and `inverseRelations`
+        // exactly as the query asked for them. Both directions are in one
+        // document, which is the reason this is not a flat list a caller has to
+        // interpret with a second rule.
+        output::print_json(&data);
+        return Ok(());
+    }
 
     let identifier = issue
         .get("identifier")

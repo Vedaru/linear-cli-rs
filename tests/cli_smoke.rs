@@ -731,3 +731,121 @@ fn auth_whoami_json_is_the_raw_viewer_shape() {
     assert_eq!(value["viewer"]["organization"]["urlKey"], "acme");
     assert_eq!(value["viewer"]["admin"], true);
 }
+
+/// `auth list --json` with nothing configured: an empty array, not the two sentences the text form
+/// prints. A caller that asked for JSON is parsing, and "no workspaces" is a case it must be able to
+/// handle without matching prose.
+#[test]
+fn auth_list_json_is_an_empty_list_when_nothing_is_configured() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_cli_full(
+        &["auth", "list", "--json"],
+        &clean_env(dir.path().to_str().unwrap()),
+        NO_CREDENTIAL_VARS,
+        None,
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["default_workspace"], Value::Null);
+    assert_eq!(
+        value["workspaces"].as_array().expect("an array").len(),
+        0,
+        "{value}"
+    );
+}
+
+/// `team id --json` names the key for what it is - the configured value is a team *key*, not the
+/// team's UUID.
+#[test]
+fn team_id_json_carries_the_key() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "FindTeam",
+        json!({ "data": {
+            "teams": { "nodes": [{
+                "id": "0f0f0f0f-0000-4000-8000-000000000000",
+                "key": "VED",
+                "name": "Vedaru"
+            }] },
+            "teamById": { "nodes": [] }
+        } }),
+    )]);
+    let mut env = common::mock_env(&server);
+    env.push(("LINEAR_TEAM_ID".to_string(), "VED".to_string()));
+
+    let out = run_cli(&["team", "id", "--json"], &env);
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["key"], "VED");
+}
+
+/// `issue describe --json` carries the formatted description *and* the parts it was built from, so a
+/// caller does not have to reproduce the trailer byte for byte.
+#[test]
+fn issue_describe_json_carries_the_description_and_its_parts() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "GetIssueDetails",
+        json!({ "data": { "issue": {
+            "id": "0f0f0f0f-0000-4000-8000-000000000000",
+            "identifier": "ENG-9",
+            "title": "Flaky upload",
+            "url": "https://linear.app/acme/issue/ENG-9/flaky-upload"
+        } } }),
+    )]);
+
+    let out = run_cli(
+        &["issue", "describe", "ENG-9", "--json"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["identifier"], "ENG-9");
+    assert_eq!(value["title"], "Flaky upload");
+    let description = value["description"].as_str().expect("a description");
+    assert!(
+        description.contains("Linear-issue: Fixes ENG-9"),
+        "{description}"
+    );
+    assert!(description.contains("Linear-issue-url:"), "{description}");
+}
+
+/// `issue relation list --json` is the raw query result: both directions in one document, rather
+/// than a flat list a caller has to interpret with a second rule.
+#[test]
+fn issue_relation_list_json_is_the_raw_query_result() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "ListIssueRelations",
+        json!({ "data": { "issue": {
+            "identifier": "ENG-9",
+            "title": "Flaky upload",
+            "relations": { "nodes": [{
+                "id": "rel-1",
+                "type": "blocks",
+                "relatedIssue": { "identifier": "ENG-10", "title": "The other one" }
+            }] },
+            "inverseRelations": { "nodes": [] }
+        } } }),
+    )]);
+
+    let out = run_cli(
+        &["issue", "relation", "list", "ENG-9", "--json"],
+        &common::mock_env(&server),
+    );
+
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let value: Value = serde_json::from_str(&out.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["issue"]["relations"]["nodes"][0]["type"], "blocks");
+    assert_eq!(
+        value["issue"]["relations"]["nodes"][0]["relatedIssue"]["identifier"],
+        "ENG-10"
+    );
+    assert_eq!(
+        value["issue"]["inverseRelations"]["nodes"]
+            .as_array()
+            .expect("an array")
+            .len(),
+        0
+    );
+}

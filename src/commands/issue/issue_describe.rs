@@ -1,7 +1,7 @@
 //! `linear issue describe` — print the issue title and Linear-issue trailer.
 //! Port of `src/commands/issue/issue-describe.ts`.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::errors::{CliError, Result};
 use crate::jj;
@@ -16,6 +16,9 @@ pub struct IssueDescribeArgs {
     /// Use 'References' instead of 'Fixes' for the Linear issue link
     #[arg(short = 'r', long = "references", visible_alias = "ref")]
     pub references: bool,
+    /// Output the description as JSON (an addition to upstream)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: IssueDescribeArgs) -> Result<()> {
@@ -34,12 +37,21 @@ pub fn run(args: IssueDescribeArgs) -> Result<()> {
         } else {
             "Fixes"
         };
-        output::line(&jj::format_issue_description(
-            &resolved_id,
-            title,
-            url,
-            magic_word,
-        ));
+        let description = jj::format_issue_description(&resolved_id, title, url, magic_word);
+        if args.json {
+            // The command's product is the formatted description, so the JSON
+            // carries that text *and* the fields it was built from: a caller can
+            // use either without re-deriving one from the other, and the trailer
+            // it would have to reproduce byte for byte is not its job.
+            output::print_json(&json!({
+                "identifier": resolved_id,
+                "title": title,
+                "url": url,
+                "description": description,
+            }));
+            return Ok(());
+        }
+        output::line(&description);
         Ok(())
     })();
     result.map_err(|error| error.with_context("Failed to get issue description"))

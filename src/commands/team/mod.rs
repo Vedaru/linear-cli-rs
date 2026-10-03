@@ -36,7 +36,11 @@ pub enum TeamCommand {
     /// List teams
     List(team_list::ListArgs),
     /// Print the configured team id
-    Id,
+    Id {
+        /// Output the team key as JSON (an addition to upstream)
+        #[arg(short = 'j', long)]
+        json: bool,
+    },
     /// Configure GitHub repository autolinks for Linear issues with this team prefix
     Autolinks,
     /// List team members (team by key, name, or ID)
@@ -66,8 +70,8 @@ pub fn run(args: TeamArgs) -> Result<()> {
         TeamCommand::List(args) => {
             team_list::run(args).map_err(|error| error.with_context("Failed to fetch teams"))
         }
-        TeamCommand::Id => {
-            team_id::run().map_err(|error| error.with_context("Failed to get team id"))
+        TeamCommand::Id { json } => {
+            team_id::run(json).map_err(|error| error.with_context("Failed to get team id"))
         }
         TeamCommand::Autolinks => team_autolinks::run()
             .map_err(|error| error.with_context("Failed to configure autolinks")),
