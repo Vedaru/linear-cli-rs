@@ -13,7 +13,7 @@
 //!   sides hold, so the response of a `fetch` has to come back as the same
 //!   [`IssueFields`] either platform would have produced.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -34,6 +34,9 @@ const TEAM: &str = "team";
 const LABEL: &str = "label";
 const STATE: &str = "state";
 const ASSIGNEE: &str = "assignee";
+/// A card's column on a board: a *project* lookup, and the only one whose answer is
+/// scoped to something smaller than the repository.
+const COLUMN: &str = "column";
 
 pub struct DeclarativeSink {
     id: ConnectorId,
@@ -299,31 +302,49 @@ impl DeclarativeSink {
         Ok(values)
     }
 
-    /// Resolve a name to a platform id, memoised per (kind, scope).
+    /// Resolve a name to a platform id out of the *issue* half's lookups.
+    fn resolve(&self, kind: &str, scope: &str, name: &str) -> Result<Value> {
+        self.resolve_in(&self.spec.issue.lookup, None, kind, scope, name)
+    }
+
+    /// Resolve a name to a platform id, memoised per (kind, scope, container).
     ///
     /// The id keeps the *JSON type* the platform answered with: a forge numbers
     /// its labels (`"labels": [3, 9]`), Linear names them with UUID strings, and
     /// the preset said which pointer to take - so stringifying here would be the
     /// engine overruling the platform.
-    fn resolve(&self, kind: &str, scope: &str, name: &str) -> Result<Value> {
-        let lookup = self.spec.issue.lookup.get(kind).ok_or_else(|| {
+    ///
+    /// `table` is which half of the preset declared the lookup - labels and states live
+    /// under `[sink.issue]`, a board's columns under `[sink.project]` - and `container`
+    /// is what the answer is filed under when a scope is not a fine enough key. One
+    /// implementation rather than two, because the two differ only in which table they
+    /// read and what they label the answer with.
+    fn resolve_in(
+        &self,
+        table: &BTreeMap<String, LookupSpec>,
+        container: Option<&str>,
+        kind: &str,
+        scope: &str,
+        name: &str,
+    ) -> Result<Value> {
+        let lookup = table.get(kind).ok_or_else(|| {
             Error::Config(format!(
                 "connector `{}` has no `{kind}` lookup, but a template asked for `{kind}` ids",
                 self.id
             ))
         })?;
-        if let Some(id) = self.lookups().resolved(kind, scope, name) {
+        if let Some(id) = self.lookups().resolved(kind, scope, container, name) {
             return Ok(id);
         }
 
-        for candidate in self.candidates(kind, lookup, scope)? {
+        for candidate in self.candidates_in(kind, lookup, scope, container)? {
             let found = resolve_string(&candidate, &lookup.name);
             if found
                 .as_deref()
                 .is_some_and(|found| found.eq_ignore_ascii_case(name))
             {
                 if let Some(id) = resolve(&candidate, &lookup.id).cloned() {
-                    self.lookups().remember(kind, scope, name, &id);
+                    self.lookups().remember(kind, scope, container, name, &id);
                     return Ok(id);
                 }
             }
@@ -335,7 +356,7 @@ impl DeclarativeSink {
                 self.id
             ))
         })?;
-        let values = self.lookup_values(kind, scope, Some(name), &create.body)?;
+        let values = self.lookup_values(kind, scope, container, Some(name), &create.body)?;
         let request = self.spec.request(create, &values, self.secret.as_ref())?;
         let response = self.send(&request)?;
         let id = create
@@ -351,7 +372,7 @@ impl DeclarativeSink {
             })?;
         // The new one is remembered by name, so the next issue carrying the same
         // label resolves from memory instead of re-listing and re-creating.
-        self.lookups().remember(kind, scope, name, &id);
+        self.lookups().remember(kind, scope, container, name, &id);
         Ok(id)
     }
 
@@ -360,11 +381,17 @@ impl DeclarativeSink {
     /// One fetch serves every name that needs it: resolving three labels must not
     /// list a repository's labels three times, and a webhook storm must not become
     /// an API storm.
-    fn candidates(&self, kind: &str, lookup: &LookupSpec, scope: &str) -> Result<Vec<Value>> {
-        if let Some(cached) = self.lookups().candidates(kind, scope) {
+    fn candidates_in(
+        &self,
+        kind: &str,
+        lookup: &LookupSpec,
+        scope: &str,
+        container: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        if let Some(cached) = self.lookups().candidates(kind, scope, container) {
             return Ok(cached);
         }
-        let values = self.lookup_values(kind, scope, None, &lookup.list.body)?;
+        let values = self.lookup_values(kind, scope, container, None, &lookup.list.body)?;
         let request = self
             .spec
             .request(&lookup.list, &values, self.secret.as_ref())?;
@@ -376,18 +403,26 @@ impl DeclarativeSink {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-        self.lookups().store_candidates(kind, scope, &candidates);
+        self.lookups()
+            .store_candidates(kind, scope, container, &candidates);
         Ok(candidates)
     }
 
+    /// The values a lookup request may use. `container` is the thing a set of names can
+    /// belong to within a scope - a project's columns - and reaches the request as `{id}`,
+    /// so a list path can name it (`/repos/{scope}/projects/{id}/columns`).
     fn lookup_values(
         &self,
         kind: &str,
         scope: &str,
+        container: Option<&str>,
         name: Option<&str>,
         body: &Option<Value>,
     ) -> Result<Value> {
         let mut values = json!({ "scope": scope });
+        if let Some(container) = container {
+            values["id"] = json!(container);
+        }
         if let Some(name) = name {
             values["name"] = json!(name);
         }
@@ -423,7 +458,14 @@ impl DeclarativeSink {
     /// that keeps milestones, or nothing) must degrade to doing nothing rather than
     /// fail a mirror over a container it does not have. `id` is the project, `index`
     /// the issue - the path names the container and its member.
-    fn membership(&self, name: &str, scope: &str, issue: &str, project: &str) -> Result<()> {
+    fn membership(
+        &self,
+        name: &str,
+        scope: &str,
+        issue: &str,
+        project: &str,
+        column: Option<&str>,
+    ) -> Result<()> {
         let operation = self.spec.project.as_ref().and_then(|project| match name {
             "project.assign" => project.assign.as_ref(),
             _ => project.unassign.as_ref(),
@@ -431,7 +473,19 @@ impl DeclarativeSink {
         let Some(operation) = operation else {
             return Ok(());
         };
-        let values = json!({ "scope": scope, "id": project, "index": issue });
+        let mut values = json!({ "scope": scope, "id": project, "index": issue });
+        if let Some(column) = column {
+            // The column travels as a *name*: the preset knows what its board calls its
+            // columns, and the id a request needs is resolved against that board. Only
+            // resolved when the preset's body asks for it, so a platform that places
+            // cards without columns never pays for a lookup it does not have.
+            if uses(&operation.body, "$column_id") {
+                let table = &self.declared("project", self.spec.project.as_ref())?.lookup;
+                values["column_id"] =
+                    json!(self.resolve_in(table, Some(project), COLUMN, scope, column)?);
+            }
+            values["column"] = json!(column);
+        }
         let request = self
             .spec
             .request(operation, &values, self.secret.as_ref())?;
@@ -453,32 +507,69 @@ struct Lookups {
 }
 
 impl Lookups {
-    fn list_key(kind: &str, scope: &str) -> String {
-        format!("{kind}\u{0}{scope}")
+    /// What a candidate list is filed under.
+    ///
+    /// `container` is the extra thing a set of names can belong to when a scope is not
+    /// enough: a board's columns are per *project*, and two boards in one repository may
+    /// both have an "In Progress". A lookup with no container keys on (kind, scope) as
+    /// it always did, so nothing that resolves a label or a state pays for the extra
+    /// component.
+    fn list_key(kind: &str, scope: &str, container: Option<&str>) -> String {
+        match container {
+            Some(container) => format!("{kind}\u{0}{scope}\u{0}{container}"),
+            None => format!("{kind}\u{0}{scope}"),
+        }
     }
 
     /// Names are matched the way the platform matches them: case-insensitively,
     /// so `Bug` and `bug` are one label.
-    fn name_key(kind: &str, scope: &str, name: &str) -> String {
-        format!("{kind}\u{0}{scope}\u{0}{}", name.to_lowercase())
+    fn name_key(kind: &str, scope: &str, container: Option<&str>, name: &str) -> String {
+        format!(
+            "{}\u{0}{}",
+            Self::list_key(kind, scope, container),
+            name.to_lowercase()
+        )
     }
 
-    fn candidates(&self, kind: &str, scope: &str) -> Option<Vec<Value>> {
-        self.lists.get(&Self::list_key(kind, scope)).cloned()
-    }
-
-    fn store_candidates(&mut self, kind: &str, scope: &str, candidates: &[Value]) {
+    fn candidates(&self, kind: &str, scope: &str, container: Option<&str>) -> Option<Vec<Value>> {
         self.lists
-            .insert(Self::list_key(kind, scope), candidates.to_vec());
+            .get(&Self::list_key(kind, scope, container))
+            .cloned()
     }
 
-    fn resolved(&self, kind: &str, scope: &str, name: &str) -> Option<Value> {
-        self.names.get(&Self::name_key(kind, scope, name)).cloned()
+    fn store_candidates(
+        &mut self,
+        kind: &str,
+        scope: &str,
+        container: Option<&str>,
+        candidates: &[Value],
+    ) {
+        self.lists
+            .insert(Self::list_key(kind, scope, container), candidates.to_vec());
     }
 
-    fn remember(&mut self, kind: &str, scope: &str, name: &str, id: &Value) {
+    fn resolved(
+        &self,
+        kind: &str,
+        scope: &str,
+        container: Option<&str>,
+        name: &str,
+    ) -> Option<Value> {
         self.names
-            .insert(Self::name_key(kind, scope, name), id.clone());
+            .get(&Self::name_key(kind, scope, container, name))
+            .cloned()
+    }
+
+    fn remember(
+        &mut self,
+        kind: &str,
+        scope: &str,
+        container: Option<&str>,
+        name: &str,
+        id: &Value,
+    ) {
+        self.names
+            .insert(Self::name_key(kind, scope, container, name), id.clone());
     }
 }
 
@@ -922,12 +1013,18 @@ impl Sink for DeclarativeSink {
         Ok(())
     }
 
-    fn place_issue(&self, scope: &str, issue: &str, project: &str) -> Result<()> {
-        self.membership("project.assign", scope, issue, project)
+    fn place_issue(
+        &self,
+        scope: &str,
+        issue: &str,
+        project: &str,
+        column: Option<&str>,
+    ) -> Result<()> {
+        self.membership("project.assign", scope, issue, project, column)
     }
 
     fn remove_issue(&self, scope: &str, issue: &str, project: &str) -> Result<()> {
-        self.membership("project.unassign", scope, issue, project)
+        self.membership("project.unassign", scope, issue, project, None)
     }
 }
 
@@ -1068,13 +1165,42 @@ mod tests {
     #[test]
     fn names_resolve_case_insensitively_and_only_inside_their_scope() {
         let mut lookups = Lookups::default();
-        lookups.remember("label", "a/b", "Bug", &json!(3));
+        lookups.remember("label", "a/b", None, "Bug", &json!(3));
 
-        assert_eq!(lookups.resolved("label", "a/b", "bug"), Some(json!(3)));
-        assert_eq!(lookups.resolved("label", "a/b", "BUG"), Some(json!(3)));
+        assert_eq!(
+            lookups.resolved("label", "a/b", None, "bug"),
+            Some(json!(3))
+        );
+        assert_eq!(
+            lookups.resolved("label", "a/b", None, "BUG"),
+            Some(json!(3))
+        );
         // A label id means nothing in another repository, so it must not leak.
-        assert_eq!(lookups.resolved("label", "c/d", "bug"), None);
-        assert_eq!(lookups.resolved("state", "a/b", "bug"), None);
+        assert_eq!(lookups.resolved("label", "c/d", None, "bug"), None);
+        assert_eq!(lookups.resolved("state", "a/b", None, "bug"), None);
+    }
+
+    /// The container is part of the key, and is the reason it exists: two boards in one
+    /// repository may both have an "In Progress", and an answer filed under the
+    /// repository alone would put a card in the wrong one - the same bug this engine
+    /// change exists to fix, one level down.
+    #[test]
+    fn a_column_resolves_inside_its_project_and_not_across_them() {
+        let mut lookups = Lookups::default();
+        lookups.remember("column", "a/b", Some("7"), "In Progress", &json!(31));
+        lookups.remember("column", "a/b", Some("8"), "In Progress", &json!(41));
+
+        assert_eq!(
+            lookups.resolved("column", "a/b", Some("7"), "in progress"),
+            Some(json!(31))
+        );
+        assert_eq!(
+            lookups.resolved("column", "a/b", Some("8"), "in progress"),
+            Some(json!(41)),
+            "the second board's own column, not the first board's"
+        );
+        // And an answer with a container is not the answer without one.
+        assert_eq!(lookups.resolved("column", "a/b", None, "in progress"), None);
     }
 
     #[test]

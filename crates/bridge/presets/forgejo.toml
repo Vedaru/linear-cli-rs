@@ -311,12 +311,29 @@ id = "/id"
 url = "/html_url"
 
 # A mirrored issue landing on its mirrored project's board. `{id}` is the project
-# and `{index}` the issue; Forgejo puts the card in the project's default column,
-# and an issue belongs to at most one project - so assigning it to a different one
-# *moves* it, and an explicit removal is only needed when the project is cleared.
+# and `{index}` the issue; an issue belongs to at most one project, so assigning it
+# to a different one *moves* it, and an explicit removal is only needed when the
+# project is cleared.
+#
+# The body names the card's *column* when the mapping said which states belong in
+# which one. Absent, the key is omitted rather than sent as null - the difference
+# between leaving the column alone and clearing it - and Forgejo puts the card in the
+# project's default column, which is what a mapping with no columns table still gets.
 [sink.project.assign]
 method = "POST"
 path = "/repos/{scope}/projects/{id}/issues/{index}"
+[sink.project.assign.body]
+column_id = "$column_id"
+
+# What a board calls its columns, for the id `$column_id` needs. Listed per *project*,
+# which is why this lookup - alone among them - names a container as well as a scope:
+# two boards in one repository may both have an "In Progress".
+[sink.project.lookup.column]
+name = "/title"
+id = "/id"
+[sink.project.lookup.column.list]
+method = "GET"
+path = "/repos/{scope}/projects/{id}/columns"
 
 [sink.project.unassign]
 method = "DELETE"

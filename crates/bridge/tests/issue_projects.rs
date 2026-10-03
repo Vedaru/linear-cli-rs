@@ -107,6 +107,20 @@ fn forgejo_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u
                 None => (404, json!({ "message": "no such issue" })),
             };
         }
+        // `GET /projects/{id}/columns`: what a board calls its columns, which is what a
+        // placement resolves a column *name* against. Per project, as the real endpoint
+        // is: the harness has one board, but the path names it.
+        if path.ends_with("/columns") && method == "GET" {
+            return (
+                200,
+                json!([
+                    { "id": 30, "title": "Backlog", "default": true, "cards": [] },
+                    { "id": 31, "title": "To Do", "default": false, "cards": [] },
+                    { "id": 32, "title": "In Progress", "default": false, "cards": [] },
+                    { "id": 33, "title": "Done", "default": false, "cards": [] }
+                ]),
+            );
+        }
         // `POST|DELETE /projects/{id}/issues/{index}`: the membership the whole test
         // is about. Both answer the empty 204 Forgejo sends.
         if path.contains("/projects/") && path.contains("/issues/") {
@@ -170,6 +184,15 @@ impl Harness {
             },
         ));
         policy.sync_projects = true;
+        // What the board calls the states the source names. This table is the only thing
+        // that makes a placement name a column: with it, a card follows its issue's state;
+        // without it, the placement says nothing and the card keeps its column.
+        policy.columns = [
+            ("Todo".to_string(), "To Do".to_string()),
+            ("In Progress".to_string(), "In Progress".to_string()),
+        ]
+        .into_iter()
+        .collect();
         let mapping = Mapping {
             name: "issue-projects".into(),
             users: UserMap::default(),
@@ -256,6 +279,20 @@ impl Harness {
             .into_iter()
             .filter(|record| record.path.contains("/projects/") && record.path.contains("/issues/"))
             .map(|record| (record.method, record.path))
+            .collect()
+    }
+
+    /// The bodies of the placements the forge was sent, in arrival order.
+    fn placements(&self) -> Vec<Value> {
+        self.forgejo
+            .seen()
+            .into_iter()
+            .filter(|record| {
+                record.method == "POST"
+                    && record.path.contains("/projects/")
+                    && record.path.contains("/issues/")
+            })
+            .map(|record| record.body)
             .collect()
     }
 }
@@ -389,5 +426,53 @@ fn moving_and_clearing_the_project_moves_and_removes_the_issue() {
         }),
         "the issue was not taken off the cleared project: {:?}",
         harness.membership_requests()
+    );
+}
+
+/// A card lands in the column the issue's state names, not in the board's default.
+///
+/// This is the whole difference between a board that says what Linear says and one
+/// where every card reads Backlog, however many states the issues are in. The column
+/// travels as a *name* - that is what a mapping can state - and the id the request needs
+/// is resolved against the board, which is why the placement body carries a number.
+#[test]
+fn a_mirrored_issue_lands_in_the_column_its_state_names() {
+    let mut harness = Harness::start();
+    harness.pair_projects("project-uuid", 4);
+    let mut issue = linear_issue("In flight", "why it matters", Some("project-uuid"));
+    issue["state"] = json!({ "name": "In Progress" });
+    harness.set_issue(issue);
+
+    harness.deliver_issue("create");
+
+    let placements = harness.placements();
+    assert_eq!(placements.len(), 1, "one placement: {placements:?}");
+    assert_eq!(
+        placements[0]["column_id"], 32,
+        "the column the state named, resolved to the board's own id: {:?}",
+        placements[0]
+    );
+}
+
+/// A state the mapping says nothing about leaves the card where it is: the placement
+/// carries no column at all, so the key is absent rather than null. A mapping that has
+/// not thought about a state must not move somebody's card to the default column - and
+/// on the wire, "leave it" and "clear it" are different requests.
+#[test]
+fn a_state_with_no_column_named_places_the_card_without_touching_its_column() {
+    let mut harness = Harness::start();
+    harness.pair_projects("project-uuid", 4);
+    let mut issue = linear_issue("In flight", "why it matters", Some("project-uuid"));
+    issue["state"] = json!({ "name": "Backlog" });
+    harness.set_issue(issue);
+
+    harness.deliver_issue("create");
+
+    let placements = harness.placements();
+    assert_eq!(placements.len(), 1, "one placement: {placements:?}");
+    assert!(
+        placements[0].get("column_id").is_none(),
+        "the body must say nothing about the column: {:?}",
+        placements[0]
     );
 }

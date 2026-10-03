@@ -195,6 +195,21 @@ pub struct MappingConfig {
     ///
     /// Empty means every entity falls through to step 2 or 3.
     pub route: Vec<Route>,
+    /// `[mapping.columns]`: what the sink's *board* calls each of the source's states.
+    ///
+    /// ```toml
+    /// [mapping.columns]
+    /// "Todo" = "To Do"
+    /// "In Progress" = "In Progress"
+    /// ```
+    ///
+    /// A board's columns are the finest thing a forge has that a set of states can be
+    /// projected onto, and they are the sink's, so the *key* is a state name on the
+    /// source. A state the table does not name leaves the card where it is: a mapping
+    /// that has not thought about a state must not move somebody's card to the default
+    /// column. Empty - the default - means the mapping never places a card in a named
+    /// column at all.
+    pub columns: BTreeMap<String, String>,
 }
 
 impl MappingConfig {
@@ -244,6 +259,7 @@ impl MappingConfig {
             git_automation: self.git_automation,
             delete_sync: self.delete_sync,
             names: Sides::new(source.states.clone(), sink.states.clone()),
+            columns: self.columns.clone(),
         }
     }
 }
@@ -684,6 +700,7 @@ fn build_mappings(
                 delete_sync: section.delete_sync,
                 identity: section.identity,
                 route: routes,
+                columns: section.columns,
             })
         })
         .collect()
@@ -854,6 +871,9 @@ struct MappingSection {
     /// `[[mapping.route]]`: a project, and the sink scope its entities live in.
     #[serde(default)]
     route: Vec<RouteSection>,
+    /// `[mapping.columns]`: what the sink's board calls each of the source's states.
+    #[serde(default)]
+    columns: BTreeMap<String, String>,
     #[serde(default = "default_true")]
     sync_issues: bool,
     /// Projects are opt-in: absent means off.

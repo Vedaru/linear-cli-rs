@@ -30,6 +30,8 @@ pub mod sweep;
 pub use route::{Entity, Identity, Location, Origin, Placement, Route, Routes};
 pub use survey::{Action, Entry, Survey};
 
+use std::collections::BTreeMap;
+
 use crate::domain::{
     markers, Actor, Capabilities, Change, ConnectorId, EntityKind, EntityRef, Event, EventDetail,
     IssueFields, Patch,
@@ -239,6 +241,29 @@ pub struct Policy {
     pub git_automation: bool,
     pub delete_sync: bool,
     pub names: Sides<StateNames>,
+    /// What a mirrored *board* calls the states the source names: a card's column, keyed
+    /// by the source's own state name.
+    ///
+    /// Empty is the normal case and means the mapping has no opinion about columns - a
+    /// card keeps whichever column it already has. Keyed by name because a board is
+    /// *finer* than the openness the two sides share: `To Do` and `In Progress` are both
+    /// open, so the vocabulary that exists for states cannot express a column.
+    pub columns: BTreeMap<String, String>,
+}
+
+impl Policy {
+    /// The column a card belongs in when the source names this state, if the mapping says.
+    ///
+    /// Case-insensitive, like every other state name comparison here.
+    pub fn column_for(&self, state: Option<&str>) -> Option<&str> {
+        let state = state?.trim();
+        for (name, column) in &self.columns {
+            if name.eq_ignore_ascii_case(state) {
+                return Some(column.as_str());
+            }
+        }
+        None
+    }
 }
 
 impl Policy {
@@ -288,6 +313,10 @@ pub enum Step {
         /// The source's fields as the target will hold them.
         fields: IssueFields,
         state: Option<String>,
+        /// The board column this issue belongs in, when the mapping names one for the
+        /// state the source holds. `None` means the mapping has no opinion, and a card
+        /// keeps whichever column it has.
+        column: Option<String>,
         /// Fields the target could not be given, for the log.
         skipped: Vec<Skipped>,
     },
@@ -299,6 +328,8 @@ pub enum Step {
         /// the resulting revision, or the next delivery reads as a difference.
         fields: IssueFields,
         state: Option<String>,
+        /// The board column this issue belongs in; see [`Step::Create`].
+        column: Option<String>,
         skipped: Vec<Skipped>,
     },
     Comment {
@@ -415,6 +446,9 @@ fn plan_issue(context: &Context<'_>) -> Step {
                 // The *other* platform's vocabulary, not ours: this is the state
                 // the new issue will have over there.
                 state: policy.names.of(context.side.other()).initial.clone(),
+                column: policy
+                    .column_for(context.observed.state.as_deref())
+                    .map(str::to_string),
                 skipped: context.expected.skipped.clone(),
             }
         }
@@ -476,6 +510,10 @@ pub fn converge(pair: &Pairwise<'_>, recorded: Option<&str>) -> Step {
         return Step::Create {
             fields: pair.expected.fields.clone(),
             state: pair.policy.names.of(pair.side.other()).initial.clone(),
+            column: pair
+                .policy
+                .column_for(pair.observed.state.as_deref())
+                .map(str::to_string),
             skipped: pair.expected.skipped.clone(),
         };
     }
@@ -535,6 +573,10 @@ fn change_step(pair: &Pairwise<'_>, recorded: Option<&str>) -> Step {
         patch,
         fields: pair.expected.fields.clone(),
         state,
+        column: pair
+            .policy
+            .column_for(pair.observed.state.as_deref())
+            .map(str::to_string),
         skipped: pair.expected.skipped.clone(),
     }
 }
@@ -600,6 +642,8 @@ fn plan_project(context: &Context<'_>) -> Step {
                 fields: context.expected.fields.clone(),
                 // Projects have no workflow state to land in.
                 state: None,
+                // Nor a board column: a project *is* the board.
+                column: None,
                 skipped: context.expected.skipped.clone(),
             }
         }
@@ -664,6 +708,8 @@ fn plan_project_change(context: &Context<'_>) -> Step {
         fields: context.expected.fields.clone(),
         // No workflow state travels with a project.
         state: None,
+        // Nor a board column: a project is the board.
+        column: None,
         skipped: context.expected.skipped.clone(),
     }
 }
@@ -853,6 +899,26 @@ mod tests {
         ConnectorId::new(name)
     }
 
+    /// The mapping's own table is the only thing that names a column, and a state it
+    /// does not name is not "the default column" - it is no opinion at all.
+    #[test]
+    fn a_column_is_named_by_the_state_the_mapping_lists() {
+        let mut mapping = policy();
+        mapping.columns = [
+            ("In Progress".to_string(), "In Progress".to_string()),
+            ("Done".to_string(), "Done".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(mapping.column_for(Some("In Progress")), Some("In Progress"));
+        // Names are matched the way every other state name here is.
+        assert_eq!(mapping.column_for(Some("in progress")), Some("In Progress"));
+        assert_eq!(mapping.column_for(Some("  Done  ")), Some("Done"));
+        assert_eq!(mapping.column_for(Some("Backlog")), None);
+        assert_eq!(mapping.column_for(None), None);
+    }
+
     fn reference(connector: &str, id: &str) -> EntityRef {
         EntityRef {
             connector: crate::domain::ConnectorId::new(connector),
@@ -897,6 +963,7 @@ mod tests {
                     open: Some("open".into()),
                 },
             ),
+            columns: Default::default(),
         }
     }
 

@@ -109,6 +109,11 @@ pub const DIRECTIVES: &[&str] = &[
     "assignee_id",
     "state",
     "state_id",
+    // A card's column on a board: the name the mapping gave it, and the id the
+    // platform wants. The second is the only directive resolved against a *project*
+    // rather than a scope, because a board's columns belong to it.
+    "column",
+    "column_id",
     "scope",
     "scope_id",
     "id",

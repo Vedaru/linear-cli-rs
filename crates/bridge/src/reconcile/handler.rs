@@ -650,6 +650,7 @@ impl ReconcileHandler {
             Step::Create {
                 fields,
                 state,
+                column,
                 skipped,
             } => {
                 let fields = stamped(fields, pair.subject);
@@ -683,7 +684,12 @@ impl ReconcileHandler {
                 )?;
                 // A container is a field of the issue, so a newly created issue whose
                 // source named a paired project also lands on that project's board.
-                self.place_on_project(pair, &created_ref, fields.project.as_deref())?;
+                self.place_on_project(
+                    pair,
+                    &created_ref,
+                    fields.project.as_deref(),
+                    column.as_deref(),
+                )?;
                 log::info!(
                     "created {} {} for {} {}",
                     pair.there.connector,
@@ -696,6 +702,7 @@ impl ReconcileHandler {
                 patch,
                 fields,
                 state,
+                column,
                 skipped,
             } => {
                 let patch = stamped_patch(patch, pair.subject);
@@ -723,7 +730,16 @@ impl ReconcileHandler {
                 // The issue's container travels with the same patch: a project that
                 // changed puts the issue on the new board (which moves it, as an
                 // issue sits on one project), and one that was cleared takes it off.
-                self.settle_project(pair, &reference, &patch, &fields)?;
+                // A *state* moving travels the same way on a board, because there the
+                // state is the column.
+                self.settle_project(
+                    pair,
+                    &reference,
+                    &patch,
+                    &fields,
+                    column.as_deref(),
+                    state.is_some(),
+                )?;
                 // The link records the revision the target now holds - the projected
                 // fields, not the raw ones. Recording the source's own truth is how a
                 // field the target cannot hold turns into a difference forever.
@@ -1475,6 +1491,7 @@ impl ReconcileHandler {
         pair: &Pair<'_>,
         issue: &EntityRef,
         project: Option<&str>,
+        column: Option<&str>,
     ) -> Result<()> {
         if pair.subject.kind != EntityKind::Issue || !pair.project_mirroring {
             return Ok(());
@@ -1484,6 +1501,7 @@ impl ReconcileHandler {
                 &pair.there.scope,
                 &issue.native_id,
                 project,
+                column,
             )?;
             log::info!(
                 "placed {} {} on project {}",
@@ -1501,12 +1519,19 @@ impl ReconcileHandler {
     /// Carry the container part of an issue update: a changed project moves the
     /// issue (a forge issue sits on one project, so assigning the new board takes it
     /// off the old), and a cleared one takes it off the board the record names.
+    ///
+    /// A board is also where a *state* lives as a column, so a state that moved places
+    /// the card again in the column the mapping names for it. Only a board that was told
+    /// what its columns mean moves anything: with no column named, the card stays exactly
+    /// where a human put it.
     fn settle_project(
         &mut self,
         pair: &Pair<'_>,
         issue: &EntityRef,
         patch: &Patch,
         fields: &IssueFields,
+        column: Option<&str>,
+        state_moving: bool,
     ) -> Result<()> {
         if pair.subject.kind != EntityKind::Issue || !pair.project_mirroring {
             return Ok(());
@@ -1519,6 +1544,7 @@ impl ReconcileHandler {
                         &pair.there.scope,
                         &issue.native_id,
                         project,
+                        column,
                     )?;
                     log::info!(
                         "moved {} {} to project {}",
@@ -1546,7 +1572,31 @@ impl ReconcileHandler {
                     );
                 }
             }
-            Change::Leave => {}
+            Change::Leave => {
+                // The container did not change, but the *state* may have - and on a board
+                // the state is the column, so the card has to move with it. Onto the
+                // project the pairing recorded, because a forge does not report which one
+                // an issue is on and the patch says nothing about it.
+                if state_moving {
+                    if let Some(column) = column {
+                        if let Some(project) = self.store.link_project(pair.subject)? {
+                            self.sink(&pair.there.connector)?.place_issue(
+                                &pair.there.scope,
+                                &issue.native_id,
+                                &project,
+                                Some(column),
+                            )?;
+                            log::info!(
+                                "moved {} {} to column `{}` of project {}",
+                                pair.there.connector,
+                                issue.native_id,
+                                column,
+                                project
+                            );
+                        }
+                    }
+                }
+            }
         }
         self.store.set_link_project(pair.subject, desired)?;
         Ok(())
@@ -1698,6 +1748,7 @@ pub fn default_policy(names: Sides<StateNames>) -> Policy {
         git_automation: true,
         delete_sync: false,
         names,
+        columns: Default::default(),
     }
 }
 

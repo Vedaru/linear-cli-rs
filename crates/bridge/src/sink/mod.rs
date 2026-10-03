@@ -159,8 +159,16 @@ pub trait Sink: Send + Sync {
     // doing nothing rather than failing the whole mirror over a container it does
     // not have. A platform that *does* declare projects overrides them.
 
-    /// Put an issue on the project's board. `project` is an id on this platform.
-    fn place_issue(&self, _scope: &str, _issue: &str, _project: &str) -> Result<()> {
+    /// Put an issue on the project's board, in the named column when one is given.
+    /// `project` is an id on this platform; `column` is a *name* the preset resolves,
+    /// because what a board calls its columns is the platform's business.
+    fn place_issue(
+        &self,
+        _scope: &str,
+        _issue: &str,
+        _project: &str,
+        _column: Option<&str>,
+    ) -> Result<()> {
         Ok(())
     }
 
