@@ -225,7 +225,7 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
             .to_string();
         // The state update still happens with `--json`; only its line is
         // suppressed, so the document stays the only thing on stdout.
-        super::issue_start::start_work_on_issue(issue_id, &team_key, None, None, args.json)?;
+        super::issue_start::start_work_on_issue(issue_id, &team_key, None, None, true, args.json)?;
     }
 
     if args.json {
@@ -467,7 +467,14 @@ fn run_flags(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        super::issue_start::start_work_on_issue(issue_id, &start_team_key, None, None, args.json)?;
+        super::issue_start::start_work_on_issue(
+            issue_id,
+            &start_team_key,
+            None,
+            None,
+            true,
+            args.json,
+        )?;
     }
 
     if args.json {

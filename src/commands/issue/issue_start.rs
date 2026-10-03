@@ -30,6 +30,15 @@ pub struct IssueStartArgs {
     /// Custom branch name to use instead of the issue identifier
     #[arg(short = 'b', long, value_name = "branch")]
     pub branch: Option<String>,
+    /// Accepted for compatibility: this IS the default - `start` always creates and switches to
+    /// the issue's branch. The other Rust CLI only does it when asked, so a script written for it
+    /// passes this flag; here it changes nothing and can be omitted.
+    #[arg(long = "checkout", conflicts_with = "no_checkout")]
+    pub checkout: bool,
+    /// Do not touch git: set the issue's state without creating or switching a branch, which is
+    /// what the other CLI does unless it is given `--checkout`.
+    #[arg(long = "no-checkout")]
+    pub no_checkout: bool,
 }
 
 /// `GET_ISSUE_DETAILS_QUERY` in the shared data layer omits `branchName`, so
@@ -124,6 +133,7 @@ fn run_inner(args: IssueStartArgs) -> Result<()> {
         &team_id,
         args.from_ref.as_deref(),
         args.branch.as_deref(),
+        !args.no_checkout,
         false,
     )
 }
@@ -133,17 +143,23 @@ pub(crate) fn start_work_on_issue(
     team_id: &str,
     git_source_ref: Option<&str>,
     custom_branch_name: Option<&str>,
+    checkout: bool,
     quiet: bool,
 ) -> Result<()> {
     let client = graphql::client()?;
 
-    let default_branch_name = fetch_branch_name(&client, issue_id)?;
-    let branch_name = custom_branch_name
-        .map(str::to_string)
-        .or(default_branch_name)
-        .unwrap_or_else(|| issue_id.to_string());
+    // The branch is only worked out when it is going to be used, and that is not just tidiness:
+    // resolving it costs a request (`branchName` is not in the shared issue query), so a caller who
+    // asked not to touch git should not pay for the answer either.
+    if checkout {
+        let default_branch_name = fetch_branch_name(&client, issue_id)?;
+        let branch_name = custom_branch_name
+            .map(str::to_string)
+            .or(default_branch_name)
+            .unwrap_or_else(|| issue_id.to_string());
 
-    vcs::start_vcs_work(issue_id, &branch_name, git_source_ref)?;
+        vcs::start_vcs_work(issue_id, &branch_name, git_source_ref)?;
+    }
 
     // Best-effort: failure to move the issue to a started state is logged,
     // not fatal, matching upstream's `startWorkOnIssue`.
