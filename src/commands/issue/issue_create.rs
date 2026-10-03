@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 use crate::commands::template as tmpl;
 use crate::errors::{CliError, Result};
 use crate::linear::{self, WorkflowState};
-use crate::{config, editor, graphql, output, prompt, vcs};
+use crate::{config, editor, graphql, output, prompt};
 
 const CREATE_ISSUE_MUTATION: &str = r#"
 mutation CreateIssue($input: IssueCreateInput!) {
@@ -32,22 +32,6 @@ const GET_USER_SETTINGS_QUERY: &str = r#"
 query GetUserSettings {
   userSettings {
     autoAssignToSelf
-  }
-}
-"#;
-
-const GET_ISSUE_BRANCH_NAME_QUERY: &str = r#"
-query GetIssueBranchName($id: String!) {
-  issue(id: $id) {
-    branchName
-  }
-}
-"#;
-
-const UPDATE_ISSUE_STATE_MUTATION: &str = r#"
-mutation UpdateIssueState($issueId: String!, $stateId: String!) {
-  issueUpdate(id: $issueId, input: { stateId: $stateId }) {
-    success
   }
 }
 "#;
@@ -112,6 +96,9 @@ pub struct IssueCreateArgs {
     /// Title of the issue
     #[arg(short = 't', long, value_name = "title")]
     pub title: Option<String>,
+    /// Output the created issue as JSON, as the API returned it (an addition to upstream)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 fn falsy(option: &Option<String>) -> bool {
@@ -229,9 +216,6 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
         .unwrap_or("");
     let url = issue.get("url").and_then(Value::as_str).unwrap_or("");
 
-    output::line(&format!("✓ Created issue {identifier}: {}", data.title));
-    output::line(url);
-
     if data.start {
         let team_key = issue
             .get("team")
@@ -239,8 +223,20 @@ fn run_interactive(args: &IssueCreateArgs, interactive: bool) -> Result<()> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        start_work_on_issue(issue_id, &team_key)?;
+        // The state update still happens with `--json`; only its line is
+        // suppressed, so the document stays the only thing on stdout.
+        super::issue_start::start_work_on_issue(issue_id, &team_key, None, None, args.json)?;
     }
+
+    if args.json {
+        // The API's own payload, verbatim: `issueCreate` carries the issue, so a
+        // caller gets the id, the identifier and the url without a second query.
+        output::print_json(&result);
+        return Ok(());
+    }
+
+    output::line(&format!("✓ Created issue {identifier}: {}", data.title));
+    output::line(url);
 
     Ok(())
 }
@@ -450,8 +446,10 @@ fn run_flags(
         input.insert("description".to_string(), json!(description));
     }
 
-    output::line(&format!("Creating issue in {team_key}"));
-    output::blank();
+    if !args.json {
+        output::line(&format!("Creating issue in {team_key}"));
+        output::blank();
+    }
 
     let client = graphql::client()?;
     let result = client.request(
@@ -462,8 +460,6 @@ fn run_flags(
     let issue_id = issue.get("id").and_then(Value::as_str).unwrap_or("");
     let url = issue.get("url").and_then(Value::as_str).unwrap_or("");
 
-    output::line(url);
-
     if args.start {
         let start_team_key = issue
             .get("team")
@@ -471,8 +467,15 @@ fn run_flags(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        start_work_on_issue(issue_id, &start_team_key)?;
+        super::issue_start::start_work_on_issue(issue_id, &start_team_key, None, None, args.json)?;
     }
+
+    if args.json {
+        output::print_json(&result);
+        return Ok(());
+    }
+
+    output::line(url);
 
     Ok(())
 }
@@ -1142,45 +1145,10 @@ fn describe_type(template_type: &str) -> String {
     format!("{article} {template_type} template")
 }
 
-// ---------------------------------------------------------------------------
-// `startWorkOnIssue` (ported from utils/actions.ts)
-// ---------------------------------------------------------------------------
-
-fn start_work_on_issue(issue_id: &str, team_key: &str) -> Result<()> {
-    let client = graphql::client()?;
-
-    let default_branch_name = fetch_branch_name(&client, issue_id)?;
-    let branch_name = default_branch_name.unwrap_or_else(|| issue_id.to_string());
-
-    vcs::start_vcs_work(issue_id, &branch_name, None)?;
-
-    // Best-effort: failure to move the issue to a started state is logged, not
-    // fatal, matching upstream's `startWorkOnIssue`.
-    match linear::get_started_state(team_key) {
-        Ok(state) => {
-            let result = client.request(
-                UPDATE_ISSUE_STATE_MUTATION,
-                json!({ "issueId": issue_id, "stateId": state.id }),
-            );
-            match result {
-                Ok(_) => output::line(&format!("✓ Issue state updated to '{}'", state.name)),
-                Err(error) => eprintln!("Failed to update issue state: {error}"),
-            }
-        }
-        Err(error) => eprintln!("Failed to update issue state: {error}"),
-    }
-
-    Ok(())
-}
-
-fn fetch_branch_name(client: &graphql::Client, issue_id: &str) -> Result<Option<String>> {
-    let data = client.request(GET_ISSUE_BRANCH_NAME_QUERY, json!({ "id": issue_id }))?;
-    Ok(data
-        .get("issue")
-        .and_then(|issue| issue.get("branchName"))
-        .and_then(Value::as_str)
-        .map(str::to_string))
-}
+// `startWorkOnIssue` lives in `issue_start` - one implementation, shared by
+// `issue start` and `issue create --start`. This module used to carry a near-copy
+// of it (without `--from-ref`/`--branch`), which is exactly the duplication the
+// workflow-verb ticket exists to remove.
 
 // ---------------------------------------------------------------------------
 // Prompt helpers (line-based equivalents of @cliffy/prompt)

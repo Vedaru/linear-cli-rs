@@ -124,14 +124,16 @@ fn run_inner(args: IssueStartArgs) -> Result<()> {
         &team_id,
         args.from_ref.as_deref(),
         args.branch.as_deref(),
+        false,
     )
 }
 
-fn start_work_on_issue(
+pub(crate) fn start_work_on_issue(
     issue_id: &str,
     team_id: &str,
     git_source_ref: Option<&str>,
     custom_branch_name: Option<&str>,
+    quiet: bool,
 ) -> Result<()> {
     let client = graphql::client()?;
 
@@ -152,7 +154,10 @@ fn start_work_on_issue(
                 json!({ "issueId": issue_id, "stateId": state.id }),
             );
             match result {
-                Ok(_) => output::line(&format!("✓ Issue state updated to '{}'", state.name)),
+                Ok(_) if !quiet => {
+                    output::line(&format!("✓ Issue state updated to '{}'", state.name));
+                }
+                Ok(_) => {}
                 Err(error) => eprintln!("Failed to update issue state: {error}"),
             }
         }

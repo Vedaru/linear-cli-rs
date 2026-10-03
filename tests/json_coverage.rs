@@ -11,6 +11,12 @@
 //! * a command that now offers `--json` is still listed (the work landed and the entry did not), or
 //! * a listed command no longer exists (a stale entry).
 //!
+//! A **mutation** answers with the API's own payload for the same reason a read does
+//! (`{"issueCreate": {"issue": {...}}}`, not a shape of ours to keep in step): the caller can act on
+//! the identifier without a second query, and the field names are the ones the server already uses.
+//! Where the helper a command calls keeps only an identifier, the document names that identifier and
+//! the entry below says so.
+//!
 //! Gated on `service` like the other suites that walk the whole tree: without the feature the
 //! `sync` and `webhook` groups do not exist, and the comparison would be against a different CLI.
 
@@ -76,7 +82,6 @@ const EXEMPT: &[(&str, &str)] = &[
     ("issue comment resolve", "resolves a comment thread"),
     ("issue comment unresolve", "unresolves a comment thread"),
     ("issue comment update", "edits a comment"),
-    ("issue create", "creates an issue"),
     ("issue delete", "deletes an issue"),
     ("issue link", "creates a link"),
     ("issue pull-request", "creates a pull request"),
@@ -86,7 +91,6 @@ const EXEMPT: &[(&str, &str)] = &[
     ("issue subscribe", "subscribes the viewer"),
     ("issue unarchive", "restores an issue"),
     ("issue unsubscribe", "unsubscribes the viewer"),
-    ("issue update", "updates an issue"),
     ("label create", "creates a label"),
     ("label delete", "deletes a label"),
     ("label update", "updates a label"),

@@ -116,6 +116,9 @@ pub struct IssueUpdateArgs {
     /// Issue ID (e.g., ENG-123)
     #[arg(value_name = "issueId")]
     pub issue_id: Option<String>,
+    /// Output the updated issue as JSON, as the API returned it (an addition to upstream)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 /// Whether a provided optional string counts as a value, matching upstream's
@@ -151,6 +154,7 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             clear_cycle,
             title,
             issue_id: issue_id_arg,
+            json,
         } = args;
 
         // ----- conflicting-flag validation (upstream order) -----
@@ -482,8 +486,10 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             input.insert("stateId".to_string(), json!(state_id));
         }
 
-        output::line(&format!("Updating issue {issue_id}"));
-        output::blank();
+        if !json {
+            output::line(&format!("Updating issue {issue_id}"));
+            output::blank();
+        }
 
         let client = graphql::client()?;
         let data = client.request(
@@ -512,6 +518,12 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             .unwrap_or("");
         let title = issue.get("title").and_then(Value::as_str).unwrap_or("");
         let url = issue.get("url").and_then(Value::as_str).unwrap_or("");
+
+        if json {
+            // The API's own payload: `issueUpdate` carries the issue that changed.
+            output::print_json(&data);
+            return Ok(());
+        }
 
         output::line(&format!("✓ Updated issue {identifier}: {title}"));
         output::line(url);
