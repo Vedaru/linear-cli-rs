@@ -25,6 +25,7 @@ pub mod issue_unarchive;
 pub mod issue_unsubscribe;
 pub mod issue_update;
 pub mod issue_url;
+pub mod issue_verbs;
 pub mod issue_view;
 
 use crate::errors::{CliError, Result};
@@ -127,6 +128,14 @@ pub enum IssueCommand {
     Create(issue_create::IssueCreateArgs),
     /// Update a linear issue
     Update(issue_update::IssueUpdateArgs),
+    /// Mark an issue Done (a name for `issue update -s Done`)
+    Close(issue_verbs::CloseArgs),
+    /// Assign an issue to someone (a name for `issue update --assignee`)
+    Assign(issue_verbs::AssignArgs),
+    /// Move an issue into a project (a name for `issue update --project`)
+    Move(issue_verbs::MoveArgs),
+    /// Transfer an issue to another team (a name for `issue update --team`)
+    Transfer(issue_verbs::TransferArgs),
     /// Manage issue comments
     Comment(issue_comment::IssueCommentArgs),
     /// Create a sidebar link attachment on an issue (images do not render inline)
@@ -166,6 +175,10 @@ pub fn run(args: IssueArgs) -> Result<()> {
         IssueCommand::Unsubscribe(a) => issue_unsubscribe::run(a),
         IssueCommand::Create(a) => issue_create::run(a),
         IssueCommand::Update(a) => issue_update::run(a),
+        IssueCommand::Close(a) => issue_verbs::close(a),
+        IssueCommand::Assign(a) => issue_verbs::assign(a),
+        IssueCommand::Move(a) => issue_verbs::move_issue(a),
+        IssueCommand::Transfer(a) => issue_verbs::transfer(a),
         IssueCommand::Comment(a) => issue_comment::run(a),
         IssueCommand::Attach(a) => issue_attach::run(a),
         IssueCommand::Link(a) => issue_link::run(a),
