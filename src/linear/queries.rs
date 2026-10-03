@@ -687,6 +687,18 @@ query GetMilestoneByName($projectId: String!, $name: String!) {
 }
 "#;
 
+pub(crate) const GET_PROJECT_STATUSES_QUERY: &str = r#"
+query GetProjectStatuses {
+  projectStatuses {
+    nodes {
+      id
+      name
+      type
+    }
+  }
+}
+"#;
+
 pub(crate) const GET_TEAM_CYCLES_QUERY: &str = r#"
 query GetTeamCycles($teamId: String!, $after: String) {
   team(id: $teamId) {

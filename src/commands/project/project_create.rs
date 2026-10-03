@@ -32,17 +32,13 @@ mutation CreateProject($input: ProjectCreateInput!) {
 }
 "#;
 
-const GET_PROJECT_STATUSES_QUERY: &str = r#"
-query GetProjectStatuses {
-  projectStatuses {
-    nodes {
-      id
-      name
-      type
-    }
-  }
-}
-"#;
+const GET_PROJECT_STATUSES_QUERY: &str = {
+    // The document lives in `linear/queries.rs` and is re-exported: it was defined here as well,
+    // byte for byte (101 chars each), which is the kind of twin that stops being byte for byte one
+    // commit later. `tests/graphql_document_names.rs` counts definitions by name and fails on a
+    // second one, so this cannot come back.
+    crate::linear::GET_PROJECT_STATUSES_QUERY
+};
 
 const ADD_PROJECT_TO_INITIATIVE_MUTATION: &str = r#"
 mutation AddProjectToInitiativeForCreate($input: InitiativeToProjectCreateInput!) {

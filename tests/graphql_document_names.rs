@@ -38,11 +38,6 @@ const KNOWN_DUPLICATES: &[(&str, &str)] = &[
          activeCycle with a hard-coded first: 250, the command's asks for $first and per-cycle \
          endsAt/completedAt/isActive/isFuture/isPast. VED-111.",
     ),
-    (
-        "GetProjectStatuses",
-        "Collapse: identical twins (101 chars each) in project/create and project/update; the \
-         document belongs in the shared layer both can reach. VED-111.",
-    ),
 ];
 
 /// Every `r#"..."#` literal in a file, which is how this codebase embeds a GraphQL document.

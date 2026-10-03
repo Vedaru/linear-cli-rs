@@ -37,17 +37,11 @@ mutation UpdateProject($id: String!, $input: ProjectUpdateInput!) {
 }
 "#;
 
-const GET_PROJECT_STATUSES_QUERY: &str = r#"
-query GetProjectStatuses {
-  projectStatuses {
-    nodes {
-      id
-      name
-      type
-    }
-  }
-}
-"#;
+const GET_PROJECT_STATUSES_QUERY: &str = {
+    // See `project_create`: one definition, in `linear/queries.rs`. The local name stays so the call
+    // sites read the same as before, but there is no second document to drift from the first.
+    crate::linear::GET_PROJECT_STATUSES_QUERY
+};
 
 const GET_PROJECT_TEAMS_FOR_UPDATE_QUERY: &str = r#"
 query GetProjectTeamsForUpdate($id: String!, $after: String) {
