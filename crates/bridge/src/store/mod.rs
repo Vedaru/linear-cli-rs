@@ -94,7 +94,7 @@ pub struct Counts {
 /// replace rather than a disagreement to report.
 ///
 /// Bump this whenever a field is added to, removed from, or re-encoded in the signature.
-pub const REVISION_VOCABULARY: &str = "v2";
+pub const REVISION_VOCABULARY: &str = "v3";
 
 /// Stamp a content key as a record this vocabulary wrote.
 pub fn revision_record(key: &str) -> String {
