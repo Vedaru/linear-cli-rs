@@ -4,15 +4,15 @@
 > added this file** - the tables record the behaviour as found. F5-F11 remain open gaps
 > (F5 = unimplemented branch-state resolution; F6-F11 are minor/behavioural).
 
-> **What has changed since this audit** (run 2026-09-29; recorded 2026-10-03, so the tables below
-> stay exactly as they were run): the command tree has grown from 18 groups / 86 help-listed
-> leaves to **20 groups / 98 leaves**. `sync status|link` and `webhook serve|replay` are whole new
-> groups, and inside existing ones `issue unarchive|subscribe|unsubscribe`, `cycle update|archive`
-> and `label update` appeared. `issue mine`, `issue describe` and `issue relation list` have
-> `--json` now, and `issue query` grew `--since`, `--group-by`, `--count-only` and `--ndjson`. The
-> summary below is a record of one afternoon, not a description of the current surface:
-> `linear <group> --help` is the description, and `tests/json_coverage.rs` keeps the machine-
-> readable half of it honest.
+> **What has changed since this audit** (run 2026-09-29): the command tree has grown - 18 groups
+> and 86 help-listed leaves then, 21 groups and 103 leaves now (2026-10-03) - with `sync`,
+> `webhook` and `view` as whole new groups and additions inside `issue`, `cycle` and `label`.
+> `issue mine`, `issue describe` and `issue relation list` have `--json` now, and `issue query`
+> grew `--since`, `--group-by`, `--count-only`, `--ndjson` and `--view`. The tables below stay
+> exactly as they were run: an audit that is silently rewritten is not an audit. For the live
+> surface read `linear <group> --help`; for the machine-readable half, `tests/json_coverage.rs` -
+> and `tests/docs_coverage.rs` fails the gate when a document names a command, a flag or a count
+> the binary does not have.
 
 # `linear` CLI 2.6.0 — live API audit against workspace WAVE-cloud
 

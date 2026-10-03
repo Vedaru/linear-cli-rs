@@ -24,7 +24,7 @@ linear api 'query { viewer { name } }'          # raw GraphQL escape hatch
 | no blocking prompts | commands that would confirm interactively require an explicit `--force` / `--yes`; without a terminal they fail fast with a message instead of waiting on stdin |
 | `--json` preserves GraphQL field names | payloads are `camelCase` exactly as Linear's API docs describe them, so they concatenate cleanly into agent context |
 | one-shot process, no state | nothing is resident between calls; commands are safe to run concurrently |
-| no runtime to install | a single 4.94 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
+| no runtime to install | a single 4.98 MiB binary linking only libc/libgcc — no Node/Deno/Python, so it drops into a minimal container |
 | small memory footprint | ~10.5 MiB peak for typical commands and ~16 MiB for the heaviest, `schema` (the kernel's `VmHWM`, measured against this build) |
 | pipeline-safe | a closed reader (`linear issue list | head`) ends the process the conventional way — no panic, no panic message on stderr |
 
@@ -49,12 +49,12 @@ cargo build --release        # target/release/linear — the CLI, and nothing el
 cargo install --path .       # onto PATH
 ```
 
-That is the whole CLI: no store, no intake server, no SQLite (4.94 MiB). The bridge half — the
+That is the whole CLI: no store, no intake server, no SQLite (4.98 MiB). The bridge half — the
 mirroring engine behind `linear sync` and the webhook service behind `linear webhook` — is behind
 one optional feature, so it stays out of a binary that only talks to Linear:
 
 ```sh
-cargo build --release --features service    # adds `sync`, `webhook`; 7.00 MiB
+cargo build --release --features service    # adds `sync`, `webhook`; 7.04 MiB
 ```
 
 The published release tarball is built **with** it, because the deployment that consumes that
@@ -94,7 +94,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is on 43 of the 98 leaf commands**, and the other 55 are listed *with a reason* in
+- **`--json` is on 48 of the 103 leaf commands**, and the other 55 are listed *with a reason* in
   `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
   not data (a credential, a reference document, a scaffold, the raw API response) never will
   carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
@@ -127,14 +127,14 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-Twenty groups, ninety-eight leaf commands. Run `linear <group> --help` for flags — the help text
+21 groups, 103 leaf commands. Run `linear <group> --help` for flags — the help text
 is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
 every addition and every deliberate deviation.
 
 | Group | Subcommands |
 |---|---|
 | `auth` | `login` add a workspace credential · `logout` · `list` configured workspaces · `default` · `token` print the configured token · `whoami` · `migrate` plaintext credentials to the keyring |
-| `issue` | `id` · `mine` · `query` structured filters (`--count-only`, `--group-by`, `--since`, `--ndjson`) · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `unarchive` · `delete` · `subscribe` · `unsubscribe` · `create` · `update` · `comment` (add/list/resolve…) · `attach` sidebar link · `link` a URL · `relation` dependencies · `agent-session` |
+| `issue` | `id` · `mine` · `query` structured filters (`--count-only`, `--group-by`, `--since`, `--ndjson`, `--view`) · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `unarchive` · `delete` · `subscribe` · `unsubscribe` · `create` · `update` · `comment` (add/list/resolve…) · `attach` sidebar link · `link` a URL · `relation` dependencies · `agent-session` |
 | `project` | `list` · `view` · `create` · `update` · `delete` · `comment` |
 | `project-update` | `create` · `list` project status updates |
 | `team` | `create` · `delete` · `list` · `id` · `autolinks` (gh) · `members` · `states` workflow states |
@@ -146,6 +146,7 @@ every addition and every deliberate deviation.
 | `label` | `list` · `create` · `delete` · `update` (rename, recolour, redescribe) |
 | `template` | `list` · `view` what a template pre-fills |
 | `document` | `list` · `view` · `create` · `update` · `delete` · `comment` |
+| `view` | `list` · `view` · `create` · `update` · `delete` custom views — and **apply** one to a listing with `issue query --view <name\|id>` |
 | `config` | `service` print the bridge's config sections, for a `linear.toml` you already have (no questions, and never a secret) |
 | `schema` | print the GraphQL schema, or `--json` for the raw introspection result |
 | `api` | raw GraphQL request |
@@ -319,13 +320,13 @@ the run would be green by absence. The reverse check - a `--no-default-features`
 the shape a laptop installs from drifting into warnings nobody sees.
 
 The release profile is tuned for distribution, not for speed: `lto`, `codegen-units = 1`,
-`strip`, `opt-level = "z"` and `panic = "abort"` take the CLI from 16.25 MiB to 4.94 MiB (-70%)
+`strip`, `opt-level = "z"` and `panic = "abort"` take the CLI from 16.33 MiB to 4.98 MiB (-70%)
 against cargo's default release profile for the same source (opt-level 3, no LTO, 16 codegen
 units, unstripped, unwinding), measured with rustc 1.93.1. Every command is network-bound, so the
 slower code this generates is invisible next to an API round trip. A release-mode test run would
 need `-Z panic-abort-tests`.
 
-The bridge adds 2.06 MiB on top of that (4.94 -> 7.00 MiB): SQLite (bundled, so no system
+The bridge adds 2.06 MiB on top of that (4.98 -> 7.04 MiB): SQLite (bundled, so no system
 library is needed to run it), a small sync HTTP server, TOML parsing and HMAC. Memory is
 bounded by construction rather than by tuning - bodies are capped while reading, one
 delivery is in flight per worker, and the queue lives in the database rather than in

@@ -78,7 +78,7 @@ strip = true
 # to servers and agents. Measured on the same source and toolchain against cargo's
 # default release profile (opt-level 3, no LTO, 16 codegen units, unstripped,
 # unwinding), rustc 1.93.1:
-# 16.25 MiB -> 4.94 MiB (-70%).
+# 16.33 MiB -> 4.98 MiB (-70%).
 #
 # panic = "abort" additionally drops the unwinding tables (.eh_frame,
 # .gcc_except_table) that stripping cannot remove. Nothing in this crate catches

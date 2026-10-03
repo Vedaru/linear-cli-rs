@@ -21,6 +21,7 @@ pub mod sync;
 pub mod team;
 pub mod template;
 pub mod user;
+pub mod view;
 #[cfg(feature = "service")]
 pub mod webhook;
 
@@ -49,6 +50,7 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Label(args)) => label::run(args),
         Some(Command::Template(args)) => template::run(args),
         Some(Command::Document(args)) => document::run(args),
+        Some(Command::View(args)) => view::run(args),
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Schema(args)) => schema::run(args),
         Some(Command::Api(args)) => api::run(args),

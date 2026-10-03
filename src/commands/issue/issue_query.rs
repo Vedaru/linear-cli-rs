@@ -82,6 +82,9 @@ pub struct IssueQueryArgs {
     /// Print one JSON object per line, streaming each page as it arrives
     #[arg(long = "ndjson")]
     pub ndjson: bool,
+    /// Apply a saved custom view's filter (name or ID)
+    #[arg(long = "view", value_name = "NAME|ID")]
+    pub view: Option<String>,
     /// Include archived issues
     #[arg(long = "include-archived")]
     pub include_archived: bool,
@@ -186,6 +189,46 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
 
     let group_by = args.group_by.as_deref().map(GroupBy::parse).transpose()?;
 
+    // A view *is* a filter, so the flags that build one have nothing left to say beside it.
+    // Only the flags actually given are named, so the message is about this invocation rather
+    // than a list of every flag the command has.
+    if args.view.is_some() {
+        let mut conflicting: Vec<&str> = Vec::new();
+        for (given, flag) in [
+            (args.search.is_some(), "--search"),
+            (args.search_comments, "--search-comments"),
+            (!args.team.is_empty(), "--team"),
+            (args.all_teams, "--all-teams"),
+            (!args.state.is_empty(), "--state"),
+            (args.all_states, "--all-states"),
+            (args.assignee.is_some(), "--assignee"),
+            (args.all_assignees, "--all-assignees"),
+            (args.unassigned, "--unassigned"),
+            (args.project.is_some(), "--project"),
+            (args.project_label.is_some(), "--project-label"),
+            (args.cycle.is_some(), "--cycle"),
+            (args.milestone.is_some(), "--milestone"),
+            (!args.labels.is_empty(), "--label"),
+            (args.created_after.is_some(), "--created-after"),
+            (args.updated_after.is_some(), "--updated-after"),
+            (args.since.is_some(), "--since"),
+            (args.include_archived, "--include-archived"),
+        ] {
+            if given {
+                conflicting.push(flag);
+            }
+        }
+        if !conflicting.is_empty() {
+            return Err(CliError::validation(format!(
+                "Cannot combine --view with {}",
+                conflicting.join(", ")
+            ))
+            .suggestion(
+                "A view is already a filter. Drop those flags to see what the view shows, or edit the view with `linear view update`. --limit, --sort, --group-by, --count-only, --json and --ndjson all compose with --view.",
+            ));
+        }
+    }
+
     // `--ndjson` is a stream, and three of the flags need the whole result before the first
     // line can be honestly written. Each gets its own refusal naming the alternative, rather
     // than a stream that quietly waits for the end and calls itself one.
@@ -224,7 +267,11 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
     // --- team scope --------------------------------------------------------
     let mut is_multi_team = false;
     let mut explicit_team_id: Option<String> = None;
-    let team_keys: Option<Vec<String>> = if args.all_teams {
+    let team_keys: Option<Vec<String>> = if args.view.is_some() {
+        // The view carries its own scope, and it may span teams: applying the default team here
+        // would narrow a list the app shows wider.
+        None
+    } else if args.all_teams {
         is_multi_team = true;
         None
     } else if !args.team.is_empty() {
@@ -299,6 +346,12 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
 
     // --- fetch -------------------------------------------------------------
     let limit = Some(args.limit as u32);
+    // A view's filter replaces the flag-built one entirely; the flags that would have competed
+    // with it were refused above, so this is the whole question the query asks.
+    let raw_filter = match args.view.as_deref() {
+        Some(reference) => Some(linear::view_filter(reference)?),
+        None => None,
+    };
     let result = if args.search.is_some() {
         let term = args.search.as_deref().unwrap_or("").trim();
         if term.is_empty() {
@@ -339,6 +392,7 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
             created_after: args.created_after.clone(),
             updated_after: updated_after.clone(),
             include_archived: Some(args.include_archived),
+            raw_filter,
         };
         // The count is a question about the *filter*, so it is answered here rather than
         // after fetching what it should not have to fetch.

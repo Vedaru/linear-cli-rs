@@ -345,3 +345,47 @@ fn scoped_state_error_lists_available_states() {
     assert!(error.user_message.contains("\"ENG\""));
     assert!(error.suggestion.unwrap().contains("In Progress (ENG)"));
 }
+
+// ---------------------------------------------------------------------------
+// A view's filter, at the point where it becomes the query's filter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_view_filter_is_the_filter_verbatim() {
+    // A view is a saved *filter*, so applying one is a pass-through: nothing here translates it,
+    // which is what keeps it from drifting away from what the app shows for that view. The team
+    // scope is included deliberately - a view may span teams, and the option it replaces would
+    // have narrowed it.
+    let saved = json!({ "state": { "type": { "eq": "started" } } });
+    let options = FetchIssuesForQueryOptions {
+        team_keys: Some(vec!["VED".into()]),
+        raw_filter: Some(saved.clone()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        Value::Object(issue_filter(&options).expect("a filter")),
+        saved,
+        "a view's filterData is the document issues(filter:) takes"
+    );
+
+    // And a filtered count can never be the number the API states for itself.
+    assert!(
+        !count_is_stated(&options),
+        "a view is a filter, so its count has to be counted"
+    );
+}
+
+#[test]
+fn a_view_whose_filter_is_not_an_object_is_refused() {
+    let options = FetchIssuesForQueryOptions {
+        raw_filter: Some(json!("started")),
+        ..Default::default()
+    };
+
+    let error = issue_filter(&options).expect_err("a string is not a filter document");
+    assert!(
+        error.user_message.contains("not a JSON object"),
+        "{error:?}"
+    );
+}

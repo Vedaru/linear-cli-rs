@@ -34,7 +34,7 @@ binary end to end.
 | `src/commands/mod.rs` | Top-level dispatch to one `run()` per command group. |
 | `src/commands/<group>/` | One module per upstream `src/commands/<group>` directory; `mod.rs` owns the group's `Args`, `Command` enum and nested dispatch. |
 | `src/graphql.rs` | Client: endpoint selection, credentials, pagination, uploads. |
-| `src/linear/` | Reusable GraphQL documents and resolvers (teams, issues, projects, users, …). |
+| `src/linear/` | Reusable GraphQL documents and resolvers (teams, issues, projects, users, views, …). |
 | `src/config.rs` | `.linear.toml` + `.env` loading and precedence rules. |
 | `src/credentials.rs`, `src/keyring/` | Workspace credentials (file or system keyring). |
 | `src/errors.rs` | `CliError` with user-facing message, suggestion and exit code. |
@@ -126,6 +126,14 @@ one is the missing half of a group that could only move one way.
   adding or removing the authenticated API user as a watcher.
 - `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
   `commentUnresolve`, which the app's resolve button covers but no CLI did.
+- `view list`, `view view`, `view create`, `view update`, `view delete` —
+  `customViews` / `customViewCreate` / `customViewUpdate` / `customViewDelete`.
+  Upstream has no `view` command, so the filters a team had agreed on were
+  readable only in the app. Applying one is `issue query --view <name|id>`, not a
+  sixth subcommand: a view *is* a saved filter, and that command already builds
+  the `issues(filter:)` document the view's `filterData` drops into unchanged.
+  The filter flags are refused beside it (a view is already a filter); `--limit`,
+  `--sort`, `--group-by`, `--count-only`, `--json` and `--ndjson` compose with it.
 - `webhook serve` — the service half of the binary: webhook intake, a durable
   queue and the platform specs that describe a webhook payload. It lives in the
   `linear-bridge` library crate (`crates/bridge/`) so the same code is callable
@@ -146,5 +154,5 @@ Deliberately **not** wrapped, with the reason:
   permanent settings behind in the team's workflow.
 - The status-update lifecycle (`project-update` / `initiative-update`
   archive/unarchive/delete), and the customer, release, webhook, notification,
-  custom-view, and integration subsystems: real API surface, but whole domains
-  rather than missing halves, and none of them has a CLI home yet.
+  and integration subsystems: real API surface, but whole domains rather than
+  missing halves, and none of them has a CLI home yet.

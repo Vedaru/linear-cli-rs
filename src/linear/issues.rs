@@ -281,13 +281,32 @@ pub struct FetchIssuesForQueryOptions {
     pub created_after: Option<String>,
     pub updated_after: Option<String>,
     pub include_archived: Option<bool>,
+    /// A saved view's filter, handed to `issues(filter:)` unchanged.
+    ///
+    /// When set it *is* the filter: `issue query` refuses the typed filter flags beside `--view`,
+    /// so nothing above contributes to the document next to it.
+    pub raw_filter: Option<Value>,
 }
 
 /// What a query filters on, in one place.
 ///
 /// `fetch_issues_for_query` and `count_issues` must ask the same question - a count that
-/// filtered differently from the list would answer a question nobody asked.
-fn issue_filter(options: &FetchIssuesForQueryOptions) -> Result<Map<String, Value>> {
+/// filtered differently from the list would answer a question nobody asked. The unit tests ask
+/// it too, which is why this is `pub(crate)` rather than private to this module: a view's filter
+/// being passed through untouched is a claim about *this* function, and nowhere else can see it.
+pub(crate) fn issue_filter(options: &FetchIssuesForQueryOptions) -> Result<Map<String, Value>> {
+    // A view's `filterData` is already the document `issues(filter:)` takes, so it goes through
+    // untouched - translating it here would be a second place to get the filter language wrong,
+    // and the first thing to drift from what the app shows for that view.
+    if let Some(raw) = &options.raw_filter {
+        return match raw {
+            Value::Object(filter) => Ok(filter.clone()),
+            _ => Err(CliError::validation("The view's filter is not a JSON object").suggestion(
+                "A view's filterData is the API's `issues(filter:)` shape; fix it with `linear view update --filter`.",
+            )),
+        };
+    }
+
     let mut filter = Map::new();
     if let Some(team_keys) = options.team_keys.as_ref().filter(|keys| !keys.is_empty()) {
         filter.insert("team".to_string(), json!({ "key": { "in": team_keys } }));
@@ -369,6 +388,7 @@ pub(crate) fn count_is_stated(options: &FetchIssuesForQueryOptions) -> bool {
         && options.created_after.is_none()
         && options.updated_after.is_none()
         && !options.include_archived.unwrap_or(false)
+        && options.raw_filter.is_none()
 }
 
 /// How many issues match, without fetching them.

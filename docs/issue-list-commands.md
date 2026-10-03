@@ -97,7 +97,7 @@ Upstream `.name("query")`, alias `q`.
 `-U/--unassigned`, `--sort`, `--project`, `--project-label`, `--cycle`,
 `--milestone`, `-l/--label` (collect), `--limit` (default 50),
 `--created-after`, `--updated-after`, `--include-archived`, `-j/--json`,
-`--no-pager`.
+`--no-pager`, `--view <NAME|ID>`.
 
 Four beyond upstream (added 2026-10-03, VED-56/VED-60 - see §"The list levers" below):
 `--since <AGE|DATE>` (ages `7d`/`2w`/`3mo`/`36h`, or an absolute date, resolving to the same
@@ -127,7 +127,14 @@ Four beyond upstream (added 2026-10-03, VED-56/VED-60 - see §"The list levers" 
     returns no count, and a number nobody can compute is worse than an error.
 12. `--group-by <unknown field>` → `'Unknown --group-by field: "<field>"'` - parsed, not accepted
     as a string, because a listing that looks grouped but is not is worse than a refusal.
-13. `--ndjson` with `--json`, `--count-only`, `--group-by` or `--search` → four refusals, each
+13. `--view` with any *filter* flag (the 18: `--search`, `--search-comments`, `--team`,
+    `--all-teams`, `--state`, `--all-states`, `--assignee`, `--all-assignees`, `--unassigned`,
+    `--project`, `--project-label`, `--cycle`, `--milestone`, `--label`, `--created-after`,
+    `--updated-after`, `--since`, `--include-archived`) → `"Cannot combine --view with <the ones
+    that were given>"`. Only the flags actually passed are named, and the view's filter replaces
+    the flag-built one rather than being and-ed with it - a set that is neither the view nor the
+    filter you asked for is the one answer nobody can check against the app.
+14. `--ndjson` with `--json`, `--count-only`, `--group-by` or `--search` → four refusals, each
     naming the alternative. A stream cannot honestly produce a count or a group, cannot be merged
     with a document, and search answers in one relevance-ordered page.
 
@@ -215,6 +222,17 @@ on page one. The limit is applied *before* a page is handed over - a consumer th
 cannot print more than was asked for - and every line is compact and flushed, because stdout is
 block-buffered through a pipe and a stream that arrives at exit is a buffered list wearing a
 stream's name. Refused with `--json`, `--count-only`, `--group-by` and `--search`.
+
+### `--view <name|id>`
+The apply half of custom views, and the reason they are worth wrapping: a view's `filterData` *is*
+the `issues(filter:)` document, so it is handed over unchanged - `view_filter` resolves the view
+and `issue_filter` returns its filter verbatim, which the two unit tests in `src/linear/tests.rs`
+are about. Nothing else contributes to the filter beside it, which is why the 18 *filter* flags are
+refused when `--view` is set, and why the default team is not applied either: a view may span teams,
+and a scope nobody asked for would quietly narrow a list the app shows wider. A name that two views
+share is refused rather than guessed at, and a view whose `filterData` is missing is a view that
+selects nothing - an error, not a listing of everything. `--limit`, `--sort`, `--group-by`,
+`--count-only`, `--json` and `--ndjson` all compose with it.
 
 ## Shared renderer
 

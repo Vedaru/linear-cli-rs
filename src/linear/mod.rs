@@ -31,6 +31,7 @@ mod releases;
 mod states;
 mod teams;
 mod users;
+mod views;
 
 #[cfg(test)]
 mod tests;
@@ -51,6 +52,7 @@ pub use releases::*;
 pub use states::*;
 pub use teams::*;
 pub use users::*;
+pub use views::*;
 
 pub(crate) use queries::*;
 

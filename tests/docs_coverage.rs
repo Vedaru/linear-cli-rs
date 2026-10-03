@@ -137,6 +137,78 @@ fn looks_like_a_command(word: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Every leaf command and its own help text - the same walk `json_coverage.rs` makes, because the
+/// numbers the README states are counts of *that* tree: the one an agent sees at the command line.
+fn walk(path: &mut Vec<String>, leaves: &mut Vec<(String, String)>) {
+    let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+    let subs = subcommands(&refs);
+    if subs.is_empty() || path.len() >= 3 {
+        if !path.is_empty() {
+            let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
+            args.push("--help");
+            leaves.push((path.join(" "), run_cli(&args, &[]).stdout));
+        }
+        return;
+    }
+    for sub in subs {
+        path.push(sub);
+        walk(path, leaves);
+        path.pop();
+    }
+}
+
+/// The integers a line states, in the order it states them.
+fn integers(line: &str) -> Vec<usize> {
+    line.split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect()
+}
+
+#[test]
+fn the_numbers_the_readme_states_are_this_binarys_numbers() {
+    // Only the service shape has the whole tree: without the feature, the README is describing a
+    // CLI this test binary is not, and every count would be short by the `sync`/`webhook` groups.
+    if !cfg!(feature = "service") {
+        return;
+    }
+
+    let mut leaves = Vec::new();
+    walk(&mut Vec::new(), &mut leaves);
+    let groups = subcommands(&[]).len();
+    let with_json = leaves
+        .iter()
+        .filter(|(_, help)| help.contains("--json"))
+        .count();
+
+    let text = std::fs::read_to_string(repo(TABLE)).expect("the README");
+
+    // "21 groups, 103 leaf commands." - written as digits precisely so this can read them.
+    let counts = text
+        .lines()
+        .find(|line| line.contains(" groups, ") && line.contains(" leaf commands"))
+        .expect("the README should claim a count of its commands");
+    assert_eq!(
+        integers(counts),
+        vec![groups, leaves.len()],
+        "the README's command count is stale (this tree: {groups} groups, {} leaves):\n  {counts}",
+        leaves.len()
+    );
+
+    // "--json is on 45 of the 103 leaf commands, and the other 58 ..." - three numbers, all of
+    // them measurements, and the third one has to be the difference of the first two.
+    let contract = text
+        .lines()
+        .find(|line| line.contains("`--json` is on "))
+        .expect("the README should say how many commands answer --json");
+    assert_eq!(
+        integers(contract),
+        vec![with_json, leaves.len(), leaves.len() - with_json],
+        "the README's --json count is stale (this tree: {with_json} of {}):\n  {contract}",
+        leaves.len()
+    );
+}
+
 /// Every literal invocation in a document: fenced code-block lines, and inline code spans whose
 /// first word is `linear`. Prose that merely mentions a command is not an assertion that it runs,
 /// so it is not read here - the command table covers the naming.

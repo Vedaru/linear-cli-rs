@@ -71,6 +71,8 @@ pub enum Command {
     /// Manage Linear documents
     #[command(alias = "doc", alias = "docs")]
     Document(crate::commands::document::DocumentArgs),
+    /// List and manage custom views (Linear's saved filters)
+    View(crate::commands::view::ViewArgs),
     /// Interactively generate .linear.toml configuration
     #[command(alias = "configure")]
     Config(crate::commands::config::ConfigArgs),
