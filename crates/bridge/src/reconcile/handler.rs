@@ -1040,15 +1040,37 @@ impl ReconcileHandler {
             .store
             .find_link(&found.reference, &mapping.sink.connector)?;
         let facts = self.found_facts(mapping, found, project_facts)?;
-        Ok(self
-            .placement(
-                mapping,
-                &found.reference,
-                &found.fields,
-                link.as_ref(),
-                &facts,
-            )?
-            .scope)
+        let placement = self.placement(
+            mapping,
+            &found.reference,
+            &found.fields,
+            link.as_ref(),
+            &facts,
+        )?;
+
+        // A re-pointed project keeps its mirror where the pairing put it, which is the
+        // whole point - but it has to be *said*, or the operator who runs a sweep to
+        // find out what the config change did gets `Nothing to do` and concludes it did
+        // nothing. The delivery path reports this per event; a sweep judges a whole
+        // project at once, so it reports the *container* whose route moved - one line
+        // per re-pointed project per sweep, not one per issue on its board, which would
+        // be the same event counted a hundred times and repeated every sweep until
+        // somebody acts. An issue an `issue` rule re-points on its own is the one case
+        // this leaves to the delivery path.
+        if found.reference.kind == EntityKind::Project
+            && placement.would_move()
+            && placement.origin == crate::reconcile::Origin::Pair
+        {
+            log::warn!(
+                "mapping `{}`: {} is mirrored in `{}`, but its route now says `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
+                mapping.name,
+                found.reference.describe(),
+                placement.scope,
+                placement.routed.as_deref().unwrap_or("-"),
+                placement.scope
+            );
+        }
+        Ok(placement.scope)
     }
 
     /// The routing facts of a source entity's container (a project's own, or its
