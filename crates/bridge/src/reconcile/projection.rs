@@ -26,7 +26,7 @@ pub struct Skipped {
     pub reason: Reason,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Reason {
     /// The platform has no such field at all.
     Unsupported,

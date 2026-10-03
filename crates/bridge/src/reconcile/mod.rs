@@ -24,6 +24,7 @@
 pub mod handler;
 pub mod projection;
 pub mod route;
+pub mod skipped_log;
 pub mod survey;
 pub mod sweep;
 

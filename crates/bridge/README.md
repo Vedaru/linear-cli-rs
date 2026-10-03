@@ -319,6 +319,17 @@ means the value really was lost).
 
 The limits worth stating out loud, because each one is a real thing a deployment will meet:
 
+- **A field that did not travel is reported once per reason, not once per issue.** The reasons are
+  kept distinct because they mean different things: `unsupported` (the platform has no such field),
+  `unmapped` (the identity map exists, but not for this value), `emulated` (the value travelled
+  inside another field, and both ends read it back - nothing was lost), and **`no identity map`**
+  (account translation is not configured, so it is *off rather than guessed*: translating one
+  platform's login into another's by hope would attribute work to the wrong person). A sweep
+  delivers one issue at a time, so the first skip of a given `(field, reason)` in a process is a
+  `warning` - naming the fix when there is one, namely the `[[mapping.user]]` entries that translate
+  accounts between the platforms - and every later one is `debug`. So `RUST_LOG=debug` still shows
+  each issue individually, the log stays readable, and a reason that *differs* is always a warning,
+  however far into the pass it appears. The refusal is the design; only the repetition was the bug.
 - **A reference moves the issue it names, but only as far as the platform says.** A review
   request that names an issue is attached to it and moves it: to the open state when it opens,
   to the first closed state when it *merges*. A request closed *without* merging leaves the

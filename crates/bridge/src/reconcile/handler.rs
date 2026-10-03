@@ -1525,13 +1525,23 @@ impl ReconcileHandler {
         Ok(decide(mapping, side, found, None, &expected, ends, None))
     }
 
-    /// Say what did not travel, once per delivery, at a level an operator sees.
+    /// Say what did not travel, once per reason rather than once per issue.
     ///
-    /// Not an error - the mapping is still doing what it can - but never silent
-    /// either: "the assignee did not come across" has to be findable in the log.
+    /// Not an error - the mapping is still doing what it can - but never silent either: "the
+    /// assignee did not come across" has to be findable in the log.
+    ///
+    /// The *first* skip of a given `(field, reason)` in this process is a `warn`, with the config
+    /// that would stop it when there is one; the repeats are `debug`, because a sweep delivers one
+    /// issue at a time and an unconfigured `[[mapping.user]]` therefore used to print one identical
+    /// warning per issue, burying the `unmapped` and `emulated` skips that differ per issue. See
+    /// [`super::skipped_log`] - nothing that differs is ever suppressed.
     fn report_skipped(&self, mapping: &str, skipped: &[Skipped]) {
         for skipped in skipped {
-            log::warn!("`{mapping}`: {skipped}");
+            if super::skipped_log::SKIPPED_THIS_PROCESS.record(skipped) {
+                log::warn!("{}", super::skipped_log::line(mapping, skipped));
+            } else {
+                log::debug!("`{mapping}`: {skipped} (already reported this run)");
+            }
         }
     }
 
