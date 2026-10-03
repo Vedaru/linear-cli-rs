@@ -124,7 +124,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is on 57 of the 112 leaf commands**, and the other 55 are listed *with a reason* in
+- **`--json` is on 75 of the 128 leaf commands**, and the other 53 are listed *with a reason* in
   `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
   not data (a credential, a reference document, a scaffold, the raw API response) never will
   carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
@@ -157,20 +157,20 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-23 groups, 112 leaf commands. Run `linear <group> --help` for flags — the help text
+23 groups, 128 leaf commands. Run `linear <group> --help` for flags — the help text
 is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
 every addition and every deliberate deviation.
 
 | Group | Subcommands |
 |---|---|
 | `auth` | `login` add a workspace credential · `logout` · `list` configured workspaces · `default` · `token` print the configured token · `whoami` · `migrate` plaintext credentials to the keyring |
-| `issue` | `id` · `mine` · `query` structured filters (`--count-only`, `--group-by`, `--since`, `--ndjson`, `--view`) · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `unarchive` · `delete` · `subscribe` · `unsubscribe` · `create` · `update` · `close` · `assign` · `move` · `transfer` (the four common edits as names over `update`) · `comment` (add/list/resolve…) · `attach` sidebar link · `link` a URL · `relation` dependencies · `agent-session` |
-| `project` | `list` · `view` · `create` · `update` · `delete` · `comment` |
+| `issue` | `id` · `mine` · `query` structured filters (`--count-only`, `--group-by`, `--since`, `--ndjson`, `--view`) · `title` · `start` · `view` · `url` · `describe` · `commits` (jj only) · `pull-request` (gh) · `archive` · `unarchive` · `delete` · `subscribe` · `unsubscribe` · `create` · `update` · `close` · `assign` · `move` · `transfer` (the four common edits as names over `update`) · `comment` (add/list/resolve…) · `attach` sidebar link · `link` a URL · `attachment` list/get/update/delete a sidebar link (create-only upstream) · `relation` dependencies · `agent-session` |
+| `project` | `list` · `view` · `create` · `update` · `delete` (trashes: `unarchive` restores it) · `archive` (reversible) · `unarchive` · `members` who is on it · `member` add/remove (incremental) · `label` list/add/remove/set · `comment` |
 | `project-update` | `create` · `list` project status updates |
 | `roadmap` | `list` · `view` a roadmap and the projects on it — reads only: Linear deprecated roadmap writes, and `initiative add-project` is the successor |
-| `team` | `create` · `delete` · `list` · `id` · `autolinks` (gh) · `members` · `states` workflow states |
+| `team` | `create` · `delete` · `update` (the API's teamUpdate; upstream can create and delete a team but never correct one) · `list` · `id` · `autolinks` (gh) · `members` · `states` workflow states |
 | `user` | `list` workspace members |
-| `cycle` | `list` · `view` · `update` · `archive` (archiving is irreversible — the API has no unarchive) |
+| `cycle` | `list` · `view` · `create` · `complete` · `update` · `archive` (archiving is irreversible — the API has no unarchive, and no `cycleDelete` exists to wrap) |
 | `milestone` | `list` · `view` · `create` · `update` · `delete` |
 | `initiative` | `list` · `view` · `create` · `update` · `archive` · `unarchive` · `delete` · `add-project` · `remove-project` · `comment` |
 | `initiative-update` | `create` · `list` initiative timeline posts |

@@ -137,6 +137,31 @@ one is the missing half of a group that could only move one way.
   adding or removing the authenticated API user as a watcher.
 - `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
   `commentUnresolve`, which the app's resolve button covers but no CLI did.
+- `issue attachment list`, `issue attachment get`, `issue attachment update`,
+  `issue attachment delete` — `issue(id:).attachments`, `attachment(id:)`,
+  `attachmentUpdate` / `attachmentDelete`. Upstream creates a sidebar link and
+  stops there, so a title typo or a link that moved could only be fixed in the
+  app (`issue attach` / `issue link` remain the create half). `update` sends the
+  title it read when only a subtitle changes, because `AttachmentUpdateInput.title`
+  is **required**; `--url` re-links (create the new one, then delete the old),
+  because an attachment's URL is its identity within an issue and the update
+  input has no `url` field.
+- `team update` — `teamUpdate`. Upstream's team group is create/list/delete, so a
+  team could be made and destroyed but never renamed or corrected.
+- `project archive`, `project unarchive`, `project members`, `project member
+  add|remove`, `project label list|add|remove|set` — `projectArchive` /
+  `projectUnarchive`, and the set-shaped fields of `projectUpdate`
+  (`memberIds`, `labelIds`). Upstream's project group is list/view/create/update/
+  delete, so a project's team or labels could only be changed by replacing the
+  whole set from the app. `delete` (the API's `projectDelete`) trashes rather than
+  destroys — the API says so itself — so `archive`/`unarchive` exist so nobody has
+  to reach for that name to do a reversible thing; `add`/`remove` read the set
+  first and send it back with one name changed, while `set` is the verb that
+  replaces it and the only one that asks for confirmation.
+- `cycle create`, `cycle complete` — `cycleCreate`, and `cycleUpdate` with
+  `completedAt`. Upstream's cycle group only reads. `create` checks its window
+  against the team's existing cycles and refuses an overlap *by name*, because the
+  API's own answer names nothing.
 - **One request policy** (`src/net.rs`, copied verbatim to `crates/bridge/src/net.rs` and compared
   byte-for-byte by a test, because the CLI must build without the bridge crate): a global deadline,
   a shorter connect deadline, and up to three attempts with jittered backoff — but only for a
@@ -188,3 +213,10 @@ Deliberately **not** wrapped, with the reason:
   deprecated, use initiatives instead" — so a command could only fail. Reading
   them is wrapped (`roadmap list`, `roadmap view`); writing one is
   `initiative add-project` and friends.
+- `cycleDelete`: the field does not exist. Probing the live API answers
+  `Cannot query field "cycleDelete" on type "Mutation"` (while `cycleArchive`
+  answers `Entity not found: Cycle` for the same bogus id, so the difference is
+  the field and not the id), so a `cycle delete` could only ever fail. `cycle
+  archive` is the retirement verb — it asks for confirmation because the schema
+  has no `cycleUnarchive` — and `cycle complete` is how a cycle is finished
+  without retiring it.

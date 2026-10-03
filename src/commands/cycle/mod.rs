@@ -1,9 +1,16 @@
 //! `linear cycle` — port of `src/commands/cycle/`.
 //!
-//! `list` and `view` (alias `v`) match the upstream cliffy tree; `update` and
-//! `archive` are additions, because upstream leaves the group read-only while the
-//! API can change a cycle (`cycleUpdate`) and retire one (`cycleArchive`, with no
-//! unarchive — Linear archives cycles automatically, but never restores them).
+//! `list` and `view` (alias `v`) match the upstream cliffy tree; everything else is
+//! an addition, because upstream leaves the group read-only while the API can
+//! start a cycle (`cycleCreate`), finish one (`cycleUpdate` with `completedAt`),
+//! change one (`cycleUpdate`) and retire one (`cycleArchive`, with no unarchive —
+//! Linear archives cycles automatically, but never restores them).
+//!
+//! There is **no `cycle delete`**, and not for want of trying: probing the live
+//! API answers `Cannot query field "cycleDelete" on type "Mutation"` — the field
+//! does not exist, so a `delete` command could only ever fail. `cycle archive` is
+//! the retirement verb, and it asks for confirmation precisely because there is no
+//! way back; `cycle complete` is the one that finishes a cycle without retiring it.
 //! `linear cycle` with no subcommand prints the group help, as upstream's no-op
 //! action calls `this.showHelp()`.
 //!
@@ -17,6 +24,8 @@ use crate::linear;
 use crate::output;
 
 mod cycle_archive;
+mod cycle_complete;
+mod cycle_create;
 mod cycle_list;
 mod cycle_update;
 mod cycle_view;
@@ -38,6 +47,10 @@ pub enum CycleCommand {
     Update(cycle_update::CycleUpdateArgs),
     /// Archive a cycle (the API's cycleArchive; there is no unarchive)
     Archive(cycle_archive::CycleArchiveArgs),
+    /// Create a cycle for a team (the API's cycleCreate)
+    Create(cycle_create::CreateCycleArgs),
+    /// Complete a cycle without retiring it
+    Complete(cycle_complete::CompleteCycleArgs),
 }
 
 pub fn run(args: CycleArgs) -> Result<()> {
@@ -60,6 +73,11 @@ pub fn run(args: CycleArgs) -> Result<()> {
         CycleCommand::Archive(args) => {
             cycle_archive::run(args).map_err(|error| error.with_context("Failed to archive cycle"))
         }
+        CycleCommand::Create(args) => {
+            cycle_create::run(args).map_err(|error| error.with_context("Failed to create cycle"))
+        }
+        CycleCommand::Complete(args) => cycle_complete::run(args)
+            .map_err(|error| error.with_context("Failed to complete cycle")),
     }
 }
 

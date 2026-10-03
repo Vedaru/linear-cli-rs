@@ -35,6 +35,9 @@ pub struct CreateArgs {
     /// Disable interactive prompts
     #[arg(long)]
     pub no_interactive: bool,
+    /// Output as JSON (the API's own `teamCreate` payload)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: CreateArgs) -> Result<()> {
@@ -65,7 +68,13 @@ pub fn run(args: CreateArgs) -> Result<()> {
 
         output::line(&format!("\nCreating team \"{name}\"..."));
 
-        return create_and_report(&name, description.as_deref(), key.as_deref(), is_private);
+        return create_and_report(
+            &name,
+            description.as_deref(),
+            key.as_deref(),
+            is_private,
+            false,
+        );
     }
 
     // Fallback to flag-based mode.
@@ -76,13 +85,16 @@ pub fn run(args: CreateArgs) -> Result<()> {
         );
     };
 
-    output::line(&format!("Creating team \"{name}\""));
+    if !args.json {
+        output::line(&format!("Creating team \"{name}\""));
+    }
 
     create_and_report(
         name,
         args.description.as_deref(),
         args.key.as_deref(),
         args.private,
+        args.json,
     )
 }
 
@@ -91,6 +103,7 @@ fn create_and_report(
     description: Option<&str>,
     key: Option<&str>,
     is_private: bool,
+    json: bool,
 ) -> Result<()> {
     let mut input = Map::new();
     input.insert("name".to_string(), json!(name));
@@ -119,6 +132,13 @@ fn create_and_report(
         .unwrap_or(false)
     {
         return Err(CliError::cli("Team creation failed"));
+    }
+
+    if json {
+        // The API's own payload, like every other `--json` here: the caller gets the id, the key
+        // and the name without a second query.
+        output::print_json(&data);
+        return Ok(());
     }
 
     let team = team_create

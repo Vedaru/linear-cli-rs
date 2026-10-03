@@ -279,3 +279,92 @@ fn url_ref_cycle(url_ref: &LinearUrlRef) -> Option<&CycleRef> {
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cycle windows
+// ---------------------------------------------------------------------------
+
+const GET_TEAM_CYCLE_WINDOWS_QUERY: &str = r#"
+query GetTeamCycleWindows($teamId: String!, $first: Int, $after: String) {
+  team(id: $teamId) {
+    id
+    key
+    name
+    cyclesEnabled
+    cycles(first: $first, after: $after) {
+      nodes {
+        id
+        number
+        name
+        startsAt
+        endsAt
+        completedAt
+        archivedAt
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"#;
+
+/// A team's cycles with the fields a window check needs, plus the team's own `key`/`name` and
+/// whether cycles are enabled at all.
+///
+/// Archived cycles are included on purpose: an archived cycle still occupies its window, and a new
+/// cycle created across it would be the overlap the caller is trying to avoid.
+pub fn get_team_cycle_windows(team_id: &str) -> Result<(Value, Vec<Value>)> {
+    let client = graphql::client()?;
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut after: Option<String> = None;
+    let mut team = Value::Null;
+
+    loop {
+        let mut variables = Map::new();
+        variables.insert("teamId".to_string(), json!(team_id));
+        variables.insert("first".to_string(), json!(50));
+        if let Some(cursor) = &after {
+            variables.insert("after".to_string(), json!(cursor));
+        }
+
+        let data = client.request(GET_TEAM_CYCLE_WINDOWS_QUERY, Value::Object(variables))?;
+        let node = data
+            .get("team")
+            .filter(|team| !team.is_null())
+            .ok_or_else(|| CliError::not_found("Team", team_id))?;
+        if team.is_null() {
+            team = json!({
+                "id": node.get("id").cloned().unwrap_or(Value::Null),
+                "key": node.get("key").cloned().unwrap_or(Value::Null),
+                "name": node.get("name").cloned().unwrap_or(Value::Null),
+                "cyclesEnabled": node.get("cyclesEnabled").cloned().unwrap_or(Value::Null),
+            });
+        }
+
+        let connection = node
+            .get("cycles")
+            .ok_or_else(|| CliError::cli("Linear API response did not contain cycles"))?;
+        if let Some(page) = connection.get("nodes").and_then(Value::as_array) {
+            nodes.extend(page.iter().cloned());
+        }
+        let page_info = connection.get("pageInfo");
+        let has_next = page_info
+            .and_then(|info| info.get("hasNextPage"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !has_next {
+            break;
+        }
+        after = page_info
+            .and_then(|info| info.get("endCursor"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if after.is_none() {
+            break;
+        }
+    }
+
+    Ok((team, nodes))
+}

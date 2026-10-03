@@ -65,6 +65,9 @@ pub struct DeleteArgs {
     /// Skip confirmation prompt
     #[arg(short = 'y', long)]
     pub force: bool,
+    /// Output as JSON (the API's own `teamDelete` payload)
+    #[arg(short = 'j', long)]
+    pub json: bool,
 }
 
 pub fn run(args: DeleteArgs) -> Result<()> {
@@ -118,7 +121,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         let target_team_id = other_teams[choice].id.clone();
 
         // Move all issues to the target team.
-        if let Err(error) = move_issues_to_team(&client, &team_id, &target_team_id, issue_count) {
+        if let Err(error) =
+            move_issues_to_team(&client, &team_id, &target_team_id, issue_count, args.json)
+        {
             handle_error(&error, Some("Failed to move issues"));
         }
     } else if issue_count > 0 && args.move_issues.is_some() {
@@ -129,7 +134,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
             return Err(CliError::validation("Cannot move issues to the same team"));
         }
 
-        if let Err(error) = move_issues_to_team(&client, &team_id, &target_team_id, issue_count) {
+        if let Err(error) =
+            move_issues_to_team(&client, &team_id, &target_team_id, issue_count, args.json)
+        {
             handle_error(&error, Some("Failed to move issues"));
         }
     }
@@ -163,6 +170,11 @@ pub fn run(args: DeleteArgs) -> Result<()> {
         return Err(CliError::cli("Failed to delete team"));
     }
 
+    if args.json {
+        output::print_json(&result);
+        return Ok(());
+    }
+
     output::line(&format!(
         "✓ Successfully deleted team: {team_key}: {team_name}"
     ));
@@ -175,6 +187,7 @@ fn move_issues_to_team(
     source_team_id: &str,
     target_team_id: &str,
     issue_count: usize,
+    json: bool,
 ) -> Result<()> {
     let _ = issue_count;
 
@@ -199,6 +212,10 @@ fn move_issues_to_team(
         moved_count += 1;
     }
 
-    output::line(&format!("✓ Moved {moved_count} issue(s) to target team"));
+    // With `--json` the document on stdout is the only output a caller can parse, so the
+    // progress line is suppressed rather than interleaved with it.
+    if !json {
+        output::line(&format!("✓ Moved {moved_count} issue(s) to target team"));
+    }
     Ok(())
 }

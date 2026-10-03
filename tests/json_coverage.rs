@@ -101,8 +101,6 @@ const EXEMPT: &[(&str, &str)] = &[
     ("project delete", "deletes a project"),
     ("project update", "updates a project"),
     ("project-update create", "posts a status update"),
-    ("team create", "creates a team"),
-    ("team delete", "deletes a team"),
     // --- never: the payload is another program's to print ---
     (
         "issue commits",

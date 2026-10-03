@@ -4,6 +4,7 @@
 //! upstream's `this.showHelp()`. Subcommand groups (`comment`, `agent-session`)
 //! own their own nested dispatch in their module.
 
+pub mod attachment;
 pub mod issue_agent_session;
 pub mod issue_archive;
 pub mod issue_attach;
@@ -142,6 +143,8 @@ pub enum IssueCommand {
     Attach(issue_attach::IssueAttachArgs),
     /// Link a URL to an issue
     Link(issue_link::IssueLinkArgs),
+    /// Read back, correct or remove a sidebar link (attach/link only create one)
+    Attachment(attachment::AttachmentArgs),
     /// Manage issue relations (dependencies)
     Relation(issue_relation::IssueRelationArgs),
     /// Manage agent sessions for an issue
@@ -182,6 +185,7 @@ pub fn run(args: IssueArgs) -> Result<()> {
         IssueCommand::Comment(a) => issue_comment::run(a),
         IssueCommand::Attach(a) => issue_attach::run(a),
         IssueCommand::Link(a) => issue_link::run(a),
+        IssueCommand::Attachment(a) => attachment::run(a),
         IssueCommand::Relation(a) => issue_relation::run(a),
         IssueCommand::AgentSession(a) => issue_agent_session::run(a),
     }

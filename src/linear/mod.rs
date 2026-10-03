@@ -14,6 +14,7 @@
 // also make it easy to leave a name unused in a given file.
 #![allow(unused_imports)]
 
+mod attachments;
 mod cycles;
 mod dates;
 mod documents;
@@ -38,6 +39,7 @@ mod views;
 #[cfg(test)]
 mod tests;
 
+pub use attachments::*;
 pub use cycles::*;
 pub use dates::*;
 pub use documents::*;

@@ -1,6 +1,6 @@
 //! `linear team` — port of `src/commands/team/`.
 //!
-//! Covers create, delete, list, id, autolinks, members, and states. Each
+//! Covers create, delete, update, list, id, autolinks, members, and states. Each
 //! action wraps its failure with the same context string upstream passes to
 //! `handleError`, so error output matches the TypeScript CLI.
 //!
@@ -16,6 +16,7 @@ pub mod team_id;
 pub mod team_list;
 pub mod team_members;
 pub mod team_states;
+pub mod team_update;
 
 use crate::errors::Result;
 use crate::output;
@@ -33,6 +34,9 @@ pub enum TeamCommand {
     Create(team_create::CreateArgs),
     /// Delete a Linear team
     Delete(team_delete::DeleteArgs),
+    /// Update a team's name, description, key, timezone or visibility (the API's
+    /// teamUpdate; upstream can create and delete a team but never correct one)
+    Update(team_update::UpdateArgs),
     /// List teams
     List(team_list::ListArgs),
     /// Print the configured team id
@@ -66,6 +70,9 @@ pub fn run(args: TeamArgs) -> Result<()> {
         }
         TeamCommand::Delete(args) => {
             team_delete::run(args).map_err(|error| error.with_context("Failed to delete team"))
+        }
+        TeamCommand::Update(args) => {
+            team_update::run(args).map_err(|error| error.with_context("Failed to update team"))
         }
         TeamCommand::List(args) => {
             team_list::run(args).map_err(|error| error.with_context("Failed to fetch teams"))
