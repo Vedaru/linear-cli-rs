@@ -4,7 +4,7 @@
 //! emits the raw GraphQL shape so agent prompts can parse it; otherwise the
 //! shared [`crate::issue_table`] renderer prints the table.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::commands::issue;
 use crate::config;
@@ -70,6 +70,15 @@ pub struct IssueQueryArgs {
     /// Filter to issues updated after this date
     #[arg(long = "updated-after")]
     pub updated_after: Option<String>,
+    /// Only issues updated within the last 7d / 2w / 36h, or after a date
+    #[arg(long = "since", value_name = "AGE|DATE")]
+    pub since: Option<String>,
+    /// Print how many issues match instead of listing them
+    #[arg(long = "count-only")]
+    pub count_only: bool,
+    /// Group the results: state, priority, assignee or project
+    #[arg(long = "group-by", value_name = "FIELD")]
+    pub group_by: Option<String>,
     /// Include archived issues
     #[arg(long = "include-archived")]
     pub include_archived: bool,
@@ -154,6 +163,32 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
     if args.limit < 0 {
         return Err(CliError::validation("--limit must be 0 or greater"));
     }
+
+    if args.since.is_some() && args.updated_after.is_some() {
+        return Err(CliError::validation(
+            "Cannot use both --since and --updated-after",
+        )
+        .suggestion(
+            "--since is the relative form of the same bound: pass --since 7d, or --updated-after 2024-01-15.",
+        ));
+    }
+
+    if args.count_only && args.search.is_some() {
+        return Err(
+            CliError::validation("Cannot use --count-only with --search").suggestion(
+                "Linear's search returns no count. Drop --search for a filtered count, or list with --limit and count the results.",
+            ),
+        );
+    }
+
+    let group_by = args.group_by.as_deref().map(GroupBy::parse).transpose()?;
+
+    // `--since 7d` and `--updated-after 2024-01-15` are the same bound in two notations, so
+    // they resolve to one value here and nothing downstream knows the difference.
+    let updated_after = match (&args.since, &args.updated_after) {
+        (Some(since), _) => Some(linear::parse_date_filter_or_age(since, "--since")?),
+        (None, after) => after.clone(),
+    };
 
     // --- team scope --------------------------------------------------------
     let mut is_multi_team = false;
@@ -249,7 +284,7 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
             cycle_id,
             label_names,
             created_after: args.created_after.clone(),
-            updated_after: args.updated_after.clone(),
+            updated_after: updated_after.clone(),
             include_archived: Some(args.include_archived),
             include_comments: Some(args.search_comments),
             order_by: None,
@@ -271,37 +306,66 @@ fn query(args: &IssueQueryArgs) -> Result<()> {
             milestone_id,
             label_names,
             created_after: args.created_after.clone(),
-            updated_after: args.updated_after.clone(),
+            updated_after: updated_after.clone(),
             include_archived: Some(args.include_archived),
         };
+        // The count is a question about the *filter*, so it is answered here rather than
+        // after fetching what it should not have to fetch.
+        if args.count_only {
+            let total = linear::count_issues(&options)?;
+            if args.json {
+                output::print_json(&json!({ "count": total }));
+            } else {
+                output::line(&total.to_string());
+            }
+            return Ok(());
+        }
+
         linear::fetch_issues_for_query(&options)?
     };
-
-    if args.json {
-        output::print_json(&result);
-        return Ok(());
-    }
 
     let nodes: Vec<Value> = result
         .get("nodes")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+
+    if args.json {
+        // Grouping, when it was asked for, is part of the shape an agent parses: the raw
+        // nodes are still there, arranged and counted instead of flattened.
+        match &group_by {
+            Some(by) => output::print_json(&by.grouped(&nodes)),
+            None => output::print_json(&result),
+        }
+        return Ok(());
+    }
+
     if nodes.is_empty() {
         output::line("No issues found.");
         return Ok(());
     }
 
     let show_assignee = args.assignee.is_none() && !args.unassigned;
-    let lines = issue_table::render(
-        &nodes,
-        &issue_table::Options {
-            show_team_column: is_multi_team,
-            show_assignee_column: show_assignee,
-            min_title_width: 10,
-            padding: 0,
-        },
-    );
+    let table_options = || issue_table::Options {
+        show_team_column: is_multi_team,
+        show_assignee_column: show_assignee,
+        min_title_width: 10,
+        padding: 0,
+    };
+
+    if let Some(by) = &group_by {
+        // One table per group, each with its own header: a group is something a person reads
+        // on its own, and a header repeated is cheaper than a column nobody can attribute.
+        for (label, issues) in by.groups(&nodes) {
+            output::line(&format!("{label} ({})", issues.len()));
+            for line in issue_table::render(&issues, &table_options()) {
+                output::line(&line);
+            }
+        }
+        return Ok(());
+    }
+
+    let lines = issue_table::render(&nodes, &table_options());
 
     if pager::should_use_pager(lines.len(), args.pager) {
         pager::pipe_to_user_pager(&lines.join("\n"));
@@ -321,4 +385,96 @@ fn should_show_default_team_note(source: config::OptionSource) -> bool {
         source,
         config::OptionSource::Env | config::OptionSource::GlobalConfig
     )
+}
+
+/// What `--group-by` groups by.
+///
+/// Parsed, not accepted as a bare string: an unknown field is a validation error, because an
+/// agent that asked for grouping and quietly received a flat list would have to notice the
+/// difference - and a listing that looks grouped but is not is worse than a refusal.
+enum GroupBy {
+    State,
+    Priority,
+    Assignee,
+    Project,
+}
+
+impl GroupBy {
+    fn parse(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "state" => Ok(Self::State),
+            "priority" => Ok(Self::Priority),
+            "assignee" => Ok(Self::Assignee),
+            "project" => Ok(Self::Project),
+            other => Err(
+                CliError::validation(format!("Unknown --group-by field: \"{other}\""))
+                    .suggestion("Use one of: state, priority, assignee, project."),
+            ),
+        }
+    }
+
+    /// The field's own name, which the grouped JSON repeats so a reader knows what it grouped on.
+    fn field(&self) -> &'static str {
+        match self {
+            Self::State => "state",
+            Self::Priority => "priority",
+            Self::Assignee => "assignee",
+            Self::Project => "project",
+        }
+    }
+
+    /// What this field is for one issue - and a name for "none of it", because a group
+    /// labelled with an empty string is a group nobody can find.
+    fn label(&self, issue: &Value) -> String {
+        let (missing, value) = match self {
+            Self::State => ("No state", issue.pointer("/state/name")),
+            Self::Priority => ("No priority", issue.get("priorityLabel")),
+            Self::Assignee => ("Unassigned", issue.pointer("/assignee/name")),
+            Self::Project => ("No project", issue.pointer("/project/name")),
+        };
+        match value
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            Some(text) => text.to_string(),
+            None => missing.to_string(),
+        }
+    }
+
+    /// The groups, in first-seen order, each with the issues in it.
+    ///
+    /// First-seen rather than sorted: the query's own sort decided what matters, and
+    /// re-sorting by a group label would throw that ordering away.
+    fn groups(&self, issues: &[Value]) -> Vec<(String, Vec<Value>)> {
+        let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
+        for issue in issues {
+            let label = self.label(issue);
+            match groups.iter_mut().find(|(name, _)| *name == label) {
+                Some((_, group)) => group.push(issue.clone()),
+                None => groups.push((label, vec![issue.clone()])),
+            }
+        }
+        groups
+    }
+
+    /// The same grouping as JSON: the raw nodes, arranged, with the counts spelled out so a
+    /// caller does not have to count them again.
+    fn grouped(&self, issues: &[Value]) -> Value {
+        let groups: Vec<Value> = self
+            .groups(issues)
+            .into_iter()
+            .map(|(label, group)| {
+                json!({
+                    "label": label,
+                    "count": group.len(),
+                    "issues": group,
+                })
+            })
+            .collect();
+        json!({
+            "groupedBy": self.field(),
+            "total": issues.len(),
+            "groups": groups,
+        })
+    }
 }

@@ -10,6 +10,107 @@ fn state(id: &str, name: &str, state_type: &str, position: f64) -> WorkflowState
     }
 }
 
+// ---------------------------------------------------------------------------
+// The list levers: an age, and which counts the API will state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_age_is_resolved_against_now() {
+    for (written, expected) in [
+        ("7d", chrono::Duration::days(7)),
+        ("2w", chrono::Duration::weeks(2)),
+        ("36h", chrono::Duration::hours(36)),
+        ("3mo", chrono::Duration::days(90)),
+    ] {
+        let normalised = parse_date_filter_or_age(written, "--since")
+            .unwrap_or_else(|error| panic!("{written} should parse: {error}"));
+        let parsed = DateTime::parse_from_rfc3339(&normalised)
+            .unwrap_or_else(|error| panic!("{normalised} should be RFC 3339: {error}"))
+            .with_timezone(&Utc);
+        let drift = (parsed - (Utc::now() - expected)).num_seconds().abs();
+        assert!(
+            drift < 5,
+            "{written} should be {expected:?} before now, and was {drift}s away"
+        );
+    }
+}
+
+#[test]
+fn an_absolute_date_still_travels_as_one() {
+    // The same helper takes both notations, so a caller never has to know which it wants.
+    assert_eq!(
+        parse_date_filter_or_age("2026-10-01", "--since").expect("a date"),
+        "2026-10-01T00:00:00.000Z"
+    );
+}
+
+#[test]
+fn something_that_is_not_an_age_is_refused_rather_than_guessed() {
+    for written in ["7", "7x", "-3d", "d7", ""] {
+        assert!(
+            parse_date_filter_or_age(written, "--since").is_err(),
+            "{written} must not be guessed at"
+        );
+    }
+    // The one that leads with a number teaches the grammar that would have worked rather than
+    // the ISO one: a mistyped age should not read as a mistyped date.
+    let error = parse_date_filter_or_age("7x", "--since").expect_err("7x is not an age");
+    assert!(
+        error.to_string().contains("Invalid age"),
+        "the error should name the age grammar: {error}"
+    );
+}
+
+#[test]
+fn the_api_states_a_count_for_a_bare_team_scope_and_nothing_else() {
+    let bare = FetchIssuesForQueryOptions {
+        team_keys: Some(vec!["VED".into()]),
+        ..Default::default()
+    };
+    assert!(
+        count_is_stated(&bare),
+        "a team and no filters is a stated number"
+    );
+
+    let every_team = FetchIssuesForQueryOptions {
+        all_teams: true,
+        ..Default::default()
+    };
+    assert!(count_is_stated(&every_team));
+
+    // Any filter at all - including the two that only *widen* what the stated number covers.
+    for filtered in [
+        FetchIssuesForQueryOptions {
+            team_keys: Some(vec!["VED".into()]),
+            unassigned: true,
+            ..Default::default()
+        },
+        FetchIssuesForQueryOptions {
+            team_keys: Some(vec!["VED".into()]),
+            updated_after: Some("2026-10-01".into()),
+            ..Default::default()
+        },
+        FetchIssuesForQueryOptions {
+            team_keys: Some(vec!["VED".into()]),
+            include_archived: Some(true),
+            ..Default::default()
+        },
+        FetchIssuesForQueryOptions {
+            team_keys: Some(vec!["VED".into()]),
+            label_names: Some(vec!["Bug".into()]),
+            ..Default::default()
+        },
+    ] {
+        assert!(
+            !count_is_stated(&filtered),
+            "{filtered:?} has to be counted, not asked for"
+        );
+    }
+
+    // No team named and not every team: not a team count either.
+    assert!(!count_is_stated(&FetchIssuesForQueryOptions::default()));
+}
+
 #[test]
 fn sorts_type_groups_then_position_descending() {
     let mut states = [

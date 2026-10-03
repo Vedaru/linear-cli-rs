@@ -283,12 +283,11 @@ pub struct FetchIssuesForQueryOptions {
     pub include_archived: Option<bool>,
 }
 
-/// Issues across teams in a query filter, shaped `{ nodes, pageInfo }`.
+/// What a query filters on, in one place.
 ///
-/// `limit == Some(0)` fetches everything; `None` uses the default page size.
-pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Value> {
-    let client = graphql::client()?;
-
+/// `fetch_issues_for_query` and `count_issues` must ask the same question - a count that
+/// filtered differently from the list would answer a question nobody asked.
+fn issue_filter(options: &FetchIssuesForQueryOptions) -> Result<Map<String, Value>> {
     let mut filter = Map::new();
     if let Some(team_keys) = options.team_keys.as_ref().filter(|keys| !keys.is_empty()) {
         filter.insert("team".to_string(), json!({ "key": { "in": team_keys } }));
@@ -339,6 +338,128 @@ pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Va
             json!({ "gte": parse_date_filter(updated_after, "--updated-after")? }),
         );
     }
+    Ok(filter)
+}
+
+/// Whether the API will state this count itself.
+///
+/// It will for a team scope and *nothing else*: `Team.issueCount` takes no filter arguments
+/// and counts non-archived issues, which is exactly what an unfiltered query returns. Any
+/// filter at all - a state, a label, a date bound, an archived-including read - and the
+/// number has to be counted rather than asked for.
+pub(crate) fn count_is_stated(options: &FetchIssuesForQueryOptions) -> bool {
+    let scoped = options.all_teams
+        || options
+            .team_keys
+            .as_ref()
+            .is_some_and(|keys| !keys.is_empty());
+    scoped
+        && options.state.is_none()
+        && options.assignee.is_none()
+        && !options.unassigned
+        && options.project_id.is_none()
+        && options.project_label.is_none()
+        && options.cycle_id.is_none()
+        && options.milestone_id.is_none()
+        && options
+            .label_names
+            .as_ref()
+            .map(|names| names.is_empty())
+            .unwrap_or(true)
+        && options.created_after.is_none()
+        && options.updated_after.is_none()
+        && !options.include_archived.unwrap_or(false)
+}
+
+/// How many issues match, without fetching them.
+///
+/// Two mechanisms, because Linear states exactly one count and it takes no filters: a team's
+/// total arrives as a single field (no nodes, no pages), and a *filtered* count has no
+/// server-side equivalent, so it asks for `nodes { id }` - the smallest thing an issue can be -
+/// and counts those, one request while the answer fits in one page and a cursor walk when it
+/// does not.
+pub fn count_issues(options: &FetchIssuesForQueryOptions) -> Result<i64> {
+    let client = graphql::client()?;
+
+    if count_is_stated(options) {
+        let (query, variables) = if options.all_teams {
+            (ALL_TEAM_ISSUE_COUNTS_QUERY, json!({}))
+        } else {
+            (
+                TEAM_ISSUE_COUNTS_QUERY,
+                json!({ "keys": options.team_keys.clone().unwrap_or_default() }),
+            )
+        };
+        let data = client.request(query, variables)?;
+        let total = data
+            .get("teams")
+            .and_then(|teams| teams.get("nodes"))
+            .and_then(Value::as_array)
+            .map(|teams| {
+                teams
+                    .iter()
+                    .filter_map(|team| team.get("issueCount").and_then(Value::as_i64))
+                    .sum::<i64>()
+            })
+            .unwrap_or(0);
+        return Ok(total);
+    }
+
+    let filter = issue_filter(options)?;
+    let sort = get_issue_sort_payload(options.sort.unwrap_or(IssueSort::Priority));
+    let page_size: u32 = 100;
+    let mut total: i64 = 0;
+    let mut after: Option<String> = None;
+    let mut has_next = true;
+
+    while has_next {
+        let mut variables = Map::new();
+        if !filter.is_empty() {
+            variables.insert("filter".to_string(), Value::Object(filter.clone()));
+        }
+        variables.insert("sort".to_string(), sort.clone());
+        variables.insert("first".to_string(), json!(page_size));
+        if let Some(cursor) = &after {
+            variables.insert("after".to_string(), json!(cursor));
+        }
+        if let Some(include_archived) = options.include_archived {
+            variables.insert("includeArchived".to_string(), json!(include_archived));
+        }
+
+        let data = client.request(COUNT_ISSUES_QUERY, Value::Object(variables))?;
+        let connection = data
+            .get("issues")
+            .ok_or_else(|| CliError::cli("Linear API response did not contain issues"))?;
+        total += connection
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(|nodes| nodes.len() as i64)
+            .unwrap_or(0);
+
+        match connection.get("pageInfo") {
+            Some(page_info) => {
+                has_next = page_info
+                    .get("hasNextPage")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                after = page_info
+                    .get("endCursor")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            }
+            None => has_next = false,
+        }
+    }
+
+    Ok(total)
+}
+
+/// Issues across teams in a query filter, shaped `{ nodes, pageInfo }`.
+///
+/// `limit == Some(0)` fetches everything; `None` uses the default page size.
+pub fn fetch_issues_for_query(options: &FetchIssuesForQueryOptions) -> Result<Value> {
+    let client = graphql::client()?;
+    let filter = issue_filter(options)?;
 
     let fetch_all = options.limit == Some(0);
     let limit = options.limit.unwrap_or(50);

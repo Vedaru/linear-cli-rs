@@ -65,6 +65,9 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }
 tempfile = "3"
+# The integration suites state the same bound both ways (`--since 7d` and the date it means),
+# which needs a clock on the test's side of the process boundary.
+chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
 lto = true

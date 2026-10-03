@@ -455,6 +455,56 @@ query GetAllTeams {
 }
 "#;
 
+/// The count Linear will *state*: a team's issue total, with no nodes to walk.
+///
+/// `IssueConnection` has no count field - asking for `totalCount` is a validation error -
+/// so this is the only number the API hands over, and it takes no filter arguments. It
+/// answers the unfiltered case exactly; anything filtered counts ids instead.
+pub(crate) const TEAM_ISSUE_COUNTS_QUERY: &str = r#"
+query TeamIssueCounts($keys: [String!]) {
+  teams(filter: { key: { in: $keys } }) {
+    nodes {
+      key
+      issueCount
+    }
+  }
+}
+"#;
+
+/// The same stated number, for every team the token can see (`--all-teams`).
+///
+/// A separate query rather than an empty key filter: `in: []` matches no team, which would
+/// answer 0 to a question about the whole workspace.
+pub(crate) const ALL_TEAM_ISSUE_COUNTS_QUERY: &str = r#"
+query AllTeamIssueCounts {
+  teams {
+    nodes {
+      key
+      issueCount
+    }
+  }
+}
+"#;
+
+/// Counting a *filtered* set: the smallest thing an issue can be, and the cursor to walk.
+///
+/// One page when the answer fits in one, more when it does not - but never a title, a state
+/// or a body, which is the difference between answering "how many?" and fetching the issues
+/// to find out.
+pub(crate) const COUNT_ISSUES_QUERY: &str = r#"
+query CountIssues($filter: IssueFilter, $sort: [IssueSortInput!], $first: Int, $after: String, $includeArchived: Boolean) {
+  issues(filter: $filter, sort: $sort, first: $first, after: $after, includeArchived: $includeArchived) {
+    nodes {
+      id
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"#;
+
 pub(crate) const GET_LABELS_QUERY: &str = r#"
 query GetTeamLabels($teamId: String!) {
   team(id: $teamId) {
