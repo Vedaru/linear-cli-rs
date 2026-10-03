@@ -846,3 +846,46 @@ fn a_change_the_mapping_does_not_claim_is_left_alone() {
     harness.deliver("forgejo", "issues", body);
     assert_eq!(harness.writes_to_the_forge(), before);
 }
+
+/// The other half of the assignee story, and the incident. The forge holds an
+/// assignee, Linear holds one of its own, and no identity map says who is who.
+///
+/// Reading "I cannot name this login" as "the source has no assignee" makes the
+/// mirror send `assigneeId: null` - which Linear reads as *unassign*, not as a skip -
+/// and the value Linear owned is gone. Observed for real: 58 issues were cleared
+/// within two minutes of being assigned, and the only one that survived was the one
+/// whose forge mirror happened to have no assignee.
+#[test]
+fn an_untranslatable_assignee_does_not_clear_the_one_the_target_holds() {
+    let mut harness = Harness::start();
+    harness.world.lock().unwrap().linear = Some(linear_issue_assigned(
+        "Mirror the thing",
+        "Todo",
+        "loner@example.com",
+    ));
+    harness.deliver("linear", "Issue", &linear_issue("create"));
+
+    // Somebody assigns the issue *on the forge* - a login the mapping cannot name on
+    // Linear - and edits the title in the same move, so there is a write to look at.
+    {
+        let mut world = harness.world.lock().unwrap();
+        let mut issue = world.forgejo.clone().expect("the create made one");
+        issue["assignees"] = json!([{ "login": "vedaru" }]);
+        issue["title"] = json!("Mirror the thing, assigned on the forge");
+        world.forgejo = Some(issue);
+    }
+    harness.deliver("forgejo", "issues", &forgejo_issue("edited"));
+
+    let updates = harness.linear.graphql("IssueUpdate");
+    assert_eq!(updates.len(), 1, "the edit is one update: {updates:?}");
+    let input = &updates[0].body["variables"]["input"];
+    assert_eq!(
+        input["title"], "Mirror the thing, assigned on the forge",
+        "the edit itself still travels"
+    );
+    assert!(
+        input.get("assigneeId").is_none(),
+        "the assignee must not be named at all - an absent key is `leave it`, a null one \
+         is `unassign`, which is what this used to send. Sent: {input}"
+    );
+}

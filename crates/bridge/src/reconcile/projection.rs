@@ -84,11 +84,34 @@ pub struct Projected {
     /// instead - a due date or a priority as a label. Nothing was lost, so these are
     /// not "skipped"; they are reported so the shape the value arrived in is visible.
     pub emulated: Vec<Skipped>,
+    /// The source holds an assignee with no counterpart on the target, so the target
+    /// has to keep whatever assignee it holds. See [`Projected::hold_untranslated`].
+    pub untranslated_assignee: bool,
 }
 
 impl Projected {
     pub fn is_degraded(&self) -> bool {
         !self.skipped.is_empty()
+    }
+
+    /// Hold an assignee nobody can translate at the counterpart's own value.
+    ///
+    /// The mirror has no opinion about a value it cannot express, and "no opinion" is
+    /// `Leave`, not `Clear`. Emptying the field instead - which is what this did
+    /// first - makes the diff say *the source has no assignee*, which the sink then
+    /// writes, deleting the assignee the target owns while reporting the field as
+    /// skipped. That is the worst shape a mirror bug can take: it destroys data on
+    /// one side and reports a skip in the same breath.
+    ///
+    /// The distinction that matters is between *no assignee* and *no way to say who*.
+    /// A source that genuinely holds none still clears the target - that is an edit
+    /// someone made and expects to travel. A source whose assignee has no counterpart
+    /// is not an edit at all, so the field is left out of the comparison, exactly as
+    /// the module's rule asks.
+    pub fn hold_untranslated(&mut self, counterpart: Option<&IssueFields>) {
+        if self.untranslated_assignee {
+            self.fields.assignee = counterpart.and_then(|fields| fields.assignee.clone());
+        }
     }
 }
 
@@ -118,6 +141,7 @@ impl<'a> Projection<'a> {
         // what was skipped, because those are two different things to an operator:
         // one is lost, the other arrived in a different shape.
         let mut emulated = Vec::new();
+        let mut untranslated_assignee = false;
 
         if !self.capabilities.labels && !fields.labels.is_empty() {
             projected.labels = Vec::new();
@@ -146,6 +170,11 @@ impl<'a> Projection<'a> {
                 Some(key) => projected.assignee = Some(key),
                 None => {
                     projected.assignee = None;
+                    // Emptied here, and put back by `hold_untranslated` at the
+                    // counterpart's own value: the diff must not read this as "the
+                    // source has no assignee", or the sink writes that and deletes
+                    // what the target holds.
+                    untranslated_assignee = true;
                     let reason = if self.users.is_empty() {
                         Reason::NoIdentityMap
                     } else {
@@ -160,6 +189,7 @@ impl<'a> Projection<'a> {
             fields: projected,
             skipped,
             emulated,
+            untranslated_assignee,
         }
     }
 
@@ -285,6 +315,55 @@ mod tests {
 
         assert_eq!(projected.fields.assignee, None);
         assert_eq!(projected.skipped[0].reason, Reason::NoIdentityMap);
+    }
+
+    /// The flag that keeps a caller from reading "no way to say who" as "nobody".
+    #[test]
+    fn an_untranslatable_assignee_is_flagged_for_the_caller_to_hold() {
+        let (caps, users) = (forgejo(), UserMap::default());
+        let projection = Projection::new(&caps, &users);
+
+        let mut projected = projection.of(&full_fields(), &linear(), &forge());
+        assert!(projected.untranslated_assignee);
+
+        // Held at the counterpart's own value, there is nothing for the diff to say.
+        // Emptied instead, it says "the source has no assignee" - a `Clear`, which the
+        // sink writes, deleting the assignee the target owns.
+        let counterpart = IssueFields {
+            assignee: Some("vedaru".to_string()),
+            ..IssueFields::default()
+        };
+        projected.hold_untranslated(Some(&counterpart));
+
+        assert_eq!(projected.fields.assignee.as_deref(), Some("vedaru"));
+        assert!(projected.fields.diff(&counterpart).assignee.is_leave());
+    }
+
+    /// The case that *must* still clear: a source with no assignee is an edit someone
+    /// made, not a value the mirror could not express.
+    #[test]
+    fn a_source_with_no_assignee_still_clears_the_target() {
+        let (caps, users) = (forgejo(), UserMap::default());
+        let projection = Projection::new(&caps, &users);
+        let source = IssueFields {
+            assignee: None,
+            ..full_fields()
+        };
+
+        let mut projected = projection.of(&source, &linear(), &forge());
+        assert!(!projected.untranslated_assignee);
+
+        let counterpart = IssueFields {
+            assignee: Some("vedaru".to_string()),
+            ..IssueFields::default()
+        };
+        projected.hold_untranslated(Some(&counterpart));
+
+        assert_eq!(projected.fields.assignee, None);
+        assert_eq!(
+            projected.fields.diff(&counterpart).assignee,
+            crate::domain::Change::Clear
+        );
     }
 
     #[test]

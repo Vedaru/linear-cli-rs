@@ -404,6 +404,12 @@ impl ReconcileHandler {
             None => Projected::default(),
         };
 
+        // An assignee the target has no counterpart for is held at the target's own
+        // value: the delivery reports the skip (it travels in `expected.skipped`) and
+        // writes nothing about the field, rather than sending "no assignee" and
+        // deleting the one the target holds.
+        expected.hold_untranslated(counterpart.fields.as_ref());
+
         // A container is a field of the issue mirror, and only the mapping's *sink*
         // is asked to hold it: the source names a project in its own ids, and the
         // pairing says which project on the sink that is. Any other direction leaves
@@ -1291,6 +1297,11 @@ impl ReconcileHandler {
             &mapping.source.connector,
             &mapping.sink.connector,
         );
+        // Same rule as the delivery path: an assignee the sink cannot name is held at
+        // the sink's own, so a sweep neither reports it as a difference nor proposes
+        // clearing it. A sweep that judged this differently from a delivery would be
+        // the bug it exists to catch.
+        source_as_sink.hold_untranslated(Some(&sink.fields));
         if source.reference.kind == EntityKind::Issue {
             source_as_sink.fields.project = self.project_on(
                 &mapping.source,
@@ -1305,6 +1316,7 @@ impl ReconcileHandler {
             &mapping.sink.connector,
             &mapping.source.connector,
         );
+        sink_as_source.hold_untranslated(Some(&source.fields));
         let recorded = pairing
             .link
             .as_ref()
