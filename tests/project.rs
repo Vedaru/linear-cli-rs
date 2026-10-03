@@ -405,3 +405,144 @@ fn project_comment_list_empty_prints_notice() {
     assert!(out.success(), "stderr: {}", out.stderr);
     assert_eq!(out.stdout.trim(), "No comments found for this project");
 }
+
+/// A project with every connection section populated, so one test can hold the
+/// whole `project view` rendering to its shape.
+fn full_project() -> serde_json::Value {
+    json!({
+        "id": PROJECT_ID,
+        "name": "Launch",
+        "identifier": "LNCH",
+        "description": "Ship it",
+        "content": "The overview",
+        "slugId": "launch",
+        "icon": "Rocket",
+        "color": "#5e6ad2",
+        "progress": 0.5,
+        "scope": 3,
+        "url": "https://linear.app/acme/project/launch",
+        "priority": 2,
+        "health": "onTrack",
+        "healthUpdatedAt": null,
+        "startDate": "2024-01-01",
+        "startDateResolution": "day",
+        "targetDate": "2024-06-30",
+        "targetDateResolution": "month",
+        "startedAt": null,
+        "completedAt": null,
+        "canceledAt": null,
+        "archivedAt": null,
+        "autoArchivedAt": null,
+        "createdAt": "2024-01-01T00:00:00.000Z",
+        "updatedAt": "2024-01-02T00:00:00.000Z",
+        "status": { "id": "st-1", "name": "In Progress", "color": "#5e6ad2", "type": "started", "position": 1.0 },
+        "creator": { "id": "u1", "name": "Ada", "displayName": "Ada" },
+        "lead": { "id": "u2", "name": "Ada", "displayName": "Ada" },
+        "teams": { "nodes": [{ "name": "Engineering", "key": "ENG" }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "labels": { "nodes": [{ "name": "Bug" }], "pageInfo": { "hasNextPage": true, "endCursor": "c1" } },
+        "members": { "nodes": [{ "name": "Ada", "displayName": "Ada" }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "initiatives": { "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "projectMilestones": { "nodes": [{
+            "name": "M7",
+            "status": "started",
+            "progress": 20.0,
+            "targetDate": "2026-12-01",
+            "description": "one\ntwo",
+            "sortOrder": 1.0
+        }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "externalLinks": { "nodes": [{ "label": "Docs", "url": "https://x", "sortOrder": 1.0 }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "documents": { "nodes": [{ "title": "Spec", "url": "https://d", "sortOrder": 1.0 }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "attachments": { "nodes": [{ "title": "PR", "url": "https://pr", "sourceType": "github", "subtitle": "open" }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "relations": { "nodes": [{
+            "anchorType": "end",
+            "relatedAnchorType": "start",
+            "relatedProject": { "name": "Other", "url": "https://o" },
+            "projectMilestone": { "name": "M7" },
+            "relatedProjectMilestone": null
+        }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "inverseRelations": { "nodes": [{
+            "anchorType": "end",
+            "relatedAnchorType": "start",
+            "project": { "name": "Them", "url": "https://t" },
+            "projectMilestone": null,
+            "relatedProjectMilestone": { "name": "M8" }
+        }], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "issues": { "nodes": [
+            { "state": { "type": "started" } },
+            { "state": { "type": "started" } },
+            { "state": { "type": "unstarted" } }
+        ], "pageInfo": { "hasNextPage": false, "endCursor": null } },
+        "lastUpdate": { "user": { "displayName": "Ada", "name": "Ada" }, "createdAt": "2026-10-03T00:00:00.000Z", "health": "onTrack", "body": "All good" }
+    })
+}
+
+#[test]
+fn project_view_renders_every_connection_section() {
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "GetProjectDetails",
+        json!({ "data": { "project": full_project() } }),
+    )]);
+
+    let out = run_cli(&["project", "view", PROJECT_ID], &common::mock_env(&server));
+    assert!(out.success(), "stderr: {}", out.stderr);
+    let stdout = &out.stdout;
+    for expected in [
+        "# Launch [LNCH]",
+        "**Status:** In Progress",
+        "**Priority:** High",
+        "**Health:** onTrack",
+        "**Lead:** @Ada",
+        "**Progress:** 50%",
+        // A truncated meta connection ends in an ellipsis rather than trailing off.
+        "**Labels:** Bug, …",
+        "## Milestones",
+        "- **M7** _[started, 20%, target 2026-12-01]_",
+        "  one\n  two",
+        "## Resources",
+        "- **Docs**: https://x",
+        "## Documents",
+        "- **Spec**: https://d",
+        "## Attachments",
+        "- **PR**: https://pr _[github]_",
+        "  _open_",
+        "## Related projects",
+        "- **Blocks** Other: https://o _(from milestone M7)_",
+        // Incoming relations store the other project's anchors, so the renderer
+        // swaps them: the same anchors read "Blocked by" from this side.
+        "- **Blocked by** Them: https://t _(from milestone M8)_",
+        "## Issues",
+        "3 total",
+        "2 in progress",
+        "1 to do",
+        "## Details",
+        "- **Slug:** launch",
+        "- **Start date:** 2024-01-01 (day)",
+        "- **Target date:** 2024-06-30 (month)",
+        "## Latest Update",
+        "**By:** Ada",
+        "All good",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn project_view_marks_a_truncated_connection() {
+    let mut project = full_project();
+    project["projectMilestones"]["pageInfo"]["hasNextPage"] = json!(true);
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "GetProjectDetails",
+        json!({ "data": { "project": project } }),
+    )]);
+
+    let out = run_cli(&["project", "view", PROJECT_ID], &common::mock_env(&server));
+    assert!(out.success(), "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("_…and more (showing the first 250)._"),
+        "stdout: {}",
+        out.stdout
+    );
+}
