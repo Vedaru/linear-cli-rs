@@ -160,3 +160,57 @@ fn a_cleared_milestone_is_sent_as_null_rather_than_omitted() {
     let sent = fake.only("PATCH", "/api/v1/repos/Vedaru/linear-cli-rs/issues/12");
     assert_eq!(sent.body["milestone"], Value::Null, "sent: {}", sent.body);
 }
+
+// ---------------------------------------------------------------------------
+// The other direction: Linear takes `projectMilestoneId`, and its milestones are
+// queryable workspace-wide rather than through the team the other lookups use.
+
+fn linear_routes(_method: &str, path: &str, body: &Value) -> (u16, Value) {
+    assert_eq!(path, "/graphql", "Linear is one endpoint");
+    let query = body["query"].as_str().unwrap_or_default();
+    if query.contains("IssueUpdate") {
+        return (
+            200,
+            json!({ "data": { "issueUpdate": { "success": true, "issue": { "id": "issue-1" } } } }),
+        );
+    }
+    if query.contains("ProjectMilestones") {
+        return (
+            200,
+            json!({ "data": { "projectMilestones": { "nodes": [{ "id": "ms-7", "name": NAME }] } } }),
+        );
+    }
+    (
+        404,
+        json!({ "errors": [{ "message": format!("no route for: {query}") }] }),
+    )
+}
+
+#[test]
+fn linear_is_sent_the_resolved_milestone_uuid() {
+    let fake = Fake::start(linear_routes);
+    let sink = fake.sink("linear");
+
+    let patch = Patch {
+        milestone: Change::Set(NAME.into()),
+        ..Default::default()
+    };
+    let mut effective = with_milestone();
+    effective.title = "Mirror the thing".into();
+    sink.update_issue("VED", "issue-1", &patch, &effective, None)
+        .expect("update");
+
+    let updates = fake.graphql("IssueUpdate");
+    assert_eq!(updates.len(), 1, "one update, not a storm: {updates:?}");
+    assert_eq!(
+        updates[0].body["variables"]["input"]["projectMilestoneId"],
+        json!("ms-7"),
+        "Linear wants the milestone's id in the issue input, not its name: {}",
+        updates[0].body
+    );
+    assert_eq!(
+        fake.graphql("ProjectMilestones").len(),
+        1,
+        "the workspace-wide collection, resolved once"
+    );
+}
