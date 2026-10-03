@@ -19,6 +19,12 @@
 #     which is how upstream declares its own group-level flags.
 #
 # A change to this file is a decision about what "parity" means; it is meant to show up as a diff.
+#
+# One case to know about when reviewing a refresh: an upstream option can be a *tombstone* - removed
+# in behaviour and kept in the declaration. `issue mine --assignee` / `--all-assignees` /
+# `--unassigned` are exactly that ("Removed: use `issue query --assignee` instead", and passing one
+# raises a validation error), so this file records the declaration while tests/upstream_parity.rs
+# records what we do about it. A tombstone is not a gap; a *new* unaccepted flag is.
 api
 api --paginate
 api --silent

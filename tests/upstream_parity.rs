@@ -23,22 +23,28 @@ use common::run_cli;
 
 /// Upstream flags our CLI does not accept, with the reason and where it is tracked.
 ///
-/// Each entry is a (command path, flag) pair, spelled as the fixture spells them.
+/// All three are the same case, and it is worth spelling out because the first reading of the
+/// fixture got it backwards: upstream *removed* these and kept the declarations as tombstones.
+/// `issue-mine.ts` documents them as "Removed: use `issue query --assignee` instead" and raises a
+/// validation error naming `linear issue query` when one is passed. So this is not a gap in our
+/// port - it is a place where upstream's declaration outlives its behaviour, and ours does not have
+/// the dead flags to declare. Nothing to do; the entry exists so the guard can tell this case from
+/// a real one.
 const UNACCEPTED_FLAGS: &[(&str, &str, &str)] = &[
     (
         "issue mine",
         "--assignee",
-        "upstream exposes the list filters on `issue mine`; ours takes no assignee filter at all",
+        "removed upstream ('use `issue query --assignee` instead'); the declaration is a tombstone",
     ),
     (
         "issue mine",
         "--all-assignees",
-        "same gap: upstream's `issue mine` can widen past its default assignee scope",
+        "removed upstream ('use `issue query --all-assignees` instead') - same tombstone",
     ),
     (
         "issue mine",
         "--unassigned",
-        "same gap: upstream's `issue mine --unassigned` lists unassigned issues",
+        "removed upstream; `issue query --unassigned` is the supported spelling, and ours has it",
     ),
 ];
 
