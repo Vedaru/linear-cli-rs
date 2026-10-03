@@ -45,6 +45,8 @@ pub enum Command {
     /// Manage project status updates
     #[command(alias = "pu")]
     ProjectUpdate(crate::commands::project_update::ProjectUpdateArgs),
+    /// Read roadmaps and the projects on them (reads only: Linear deprecated the writes)
+    Roadmap(crate::commands::roadmap::RoadmapArgs),
     /// Manage Linear teams
     #[command(alias = "t")]
     Team(crate::commands::team::TeamArgs),

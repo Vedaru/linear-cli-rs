@@ -15,6 +15,7 @@ pub mod markdown;
 pub mod milestone;
 pub mod project;
 pub mod project_update;
+pub mod roadmap;
 pub mod schema;
 #[cfg(feature = "service")]
 pub mod sync;
@@ -41,6 +42,7 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Issue(args)) => issue::run(args),
         Some(Command::Project(args)) => project::run(args),
         Some(Command::ProjectUpdate(args)) => project_update::run(args),
+        Some(Command::Roadmap(args)) => roadmap::run(args),
         Some(Command::Team(args)) => team::run(args),
         Some(Command::User(args)) => user::run(args),
         Some(Command::Cycle(args)) => cycle::run(args),

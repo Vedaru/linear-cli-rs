@@ -126,6 +126,13 @@ one is the missing half of a group that could only move one way.
   adding or removing the authenticated API user as a watcher.
 - `issue comment resolve`, `issue comment unresolve` — `commentResolve` /
   `commentUnresolve`, which the app's resolve button covers but no CLI did.
+- `roadmap list`, `roadmap view` — `roadmaps` / `roadmap(id:)` with the projects read from the
+  roadmap's own relation. The **write** half is deliberately absent, and not only because upstream
+  has none: Linear deprecated `Roadmap` and `RoadmapToProject`, and the API refuses the writes by
+  name - `roadmapCreate`, `roadmapArchive`, `roadmapDelete` and `roadmapToProjectDelete` all answer
+  "Roadmaps are deprecated, use initiatives instead" (measured live before the module was written),
+  so those commands could only fail. `initiative` is the successor and its write half, including
+  `initiative add-project` / `remove-project`, is wrapped.
 - `view list`, `view view`, `view create`, `view update`, `view delete` —
   `customViews` / `customViewCreate` / `customViewUpdate` / `customViewDelete`.
   Upstream has no `view` command, so the filters a team had agreed on were
@@ -156,3 +163,9 @@ Deliberately **not** wrapped, with the reason:
   archive/unarchive/delete), and the customer, release, webhook, notification,
   and integration subsystems: real API surface, but whole domains rather than
   missing halves, and none of them has a CLI home yet.
+- The roadmap **write** half (`roadmapCreate` / `roadmapUpdate` / `roadmapArchive` /
+  `roadmapDelete`, and `roadmapToProjectCreate` / `roadmapToProjectDelete`): Linear
+  deprecated both types and the API refuses the calls by name — "Roadmaps are
+  deprecated, use initiatives instead" — so a command could only fail. Reading
+  them is wrapped (`roadmap list`, `roadmap view`); writing one is
+  `initiative add-project` and friends.
