@@ -311,7 +311,7 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
             let written = if args.json {
                 write_json_schema(&mut file, schema)
             } else {
-                file.write_all(print_schema(schema).as_bytes())
+                print_schema_to(&mut file, schema)
             };
             written
                 .and_then(|()| file.write_all(b"\n"))
@@ -324,11 +324,26 @@ fn run_inner(args: SchemaArgs) -> Result<()> {
                 // Streamed rather than built as a String first.
                 print_json_schema(schema);
             } else {
-                output::line(&print_schema(schema));
+                // Streamed too, definition by definition - see `print_schema_to`.
+                print_sdl_schema(schema);
             }
         }
     }
     Ok(())
+}
+
+/// Print the SDL to stdout, definition by definition.
+///
+/// The stdout sibling of `print_schema_to`: same reason it exists, same "write errors are ignored
+/// on the stdout path" rule as `print_json_schema` below, and the trailing newline the old
+/// `output::line(...)` used to add.
+fn print_sdl_schema(schema: &Schema<'_>) {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if print_schema_to(&mut lock, schema).is_err() {
+        return;
+    }
+    let _ = writeln!(lock);
 }
 
 /// Serialise the introspection result the way `output::print_json` does, but
@@ -399,7 +414,15 @@ fn sorted_by_name<T: Named>(items: &[T]) -> Vec<&T> {
     sorted
 }
 
-fn print_schema(schema: &Schema<'_>) -> String {
+/// Render the SDL into `writer`, one top-level definition at a time.
+///
+/// This was `fn print_schema(&Schema) -> String`, which built every definition into a `Vec<String>`
+/// and then `join`ed a second, equally large copy out of it - so the peak held the document about
+/// twice over, and both call sites then handed the result to `write_all`. The per-type printers
+/// still return a `String` each (they are small, and one is alive at a time), but nothing ever holds
+/// the whole document: this writes each definition as it is produced. The comment at the file call
+/// site used to *say* the output was written "straight into the file"; it was not, until now.
+fn print_schema_to<W: Write>(writer: &mut W, schema: &Schema<'_>) -> std::io::Result<()> {
     let query_name = schema.query_type.as_ref().and_then(|ty| ty.name.as_deref());
     let mutation_name = schema
         .mutation_type
@@ -416,7 +439,9 @@ fn print_schema(schema: &Schema<'_>) -> String {
         && mutation_name.map_or(true, |n| n == "Mutation")
         && subscription_name.map_or(true, |n| n == "Subscription");
 
-    let mut parts: Vec<String> = Vec::new();
+    // Definitions are separated by a blank line, and empty renderings are dropped - the same rule
+    // the old `parts.retain(..).join("\n\n")` had, kept because the golden file depends on it.
+    let mut first = true;
 
     if !common_names {
         let mut operation_types = Vec::new();
@@ -429,7 +454,11 @@ fn print_schema(schema: &Schema<'_>) -> String {
         if let Some(name) = subscription_name {
             operation_types.push(format!("  subscription: {name}"));
         }
-        parts.push(format!("schema {{\n{}\n}}", operation_types.join("\n")));
+        write_part(
+            writer,
+            format!("schema {{\n{}\n}}", operation_types.join("\n")),
+            &mut first,
+        )?;
     }
 
     let mut custom: Vec<&Directive<'_>> = schema
@@ -439,7 +468,7 @@ fn print_schema(schema: &Schema<'_>) -> String {
         .collect();
     custom.sort_by(|a, b| natural_compare(a.name.as_ref(), b.name.as_ref()));
     for directive in &custom {
-        parts.push(print_directive(directive));
+        write_part(writer, print_directive(directive), &mut first)?;
     }
 
     let mut defined: Vec<&TypeDef<'_>> = schema
@@ -449,11 +478,23 @@ fn print_schema(schema: &Schema<'_>) -> String {
         .collect();
     defined.sort_by(|a, b| natural_compare(a.name.as_ref(), b.name.as_ref()));
     for ty in &defined {
-        parts.push(print_type(ty));
+        write_part(writer, print_type(ty), &mut first)?;
     }
 
-    parts.retain(|part| !part.is_empty());
-    parts.join("\n\n")
+    Ok(())
+}
+
+/// One definition, preceded by the blank line separator when it is not the first.
+fn write_part<W: Write>(writer: &mut W, part: String, first: &mut bool) -> std::io::Result<()> {
+    if part.is_empty() {
+        return Ok(());
+    }
+    if *first {
+        *first = false;
+    } else {
+        writer.write_all(b"\n\n")?;
+    }
+    writer.write_all(part.as_bytes())
 }
 
 fn is_specified_directive(name: &str) -> bool {
