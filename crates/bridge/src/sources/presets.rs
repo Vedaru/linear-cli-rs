@@ -18,7 +18,6 @@ pub const PRESETS: &[(&str, &str)] = &[
     // The first platform that is neither Linear nor a forge: different signature header (and a
     // prefixed digest), different event actions, several assignees, no due date, no board. Read
     // half only - see the file for why its write half is not configuration.
-    ("github", include_str!("../../presets/github.toml")),
 ];
 
 /// The names a config may use, for error messages.
