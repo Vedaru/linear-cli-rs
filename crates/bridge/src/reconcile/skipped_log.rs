@@ -74,11 +74,16 @@ pub fn line(mapping: &str, skipped: &Skipped) -> String {
 }
 
 /// What an operator can do about a reason, when there is something.
+///
+/// The key named here is `[[mapping.identity]]` - the array-of-tables `MappingConfig::identity`
+/// parses, documented with its `linear`/`forgejo` pair shape in `config.rs`. It is spelled out
+/// rather than paraphrased because a warning that names the wrong key sends someone to a config
+/// that does not exist; this one did, in the first draft.
 fn advice(reason: Reason) -> Option<&'static str> {
     match reason {
         Reason::NoIdentityMap => Some(
-            "account translation is off, not guessed: add one [[mapping.user]] entry per account \
-             to translate logins between the platforms",
+            "account translation is off, not guessed: add a [[mapping.identity]] entry per person, \
+             naming the account on each platform",
         ),
         Reason::Unsupported | Reason::Unmapped | Reason::Emulated => None,
     }
@@ -129,12 +134,12 @@ mod tests {
         let reported = line("VED-42", &skip("assignee", Reason::NoIdentityMap));
         assert!(reported.contains("no identity map"), "{reported}");
         assert!(
-            reported.contains("[[mapping.user]]"),
-            "the fix is in the line: {reported}"
+            reported.contains("[[mapping.identity]]"),
+            "the fix is in the line, under the key the config actually parses: {reported}"
         );
 
         // Reasons that are not a config gap do not pretend to have an answer.
         let reported = line("VED-42", &skip("assignee", Reason::Unmapped));
-        assert!(!reported.contains("[[mapping.user]]"), "{reported}");
+        assert!(!reported.contains("[[mapping.identity]]"), "{reported}");
     }
 }
