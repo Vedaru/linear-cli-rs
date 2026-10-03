@@ -271,14 +271,7 @@ impl Harness {
             sink_location: Default::default(),
             policy: policy(),
         };
-        let path = std::env::temp_dir().join(format!(
-            "linear-bridge-sync-{}-{}.db",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let path = support::test_database("linear-bridge-sync");
         let mut store = SqliteStore::open(&path).expect("a store");
         store.migrate().expect("migrated");
 

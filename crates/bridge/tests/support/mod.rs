@@ -8,6 +8,7 @@
 //! a binary that does not need, say, `graphql()` should not fail the build for it.
 #![allow(dead_code)]
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -19,6 +20,32 @@ use linear_bridge::domain::{Capabilities, Secret};
 use linear_bridge::sink::declarative::DeclarativeSink;
 use linear_bridge::sink::spec::SinkSpec;
 use linear_bridge::sources::presets;
+
+/// A database path no other harness in this process can pick.
+///
+/// `pid + wall-clock nanoseconds` looks unique and is not: two harnesses started within one clock
+/// tick name the same file, share one SQLite store, and an assertion about *this* test's queue then
+/// depends on whichever test wrote last. That is not hypothetical - it is how
+/// `a_forgejo_ping_is_acknowledged_with_no_work` failed on a loaded runner asserting an empty queue
+/// and reading `1`. An atomic counter cannot collide, and the pid keeps separate test binaries
+/// apart from one another.
+pub fn test_database(prefix: &str) -> PathBuf {
+    use std::sync::atomic::AtomicU64;
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}.db",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[test]
+fn a_second_database_path_is_a_different_file() {
+    // The defect this replaced: `pid + wall-clock nanoseconds` hands two harnesses started in the
+    // same clock tick the same file, so a test's own queue assertion reads whatever another test
+    // wrote. Same prefix twice must give two files.
+    assert_ne!(test_database("same-prefix"), test_database("same-prefix"));
+}
 
 // --- conformance fixtures ---------------------------------------------------
 //

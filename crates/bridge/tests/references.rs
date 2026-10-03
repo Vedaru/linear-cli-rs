@@ -151,14 +151,7 @@ impl Fixture {
             policy: policy(),
         };
 
-        let path = std::env::temp_dir().join(format!(
-            "linear-bridge-references-{}-{}.db",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let path = support::test_database("linear-bridge-references");
         let mut store = SqliteStore::open(&path).expect("a store");
         store.migrate().expect("migrated");
 
@@ -344,14 +337,7 @@ fn the_side_the_reference_arrives_from_does_not_change_where_it_goes() {
         sink_location: Default::default(),
         policy,
     };
-    let path = std::env::temp_dir().join(format!(
-        "linear-bridge-reversed-{}-{}.db",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let path = support::test_database("linear-bridge-reversed");
     let mut store = SqliteStore::open(&path).expect("a store");
     store.migrate().expect("migrated");
     let mut handler =

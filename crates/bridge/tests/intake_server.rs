@@ -45,14 +45,7 @@ impl Harness {
         // A dying intake thread says so in a log line. Without a logger installed, that
         // line goes nowhere and the symptom is a test that hangs for its whole timeout.
         linear_bridge::logging::init_default();
-        let database = std::env::temp_dir().join(format!(
-            "linear-bridge-test-{}-{}.db",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let database = support::test_database("linear-bridge-test");
         let sources = vec![
             Arc::new(DeclarativeSource::new(
                 "linear",

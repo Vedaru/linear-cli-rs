@@ -271,14 +271,7 @@ struct Harness {
 }
 
 fn database() -> String {
-    let path = std::env::temp_dir().join(format!(
-        "bridge-reconcile-{}-{}.db",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a sane clock")
-            .as_nanos()
-    ));
+    let path = support::test_database("bridge-reconcile");
     path.to_string_lossy().to_string()
 }
 
