@@ -95,7 +95,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
   not-found, GraphQL errors, HTTP failures). Failures print one line prefixed `✗` plus an
   indented suggestion on stderr, e.g.
   `✗ Failed to fetch projects: Team not found: NOSUCHTEAM` / `  Available teams: WAV (WAVE-cloud)`.
-- **`--json` is on 50 of the 105 leaf commands**, and the other 55 are listed *with a reason* in
+- **`--json` is on 53 of the 108 leaf commands**, and the other 55 are listed *with a reason* in
   `tests/json_coverage.rs` (`EXEMPT`) rather than quietly missing it: a command whose output is
   not data (a credential, a reference document, a scaffold, the raw API response) never will
   carry it, and the rest are mutations whose success is the exit code today. The ratchet fails if
@@ -128,7 +128,7 @@ team_id = "35feb448-7bc2-4bcb-a949-a58c7572949a"   # a UUID, a key or a name all
 
 ## Command reference
 
-22 groups, 105 leaf commands. Run `linear <group> --help` for flags — the help text
+23 groups, 108 leaf commands. Run `linear <group> --help` for flags — the help text
 is the authoritative reference. Where this port adds to upstream it says so: `AGENTS.md` lists
 every addition and every deliberate deviation.
 
@@ -149,6 +149,7 @@ every addition and every deliberate deviation.
 | `template` | `list` · `view` what a template pre-fills |
 | `document` | `list` · `view` · `create` · `update` · `delete` · `comment` |
 | `view` | `list` · `view` · `create` · `update` · `delete` custom views — and **apply** one to a listing with `issue query --view <name\|id>` |
+| `notification` | `list` · `read` · `archive` what Linear told this user — every listing and write names the user whose read state it is, because Linear's read state is per user |
 | `config` | `service` print the bridge's config sections, for a `linear.toml` you already have (no questions, and never a secret) |
 | `schema` | print the GraphQL schema, or `--json` for the raw introspection result |
 | `api` | raw GraphQL request |

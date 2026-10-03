@@ -75,6 +75,8 @@ pub enum Command {
     Document(crate::commands::document::DocumentArgs),
     /// List and manage custom views (Linear's saved filters)
     View(crate::commands::view::ViewArgs),
+    /// Notifications: what Linear told this user, and the read state that belongs to them
+    Notification(crate::commands::notification::NotificationArgs),
     /// Interactively generate .linear.toml configuration
     #[command(alias = "configure")]
     Config(crate::commands::config::ConfigArgs),

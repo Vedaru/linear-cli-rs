@@ -13,6 +13,7 @@ pub mod issue;
 pub mod label;
 pub mod markdown;
 pub mod milestone;
+pub mod notification;
 pub mod project;
 pub mod project_update;
 pub mod roadmap;
@@ -53,6 +54,7 @@ pub fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Template(args)) => template::run(args),
         Some(Command::Document(args)) => document::run(args),
         Some(Command::View(args)) => view::run(args),
+        Some(Command::Notification(args)) => notification::run(args),
         Some(Command::Config(args)) => config::run(args),
         Some(Command::Schema(args)) => schema::run(args),
         Some(Command::Api(args)) => api::run(args),
