@@ -150,7 +150,7 @@ variables = { id = "$id", input = { title = "$title", description = "$body", sta
 method = "POST"
 path = ""
 [sink.issue.fetch.body]
-query = "query Issue($id: String!) { issue(id: $id) { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } project { id } } }"
+query = "query Issue($id: String!) { issue(id: $id) { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } projectMilestone { name } project { id } } }"
 variables = { id = "$id" }
 
 # Every issue of the team, for a sweep. Linear pages by cursor, so the walk follows
@@ -169,7 +169,7 @@ method = "POST"
 path = ""
 items = "/data/issues/nodes"
 [sink.issue.list.request.body]
-query = "query Issues($teamId: ID!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } project { id } } pageInfo { hasNextPage endCursor } } }"
+query = "query Issues($teamId: ID!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id identifier url title description dueDate priority state { name } labels { nodes { name } } assignee { email } projectMilestone { name } project { id } } pageInfo { hasNextPage endCursor } } }"
 variables = { teamId = "$scope_id", after = "$cursor" }
 [sink.issue.list.paginate.cursor]
 next = "/data/issues/pageInfo/endCursor"
