@@ -19,9 +19,9 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    canonical_labels, due_date_to_label, labels_to_due_date, labels_to_priority,
-    normalise_due_date, priority_to_label, Capabilities, Change, ConnectorId, IssueFields, Patch,
-    Secret,
+    canonical_labels, due_date_to_label, labels_to_due_date, labels_to_priority, normalise_color,
+    normalise_due_date, priority_to_label, Capabilities, Change, ConnectorId, IssueFields, Label,
+    Patch, Secret,
 };
 use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
@@ -128,7 +128,7 @@ impl DeclarativeSink {
     /// one - the capability says so - the priority travels as a label instead, so
     /// it is added back here: dropping it would quietly lose the priority of every
     /// issue the moment it crossed to a forge.
-    fn outbound_labels(&self, fields: &IssueFields) -> Vec<String> {
+    fn outbound_labels(&self, fields: &IssueFields) -> Vec<Label> {
         self.outbound_labels_for(
             &fields.canonical_labels(),
             Some(fields.priority),
@@ -143,14 +143,14 @@ impl DeclarativeSink {
     /// *clears* it.
     fn outbound_labels_for(
         &self,
-        names: &[String],
+        labels: &[Label],
         priority: Option<u8>,
         due_date: Option<&str>,
-    ) -> Vec<String> {
-        let mut labels = canonical_labels(names);
+    ) -> Vec<Label> {
+        let mut labels = canonical_labels(labels);
         if !self.capabilities.priorities {
             if let Some(label) = priority.and_then(priority_to_label) {
-                labels.push(label.to_string());
+                labels.push(Label::named(label));
             }
         }
         // And the same for a due date: the platform has no field for it, so it travels
@@ -158,7 +158,7 @@ impl DeclarativeSink {
         // still agree about the date instead of one of them silently losing it.
         if !self.capabilities.due_dates {
             if let Some(date) = due_date {
-                labels.push(due_date_to_label(date));
+                labels.push(Label::named(due_date_to_label(date)));
             }
         }
         // Order is left alone: the names arrived canonical (sorted, deduped, synthetic
@@ -188,11 +188,20 @@ impl DeclarativeSink {
         }
         if let Change::Set(names) = &patch.labels {
             let labels = self.outbound_labels_for(names, call.priority, call.due_date);
-            values["labels"] = json!(labels);
+            // The template wants names here; the ids it needs come from the lookup below.
+            values["labels"] = json!(labels
+                .iter()
+                .map(|label| label.name.clone())
+                .collect::<Vec<_>>());
             if uses(&operation.body, "$label_ids") {
                 let mut ids = Vec::with_capacity(labels.len());
-                for name in &labels {
-                    ids.push(self.resolve(LABEL, call.scope, name)?);
+                for label in &labels {
+                    ids.push(self.resolve_colored(
+                        LABEL,
+                        call.scope,
+                        &label.name,
+                        label.color.as_deref(),
+                    )?);
                 }
                 values["label_ids"] = json!(ids);
             }
@@ -266,7 +275,11 @@ impl DeclarativeSink {
         if let Some(fields) = call.fields {
             values["title"] = json!(fields.title);
             values["body"] = json!(fields.body);
-            values["labels"] = json!(self.outbound_labels(fields));
+            values["labels"] = json!(self
+                .outbound_labels(fields)
+                .iter()
+                .map(|label| label.name.clone())
+                .collect::<Vec<_>>());
             values["priority"] = if fields.priority == 0 {
                 Value::Null
             } else {
@@ -290,8 +303,13 @@ impl DeclarativeSink {
             if uses(&operation.body, "$label_ids") {
                 let names = self.outbound_labels(fields);
                 let mut ids = Vec::with_capacity(names.len());
-                for name in &names {
-                    ids.push(self.resolve(LABEL, scope, name)?);
+                for label in &names {
+                    ids.push(self.resolve_colored(
+                        LABEL,
+                        scope,
+                        &label.name,
+                        label.color.as_deref(),
+                    )?);
                 }
                 values["label_ids"] = json!(ids);
             }
@@ -325,7 +343,19 @@ impl DeclarativeSink {
 
     /// Resolve a name to a platform id out of the *issue* half's lookups.
     fn resolve(&self, kind: &str, scope: &str, name: &str) -> Result<Value> {
-        self.resolve_in(&self.spec.issue.lookup, None, kind, scope, name)
+        self.resolve_in(&self.spec.issue.lookup, None, kind, scope, name, None)
+    }
+
+    /// The same, for a label that has a colour: the colour is sent when the lookup has to
+    /// *create* the thing, which is the only moment either side learns it.
+    fn resolve_colored(
+        &self,
+        kind: &str,
+        scope: &str,
+        name: &str,
+        color: Option<&str>,
+    ) -> Result<Value> {
+        self.resolve_in(&self.spec.issue.lookup, None, kind, scope, name, color)
     }
 
     /// Resolve a name to a platform id, memoised per (kind, scope, container).
@@ -347,6 +377,7 @@ impl DeclarativeSink {
         kind: &str,
         scope: &str,
         name: &str,
+        color: Option<&str>,
     ) -> Result<Value> {
         let lookup = table.get(kind).ok_or_else(|| {
             Error::Config(format!(
@@ -377,7 +408,7 @@ impl DeclarativeSink {
                 self.id
             ))
         })?;
-        let values = self.lookup_values(kind, scope, container, Some(name), &create.body)?;
+        let values = self.lookup_values(kind, scope, container, Some(name), color, &create.body)?;
         let request = self.spec.request(create, &values, self.secret.as_ref())?;
         let response = self.send(&request)?;
         let id = create
@@ -412,7 +443,7 @@ impl DeclarativeSink {
         if let Some(cached) = self.lookups().candidates(kind, scope, container) {
             return Ok(cached);
         }
-        let values = self.lookup_values(kind, scope, container, None, &lookup.list.body)?;
+        let values = self.lookup_values(kind, scope, container, None, None, &lookup.list.body)?;
         let request = self
             .spec
             .request(&lookup.list, &values, self.secret.as_ref())?;
@@ -438,6 +469,7 @@ impl DeclarativeSink {
         scope: &str,
         container: Option<&str>,
         name: Option<&str>,
+        color: Option<&str>,
         body: &Option<Value>,
     ) -> Result<Value> {
         let mut values = json!({ "scope": scope });
@@ -446,6 +478,11 @@ impl DeclarativeSink {
         }
         if let Some(name) = name {
             values["name"] = json!(name);
+        }
+        // Only a lookup that creates something has a use for a colour, and only the label
+        // one is ever given it: this is the whole of what "a label keeps its colour" needs.
+        if let Some(color) = color {
+            values["color"] = json!(color);
         }
         if kind != TEAM && uses(body, "$scope_id") {
             // A lookup can need the *containing* scope resolved first (Linear lists
@@ -503,7 +540,7 @@ impl DeclarativeSink {
             if uses(&operation.body, "$column_id") {
                 let table = &self.declared("project", self.spec.project.as_ref())?.lookup;
                 values["column_id"] =
-                    json!(self.resolve_in(table, Some(project), COLUMN, scope, column)?);
+                    json!(self.resolve_in(table, Some(project), COLUMN, scope, column, None)?);
             }
             values["column"] = json!(column);
         }
@@ -705,8 +742,16 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // A list of URLs the entity declares elsewhere, for resolving a scope from a
         // link that points at the sink platform. Read with the same path/pick shape a
         // label list uses; identity, never content.
-        links: read_labels(body, read.links.as_ref()),
+        links: read_names(body, read.links.as_ref()),
     }
+}
+
+/// The names of a path/pick list, for the fields that are identity rather than content.
+fn read_names(body: &Value, field: Option<&ReadField>) -> Vec<String> {
+    read_labels(body, field)
+        .into_iter()
+        .map(|label| label.name)
+        .collect()
 }
 
 fn read_text(body: &Value, field: Option<&ReadField>) -> Option<String> {
@@ -724,7 +769,7 @@ fn read_text(body: &Value, field: Option<&ReadField>) -> Option<String> {
     }
 }
 
-fn read_labels(body: &Value, field: Option<&ReadField>) -> Vec<String> {
+fn read_labels(body: &Value, field: Option<&ReadField>) -> Vec<Label> {
     let Some(field) = field else {
         return Vec::new();
     };
@@ -736,12 +781,21 @@ fn read_labels(body: &Value, field: Option<&ReadField>) -> Vec<String> {
     };
     items
         .iter()
-        .filter_map(|item| match field.pick() {
-            Some(pick) => resolve_string(item, pick),
-            None => match item {
-                Value::String(text) => Some(text.clone()),
-                other => scalar(other),
-            },
+        .filter_map(|item| {
+            let name = match field.pick() {
+                Some(pick) => resolve_string(item, pick),
+                None => match item {
+                    Value::String(text) => Some(text.clone()),
+                    other => scalar(other),
+                },
+            }?;
+            // The colour is optional: a platform that does not carry one reads exactly as
+            // it did before, and the neutral form is normalised so the two sides agree.
+            let color = field
+                .color_pick()
+                .and_then(|pick| resolve_string(item, pick))
+                .and_then(|value| normalise_color(Some(&value)));
+            Some(Label { name, color })
         })
         .collect()
 }

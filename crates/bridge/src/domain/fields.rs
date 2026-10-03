@@ -28,7 +28,7 @@ pub struct IssueFields {
     pub title: String,
     pub body: String,
     /// Real labels, priority labels excluded, case- and order-normalised.
-    pub labels: Vec<String>,
+    pub labels: Vec<Label>,
     /// 0 means "no priority".
     pub priority: u8,
     /// `YYYY-MM-DD`, or `None` for no due date.
@@ -74,7 +74,7 @@ pub struct IssueFields {
 
 impl IssueFields {
     /// Everything a patch needs, computed once.
-    pub fn canonical_labels(&self) -> Vec<String> {
+    pub fn canonical_labels(&self) -> Vec<Label> {
         canonical_labels(&self.labels)
     }
 
@@ -94,7 +94,11 @@ impl IssueFields {
     /// restarts is what makes it usable as stored state.
     pub fn signature(&self) -> String {
         let body = crate::domain::markers::strip(&self.body);
-        let labels = canonical_labels(&self.labels).join(",");
+        let labels = canonical_labels(&self.labels)
+            .iter()
+            .map(Label::render)
+            .collect::<Vec<_>>()
+            .join(",");
         let priority = self.priority.to_string();
         let assignee = self.assignee.clone().unwrap_or_default().to_lowercase();
         let project = self.project.clone().unwrap_or_default();
@@ -157,7 +161,7 @@ impl<T> Change<T> {
 pub struct Patch {
     pub title: Change<String>,
     pub body: Change<String>,
-    pub labels: Change<Vec<String>>,
+    pub labels: Change<Vec<Label>>,
     pub priority: Change<u8>,
     pub due_date: Change<String>,
     pub milestone: Change<String>,
@@ -248,9 +252,9 @@ pub fn priority_to_label(priority: u8) -> Option<&'static str> {
 }
 
 /// Find a `priority:*` label in a set and read the priority out of it.
-pub fn labels_to_priority(labels: &[String]) -> Option<u8> {
+pub fn labels_to_priority(labels: &[Label]) -> Option<u8> {
     labels.iter().find_map(|label| {
-        let lower = label.to_ascii_lowercase();
+        let lower = label.name.to_ascii_lowercase();
         PRIORITY_LABELS
             .iter()
             .find(|(_, name)| *name == lower)
@@ -277,9 +281,9 @@ pub fn due_date_to_label(due_date: &str) -> String {
 ///
 /// The value has to look like a date to count: a user is free to label an issue
 /// `due:someday`, and reading that as a due date would invent one.
-pub fn labels_to_due_date(labels: &[String]) -> Option<String> {
+pub fn labels_to_due_date(labels: &[Label]) -> Option<String> {
     labels.iter().find_map(|label| {
-        let (prefix, value) = label.split_once(':')?;
+        let (prefix, value) = label.name.split_once(':')?;
         (prefix.eq_ignore_ascii_case("due") && is_a_date(value)).then(|| value.to_string())
     })
 }
@@ -299,15 +303,20 @@ fn is_a_date(value: &str) -> bool {
 /// Normalise label names: drop the synthetic priority labels, lowercase, dedupe,
 /// sort. Sorting is what makes the hash independent of the order a platform
 /// happened to return labels in.
-pub fn canonical_labels(names: &[String]) -> Vec<String> {
-    let mut labels: Vec<String> = names
+pub fn canonical_labels(labels: &[Label]) -> Vec<Label> {
+    let mut canonical: Vec<Label> = labels
         .iter()
-        .filter(|name| !is_priority_label(name) && !is_due_date_label(name))
-        .map(|name| name.to_ascii_lowercase())
+        .filter(|label| !is_priority_label(&label.name) && !is_due_date_label(&label.name))
+        .map(|label| Label {
+            name: label.name.to_ascii_lowercase(),
+            color: label.color.clone(),
+        })
         .collect();
-    labels.sort();
-    labels.dedup();
-    labels
+    canonical.sort();
+    // Deduplicate by *name*: two entries for one label are one label, and the colour that
+    // survives is the first in name order rather than whichever arrived last.
+    canonical.dedup_by(|a, b| a.name == b.name);
+    canonical
 }
 
 /// Normalise a due date to the `YYYY-MM-DD` the synced platforms expect.
@@ -459,7 +468,7 @@ mod tests {
     fn priority_round_trips_through_its_label() {
         for priority in 1..=4 {
             let label = priority_to_label(priority).expect("a label for 1..4");
-            assert_eq!(labels_to_priority(&[label.to_string()]), Some(priority));
+            assert_eq!(labels_to_priority(&[Label::named(label)]), Some(priority));
         }
         assert_eq!(priority_to_label(0), None, "0 is 'no priority'");
         assert_eq!(labels_to_priority(&["bug".into()]), None);
@@ -633,4 +642,78 @@ mod tests {
     fn the_marker_prefix_is_the_crate_wide_one() {
         assert_eq!(crate::domain::markers::MARKER_PREFIX, "linear-bridge");
     }
+}
+
+/// A label as the mirror has to know it: what it is called, and what colour it is.
+///
+/// The colour is here because a label that arrives grey on the other side is a label
+/// somebody has to fix by hand, and because the two platforms spell a colour differently -
+/// Linear sends `#EB5757`, a forge sends `eb5757` - so the neutral form is pinned to the
+/// six-digit form with the hash and normalised on the way in.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Label {
+    pub name: String,
+    pub color: Option<String>,
+}
+
+impl Label {
+    /// How the label reads in the content key: the name, and the colour when it has one.
+    ///
+    /// The colour is in the key on purpose - a label somebody recoloured is a label that
+    /// changed, and a key that ignored it would leave the two sides quietly disagreeing.
+    pub fn render(&self) -> String {
+        match &self.color {
+            Some(color) => format!("{}={color}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            color: None,
+        }
+    }
+}
+
+impl From<&str> for Label {
+    fn from(name: &str) -> Self {
+        Self::named(name)
+    }
+}
+
+impl From<String> for Label {
+    fn from(name: String) -> Self {
+        Self { name, color: None }
+    }
+}
+
+impl PartialEq<String> for Label {
+    fn eq(&self, other: &String) -> bool {
+        &self.name == other
+    }
+}
+
+impl PartialEq<&str> for Label {
+    fn eq(&self, other: &&str) -> bool {
+        self.name == *other
+    }
+}
+
+impl std::fmt::Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+/// A colour in the one spelling the neutral model uses: `#rrggbb`.
+///
+/// A forge answers `ededed` and Linear answers `#EB5757`, so something has to decide, and
+/// deciding here means the two sides cannot disagree about what "the same colour" means.
+pub fn normalise_color(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim().trim_start_matches('#');
+    if raw.len() != 6 || !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("#{}", raw.to_ascii_lowercase()))
 }

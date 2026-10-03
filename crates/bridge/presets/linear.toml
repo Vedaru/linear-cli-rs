@@ -184,7 +184,7 @@ state = "/state/name"
 due_date = "/dueDate"
 milestone = "/projectMilestone/name"
 priority = "/priority"
-labels = { path = "/labels/nodes", pick = "/name" }
+labels = { path = "/labels/nodes", pick = "/name", pick_color = "/color" }
 assignee = "/assignee/email"
 project = "/project/id"
 # The identifier a route may name an issue by (identity, not content).
@@ -245,7 +245,7 @@ due_date = "/data/issue/dueDate"
 milestone = "/data/issue/projectMilestone/name"
 state = "/data/issue/state/name"
 priority = "/data/issue/priority"
-labels = { path = "/data/issue/labels/nodes", pick = "/name" }
+labels = { path = "/data/issue/labels/nodes", pick = "/name", pick_color = "/color" }
 assignee = "/data/issue/assignee/email"
 project = "/data/issue/project/id"
 id = "/data/issue/id"
@@ -295,7 +295,7 @@ path = ""
 id = "/data/issueLabelCreate/issueLabel/id"
 [sink.issue.lookup.label.create.body]
 query = "mutation IssueLabelCreate($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { success issueLabel { id } } }"
-variables = { input = { name = "$name", teamId = "$scope_id" } }
+variables = { input = { name = "$name", color = "$color", teamId = "$scope_id" } }
 
 # The neutral assignee is an email, which is also how a Linear user is matched.
 # Name -> id for a project milestone. Linear scopes these to a project, but the

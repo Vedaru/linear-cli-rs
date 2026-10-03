@@ -319,7 +319,11 @@ impl ReconcileHandler {
                 container: container_identity,
                 own,
                 issue: issue_key,
-                labels: &fields.labels,
+                labels: &fields
+                    .labels
+                    .iter()
+                    .map(|label| label.name.clone())
+                    .collect::<Vec<_>>(),
                 links: &container.links,
             },
         ))

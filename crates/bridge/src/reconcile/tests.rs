@@ -39,7 +39,10 @@ fn fields(title: &str, labels: &[&str], priority: u8) -> IssueFields {
     IssueFields {
         title: title.into(),
         body: "why".into(),
-        labels: labels.iter().map(|label| (*label).to_string()).collect(),
+        labels: labels
+            .iter()
+            .map(|label| crate::domain::Label::named(*label))
+            .collect(),
         priority,
         due_date: None,
         milestone: None,

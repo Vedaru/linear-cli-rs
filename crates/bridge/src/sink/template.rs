@@ -104,6 +104,8 @@ pub const DIRECTIVES: &[&str] = &[
     "label_ids",
     // One milestone id, resolved from its name the same way the label ids above are.
     "milestone_id",
+    // A label's colour, which is only ever named when a lookup has to create one.
+    "color",
     "priority",
     "due_date",
     "assignee",

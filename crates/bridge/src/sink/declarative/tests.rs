@@ -65,6 +65,7 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
     let read = ReadSpec {
         milestone: None,
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
+            pick_color: None,
             path: Some("/labels".into()),
             pick: Some("/name".into()),
             from_labels: false,
@@ -113,7 +114,7 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
     let sink = build(&capabilities);
     let labels = sink.outbound_labels(&fields);
     assert!(
-        labels.contains(&"due:2026-10-09".to_string()),
+        labels.contains(&Label::named("due:2026-10-09")),
         "the date has to travel: {labels:?}"
     );
 
@@ -143,6 +144,7 @@ fn read_fields_map_a_flat_response_and_a_rich_one() {
         title: Some(ReadField::Pointer("/title".into())),
         body: Some(ReadField::Pointer("/body".into())),
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
+            pick_color: None,
             path: Some("/labels".into()),
             pick: Some("/name".into()),
             from_labels: false,
@@ -193,6 +195,7 @@ fn a_linear_shaped_response_reads_the_same_fields() {
         title: Some(ReadField::Pointer("/title".into())),
         body: Some(ReadField::Pointer("/description".into())),
         labels: Some(ReadField::Detailed(crate::sink::spec::ReadFieldSpec {
+            pick_color: None,
             path: Some("/labels/nodes".into()),
             pick: Some("/name".into()),
             from_labels: false,

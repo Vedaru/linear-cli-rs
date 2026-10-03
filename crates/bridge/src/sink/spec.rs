@@ -326,6 +326,9 @@ pub struct ReadFieldSpec {
     /// Pointer into each element of the array at `path`.
     #[serde(default)]
     pub pick: Option<String>,
+    /// Pointer inside each element to the colour, when the platform carries one.
+    #[serde(default)]
+    pub pick_color: Option<String>,
     /// Derive the value from the labels instead of reading a field of its own
     /// (how a priority survives on a platform that has no priority field).
     #[serde(default)]
@@ -344,6 +347,14 @@ impl ReadField {
         match self {
             ReadField::Pointer(_) => None,
             ReadField::Detailed(spec) => spec.pick.as_deref(),
+        }
+    }
+
+    /// Where the colour lives inside the same element, when the platform carries one.
+    pub fn color_pick(&self) -> Option<&str> {
+        match self {
+            ReadField::Pointer(_) => None,
+            ReadField::Detailed(spec) => spec.pick_color.as_deref(),
         }
     }
 

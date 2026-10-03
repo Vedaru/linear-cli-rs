@@ -187,7 +187,7 @@ body = "/body"
 due_date = "/due_date"
 milestone = "/milestone/title"
 state = "/state"
-labels = { path = "/labels", pick = "/name" }
+labels = { path = "/labels", pick = "/name" , pick_color = "/color" }
 assignee = "/assignees/0/login"
 priority = { from_labels = true }
 
@@ -238,7 +238,7 @@ body = "/body"
 due_date = "/due_date"
 milestone = "/milestone/title"
 state = "/state"
-labels = { path = "/labels", pick = "/name" }
+labels = { path = "/labels", pick = "/name" , pick_color = "/color" }
 assignee = "/assignees/0/login"
 # A forge has no priority field. The priority travels as a `priority:*` label
 # (and degrades to part of the body when the label cannot be written), so
@@ -277,7 +277,7 @@ path = "/repos/{scope}/labels"
 id = "/id"
 [sink.issue.lookup.label.create.body]
 name = "$name"
-color = "#ededed"
+color = "$color"
 
 # --- projects ---------------------------------------------------------------
 #
