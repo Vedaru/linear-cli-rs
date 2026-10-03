@@ -203,6 +203,21 @@ impl Snapshot {
         Self::default()
     }
 
+    /// The text here is text *this service* wrote, arriving back as the other
+    /// platform's own event.
+    ///
+    /// The marker is the only identity a copy carries that survives the trip on its
+    /// own: a pair adopted by its marker rather than written by us has no link row
+    /// (see `sweep::find_by_marker`), and the comment path has always relied on this
+    /// rather than on a link. Asking it here, once, where every create is decided, is
+    /// what stops a mirror from copying its own copies - each copy is a fresh entity,
+    /// so the next delivery would create another, and the loop has no fixed point.
+    pub fn is_own_write(&self) -> bool {
+        self.fields
+            .as_ref()
+            .is_some_and(|fields| markers::has_marker(&fields.body))
+    }
+
     pub fn exists(&self) -> bool {
         self.fields.is_some()
     }
@@ -453,16 +468,15 @@ fn plan_issue(context: &Context<'_>) -> Step {
                 // entity to copy. Creating again would be the classic duplicate.
                 return Step::Nothing(Nothing::Echo);
             }
-            Step::Create {
-                fields: context.expected.fields.clone(),
-                // The *other* platform's vocabulary, not ours: this is the state
-                // the new issue will have over there.
-                state: policy.names.of(context.side.other()).initial.clone(),
-                column: policy
-                    .column_for(context.observed.state.as_deref())
-                    .map(str::to_string),
-                skipped: context.expected.skipped.clone(),
-            }
+            // Not paired - but that is not the same as "new". See `create_step`.
+            create_step(&Pairwise {
+                side: context.side,
+                policy: context.policy,
+                observed: context.observed,
+                counterpart: context.counterpart,
+                expected: context.expected,
+                target: context.target,
+            })
         }
         crate::domain::Action::Other(_) => Step::Nothing(Nothing::NotOurKind),
         _ => plan_change(context),
@@ -519,20 +533,42 @@ pub fn converge(pair: &Pairwise<'_>, recorded: Option<&str>) -> Step {
         return Step::Nothing(Nothing::Unpaired);
     }
     if !pair.counterpart.exists() {
-        return Step::Create {
-            fields: pair.expected.fields.clone(),
-            state: pair.policy.names.of(pair.side.other()).initial.clone(),
-            column: pair
-                .policy
-                .column_for(pair.observed.state.as_deref())
-                .map(str::to_string),
-            skipped: pair.expected.skipped.clone(),
-        };
+        return create_step(pair);
     }
     // `recorded` is `None` for a pair adopted by its marker: nothing was ever written
     // across it, so no side can be "the echo of our own write" and the two are compared
     // on their content alone.
     change_step(pair, recorded)
+}
+
+/// The one place an issue copy is created.
+///
+/// Both entry points - a delivery (via `plan_issue`) and a sweep (via `converge`) -
+/// arrive at "there is no counterpart here, so make one", and they arrive the same
+/// way, so the question that must be asked before *any* create is asked once, here.
+///
+/// The question is not "is this paired?" - both callers have already asked that, and
+/// a pair adopted by its marker has no link row to find. It is "is the side we would
+/// copy *from* our own writing?", which only the text can answer.
+fn create_step(pair: &Pairwise<'_>) -> Step {
+    if pair.observed.is_own_write() {
+        // No link, but the text is ours: this is a copy of a copy, and creating from
+        // it is how a mirror runs away - each generation is a fresh entity, so the
+        // next delivery has nothing to match against either. Refusing is the only
+        // stable answer, and saying so (`Echo`) is better than a silent skip.
+        return Step::Nothing(Nothing::Echo);
+    }
+    Step::Create {
+        fields: pair.expected.fields.clone(),
+        // The *other* platform's vocabulary, not ours: this is the state the new
+        // issue will have over there.
+        state: pair.policy.names.of(pair.side.other()).initial.clone(),
+        column: pair
+            .policy
+            .column_for(pair.observed.state.as_deref())
+            .map(str::to_string),
+        skipped: pair.expected.skipped.clone(),
+    }
 }
 
 /// What to change on the other side, given a pair that exists on both.
@@ -1114,6 +1150,47 @@ mod tests {
         paired_with(&mut fixture, Side::Source);
 
         assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Echo));
+    }
+
+    #[test]
+    fn an_unpaired_entity_whose_text_carries_our_marker_is_not_created_from() {
+        // The runaway, in one delivery: a pair adopted by its marker has no link row,
+        // so the link check cannot see it and this used to reach `Step::Create`. The
+        // copy the create produced carried the marker too, so its own delivery created
+        // another - 134 issues in one afternoon, sub-second apart.
+        let mut fixture = Fixture::default();
+        fixture.event.action = Action::Created;
+        fixture.observed = Snapshot::present(fields("One", &[], 0), Some("open".into()));
+        if let Some(observed) = fixture.observed.fields.as_mut() {
+            observed.body = markers::with_marker(
+                &observed.body,
+                &markers::OriginMarker::new("forgejo", "issue-7"),
+            );
+        }
+        fixture.counterpart = Snapshot::gone();
+
+        assert_eq!(fixture.plan(Side::Source), Step::Nothing(Nothing::Echo));
+    }
+
+    #[test]
+    fn a_snapshot_whose_body_carries_our_marker_reads_as_our_own_write() {
+        // The predicate `create_step` consults. Both doors - a delivery and a sweep -
+        // decide their create through that one function, so this is what both of them
+        // ask; a sweep builds a `Pairwise` from the projection machinery, which is why
+        // the door is covered structurally rather than by a second fixture here.
+        let mut snapshot = Snapshot::present(fields("One", &[], 0), Some("open".into()));
+        assert!(!snapshot.is_own_write(), "an ordinary body is not ours");
+        if let Some(observed) = snapshot.fields.as_mut() {
+            observed.body = markers::with_marker(
+                &observed.body,
+                &markers::OriginMarker::new("linear", "issue-1"),
+            );
+        }
+        assert!(snapshot.is_own_write());
+        assert!(
+            !Snapshot::gone().is_own_write(),
+            "an entity the platform says is gone is nobody's write"
+        );
     }
 
     #[test]
