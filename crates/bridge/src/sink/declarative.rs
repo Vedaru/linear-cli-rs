@@ -27,7 +27,7 @@ use crate::error::{Error, Result};
 use crate::http_client::{HttpClient, Request, Response};
 use crate::pointer::{resolve, resolve_string};
 use crate::sink::spec::{LookupSpec, Operation, PaginateSpec, ReadField, ReadSpec, SinkSpec};
-use crate::sink::{CardColumn, RemoteIssue, RemoteRef, Sink};
+use crate::sink::{BoardCard, RemoteIssue, RemoteRef, Sink};
 
 /// A lookup a spec declares: the kinds the engine will resolve.
 const TEAM: &str = "team";
@@ -1133,9 +1133,9 @@ impl Sink for DeclarativeSink {
     /// no `[sink.board]` means this sink cannot see placement at all (`Unknown`), a board it
     /// read with the card on none of its columns means the card is genuinely adrift
     /// (`NotOnBoard`), and only the last of those is something a sweep may act on.
-    fn card_column(&self, scope: &str, project: &str, issue: &str) -> Result<CardColumn> {
+    fn board_cards(&self, scope: &str, project: &str) -> Result<Option<Vec<BoardCard>>> {
         let Some(board) = &self.spec.board else {
-            return Ok(CardColumn::Unknown);
+            return Ok(None);
         };
         let values = json!({ "scope": scope, "id": project });
         let request = self
@@ -1146,29 +1146,28 @@ impl Sink for DeclarativeSink {
             Some(pointer) => resolve(&response.body, pointer),
             None => Some(&response.body),
         }
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+        .and_then(Value::as_array);
 
-        for column in columns {
-            let cards = resolve(&column, &board.cards)
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let holds = cards.iter().any(|card| match card {
-                Value::Number(number) => number.to_string() == issue,
-                Value::String(text) => text == issue,
-                _ => false,
-            });
-            if holds {
-                return Ok(match resolve_string(&column, &board.title) {
-                    Some(title) => CardColumn::In(title),
-                    // A column without a name cannot be compared to one, so it is not evidence.
-                    None => CardColumn::Unknown,
-                });
+        // Borrow the response; the old per-issue `card_column` cloned the whole
+        // board (columns, then every column's cards) on every call.
+        let mut cards = Vec::new();
+        if let Some(columns) = columns {
+            for column in columns {
+                let title = resolve_string(column, &board.title);
+                let Some(issues) = resolve(column, &board.cards).and_then(Value::as_array) else {
+                    continue;
+                };
+                for card in issues {
+                    let id = match card {
+                        Value::Number(number) => number.to_string(),
+                        Value::String(text) => text.clone(),
+                        _ => continue,
+                    };
+                    cards.push((id, title.clone()));
+                }
             }
         }
-        Ok(CardColumn::NotOnBoard)
+        Ok(Some(cards))
     }
 }
 

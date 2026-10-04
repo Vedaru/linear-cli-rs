@@ -2,6 +2,8 @@
 //!
 //! Split out of `handler.rs` (VED-288); see `deliver` for the visibility rules this split uses.
 
+use std::collections::HashSet;
+
 use super::*;
 use crate::reconcile::survey::Survey;
 
@@ -14,6 +16,8 @@ impl ReconcileHandler {
     /// trusting.
     pub fn survey(&mut self, index: usize) -> Result<Survey> {
         let mapping = self.mappings[index].clone();
+        // A board can change between sweeps, so the cache never outlives one.
+        self.boards.clear();
         let issues_source = self.list_end(&mapping.source, &EntityKind::Issue)?;
 
         // Projects are a second collection behind their own switch. A deployment that
@@ -355,14 +359,16 @@ impl ReconcileHandler {
     }
 
     /// Every pairing the store knows about among these entities.
+    ///
+    /// The same link comes back when either end is queried, so dedup by its
+    /// identity in one set. The previous scan (`links.iter().any(..)` inside the
+    /// loop) was quadratic in entities, on a path a sweep walks once per side.
     pub(super) fn links_among(&mut self, found: &[Found]) -> Result<Vec<Link>> {
         let mut links: Vec<Link> = Vec::new();
+        let mut seen: HashSet<(EntityRef, ConnectorId)> = HashSet::new();
         for found in found {
             for link in self.store.find_links(&found.reference)? {
-                let known = links
-                    .iter()
-                    .any(|seen| seen.pairs(&link.left, &link.right.connector));
-                if !known {
+                if seen.insert((link.left.clone(), link.right.connector.clone())) {
                     links.push(link);
                 }
             }

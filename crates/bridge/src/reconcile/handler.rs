@@ -5,7 +5,7 @@
 //! link row's content key is what makes the echo of this very write recognisable
 //! when it comes back as a webhook a second later.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::connector::Source;
@@ -23,7 +23,7 @@ use crate::reconcile::{
     content_key, converge, plan, Context, Direction, Nothing, Openness, Pairwise, Policy, Side,
     Sides, Snapshot, StateNames, Step,
 };
-use crate::sink::{CardColumn, RemoteIssue, Sink};
+use crate::sink::{BoardCards, CardColumn, RemoteIssue, Sink};
 use crate::store::{Delivery, Link, ReferenceLink, Store};
 
 mod decide;
@@ -68,6 +68,11 @@ pub struct ReconcileHandler {
     sinks: BTreeMap<ConnectorId, Arc<dyn Sink>>,
     mappings: Vec<Mapping>,
     store: Box<dyn Store>,
+    /// One board read per `(connector, scope, project)` per survey. A board is the
+    /// same for every card on it, so a sweep must not read it once per card; the
+    /// value is `None` when the sink cannot report placement at all. Cleared at the
+    /// start of each survey, so a long-lived service never serves a stale board.
+    boards: HashMap<(ConnectorId, String, String), Option<BoardCards>>,
 }
 
 /// The pair a step is about, in the terms carrying it out needs.
@@ -155,6 +160,7 @@ impl ReconcileHandler {
             sinks,
             mappings,
             store,
+            boards: HashMap::new(),
         })
     }
 

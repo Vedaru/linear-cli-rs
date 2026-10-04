@@ -42,7 +42,7 @@ pub struct Actor {
 /// `scope` is the container the platform puts the entity in: a Linear team key,
 /// a `owner/name` repository, a project id. The core never interprets it; it is
 /// carried so a mapping can be resolved without a second API call.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntityRef {
     pub connector: ConnectorId,
     pub kind: EntityKind,

@@ -181,10 +181,39 @@ pub trait Sink: Send + Sync {
     ///
     /// `CardColumn::Unknown` is the honest answer for a platform that does not report
     /// placement: the sweep then has nothing to compare and says nothing.
-    fn card_column(&self, _scope: &str, _project: &str, _issue: &str) -> Result<CardColumn> {
-        Ok(CardColumn::Unknown)
+    fn card_column(&self, scope: &str, project: &str, issue: &str) -> Result<CardColumn> {
+        match self.board_cards(scope, project)? {
+            Some(cards) => Ok(cards
+                .into_iter()
+                .find(|(card, _)| card == issue)
+                .map(|(_, column)| match column {
+                    Some(column) => CardColumn::In(column),
+                    None => CardColumn::Unknown,
+                })
+                .unwrap_or(CardColumn::NotOnBoard)),
+            None => Ok(CardColumn::Unknown),
+        }
+    }
+
+    /// Every card on a board, read once: `(issue, column name)`, the name `None`
+    /// when the board did not give the column one.
+    ///
+    /// `card_column` asks about one issue and a sweep asks about every issue on a
+    /// board, so a sink that can enumerate the board should override this and the
+    /// reconciler reads it once instead of once per card. `None` (the default) means
+    /// "cannot report placement", the same answer `card_column` gives a sink that
+    /// implements neither - so every existing sink keeps its behaviour unchanged.
+    fn board_cards(&self, _scope: &str, _project: &str) -> Result<Option<Vec<BoardCard>>> {
+        Ok(None)
     }
 }
+
+/// One card on a board: the issue's native id, and the column it sits in, the
+/// column `None` when the board did not give it a name.
+pub type BoardCard = (String, Option<String>);
+
+/// A whole board, read once: issue id -> column name (`None` = unnamed column).
+pub type BoardCards = std::collections::HashMap<String, Option<String>>;
 
 /// Where a card sits on a board - as much of it as a sink can see.
 ///

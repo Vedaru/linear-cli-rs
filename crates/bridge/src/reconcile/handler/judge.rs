@@ -136,6 +136,37 @@ impl ReconcileHandler {
         self.judge_placement(mapping, pairing, source, sink, entry, ends.sink_scope)
     }
 
+    /// Where a card sits, with one board read per survey.
+    ///
+    /// `Sink::card_column` asks about one issue; a sweep asks about every issue on
+    /// the board, so the board is read once here (once per `(scope, project)`) and
+    /// every later card is answered from the map.
+    fn board_column(
+        &mut self,
+        connector: &ConnectorId,
+        scope: &str,
+        project: &str,
+        issue: &str,
+    ) -> Result<CardColumn> {
+        let key = (connector.clone(), scope.to_string(), project.to_string());
+        if !self.boards.contains_key(&key) {
+            let cards = self
+                .sink(connector)?
+                .board_cards(scope, project)?
+                .map(|cards| cards.into_iter().collect::<BoardCards>());
+            self.boards.insert(key.clone(), cards);
+        }
+        Ok(match self.boards.get(&key) {
+            Some(Some(cards)) => match cards.get(issue) {
+                Some(Some(column)) => CardColumn::In(column.clone()),
+                Some(None) => CardColumn::Unknown,
+                None => CardColumn::NotOnBoard,
+            },
+            // The sink cannot report placement at all.
+            _ => CardColumn::Unknown,
+        })
+    }
+
     /// A board is a field of the issue like the rest, so a sweep has to see it.
     ///
     /// Checked only when the pair has nothing else to do: a write that moves the state
@@ -171,7 +202,8 @@ impl ReconcileHandler {
         let Some(project) = pairing.link.as_ref().and_then(|link| link.project.clone()) else {
             return Ok(entry);
         };
-        let here = self.sink(&mapping.sink.connector)?.card_column(
+        let here = self.board_column(
+            &mapping.sink.connector,
             sink_scope,
             &project,
             &sink.reference.native_id,
