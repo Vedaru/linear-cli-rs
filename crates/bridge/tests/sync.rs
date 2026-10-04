@@ -491,3 +491,80 @@ fn only_the_field_that_differs_is_written() {
         );
     }
 }
+
+/// A platform's issue list can lag its own write. When it does, a sweep finds a
+/// recorded link whose counterpart it cannot read - and must treat that as "not seen
+/// this pass", not "deleted", or it re-creates the copy it made moments ago.
+///
+/// This is GitHub's `GET /repos/{scope}/issues` lagging the issue it just accepted
+/// (VED-291); the fake below stands in for that by dropping the created issue from
+/// what the list returns while the store keeps the link.
+#[test]
+fn a_sweep_does_not_recreate_a_linked_copy_the_list_has_not_caught_up_with() {
+    let mut harness = Harness::start();
+    harness.existing("issue-A", "Deploy the widget");
+
+    // Sweep 1 creates the mirror and records the link.
+    let first = harness.handler.survey(0).expect("a survey");
+    assert_eq!(harness.handler.apply_survey(0, &first).expect("applied"), 1);
+    assert_eq!(harness.forge_issues().len(), 1);
+    assert_eq!(harness.forge_writes(), 1);
+
+    // Sweep 2 runs before the forge's list has caught up: the issue still exists, but
+    // the list does not return it. The marker is unreadable for the same reason, so the
+    // recorded link is the only proof the pair exists.
+    harness.forge_world.lock().expect("not poisoned").issues.clear();
+
+    let second = harness.handler.survey(0).expect("a survey");
+    assert_eq!(
+        second.writes(),
+        0,
+        "a lagging list made the sweep re-create a linked copy: {:?}",
+        second.entries
+    );
+    assert_eq!(harness.handler.apply_survey(0, &second).expect("applied"), 0);
+    assert_eq!(harness.forge_writes(), 1, "a second create reached the forge");
+}
+
+/// The same lag on the source list, which the sink side has to survive: the copy and
+/// its link remain, the original is missing from what the sweep reads. The link is the
+/// only proof left, and it lives on the *sink* entity, so a sweep that gathered links
+/// only from the source would treat the copy as a stranger and re-create the original.
+#[test]
+fn a_sweep_does_not_recreate_an_original_the_source_list_has_not_caught_up_with() {
+    let mut harness = Harness::start();
+    harness.existing("issue-A", "Deploy the widget");
+
+    let first = harness.handler.survey(0).expect("a survey");
+    assert_eq!(harness.handler.apply_survey(0, &first).expect("applied"), 1);
+    assert_eq!(harness.forge_issues().len(), 1);
+
+    // Sweep 2 runs before the source's own list has caught up: the Linear issue is gone
+    // from what the list returns, while the forge copy and the link remain. The marker is
+    // stripped too, so the link is the only proof left - which is the shape a pair adopted
+    // by `linear sync link` has, and the one a marker-only guard would miss.
+    harness.linear_world.lock().expect("not poisoned").issues.clear();
+    for issue in harness
+        .forge_world
+        .lock()
+        .expect("not poisoned")
+        .issues
+        .iter_mut()
+    {
+        issue["body"] = json!("a plain body with no marker");
+    }
+
+    let second = harness.handler.survey(0).expect("a survey");
+    assert_eq!(
+        second.writes(),
+        0,
+        "a lagging source list made the sweep re-create the original: {:?}",
+        second.entries
+    );
+    assert_eq!(harness.handler.apply_survey(0, &second).expect("applied"), 0);
+    assert_eq!(
+        harness.linear_world.lock().expect("not poisoned").issues.len(),
+        0,
+        "a second Linear issue was created"
+    );
+}

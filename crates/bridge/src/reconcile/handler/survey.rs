@@ -94,6 +94,14 @@ impl ReconcileHandler {
         // the config has since changed, instead of duplicating it.
         let mut found: Vec<Found> = issues_source.clone();
         found.extend(projects_source.iter().cloned());
+        // Both ends, not just the source: a link whose *source* end is the one a lagging
+        // list omitted still has to be seen, or the sink entity looks like a stranger.
+        for issues in sink_issues.values() {
+            found.extend(issues.iter().cloned());
+        }
+        for projects in sink_projects.values() {
+            found.extend(projects.iter().cloned());
+        }
         let links = self.links_among(&found)?;
 
         let source_caps = self.sink(&mapping.source.connector)?.capabilities();
@@ -115,7 +123,13 @@ impl ReconcileHandler {
             };
             let group = issue_groups.get(scope).unwrap_or(&empty);
             let sinks = sink_issues.get(scope).cloned().unwrap_or_default();
-            for pairing in sweep::pair_up(group, &sinks, &mapping.sink.connector, &links) {
+            for pairing in sweep::pair_up(
+                group,
+                &sinks,
+                &mapping.source.connector,
+                &mapping.sink.connector,
+                &links,
+            ) {
                 survey.entries.push(self.judge(&mapping, &pairing, ends)?);
             }
         }
@@ -130,7 +144,13 @@ impl ReconcileHandler {
             };
             let group = project_groups.get(scope).unwrap_or(&empty);
             let sinks = sink_projects.get(scope).cloned().unwrap_or_default();
-            for pairing in sweep::pair_up(group, &sinks, &mapping.sink.connector, &links) {
+            for pairing in sweep::pair_up(
+                group,
+                &sinks,
+                &mapping.source.connector,
+                &mapping.sink.connector,
+                &links,
+            ) {
                 survey.entries.push(self.judge(&mapping, &pairing, ends)?);
             }
         }

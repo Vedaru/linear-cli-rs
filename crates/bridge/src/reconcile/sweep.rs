@@ -128,6 +128,7 @@ impl Pairing {
 pub fn pair_up(
     source: &[Found],
     sink: &[Found],
+    source_connector: &ConnectorId,
     sink_connector: &ConnectorId,
     links: &[Link],
 ) -> Vec<Pairing> {
@@ -137,25 +138,41 @@ pub fn pair_up(
     for found in source {
         // Proof, strongest first: a stored link, then an origin marker - in the copy's
         // body naming this entity, or in this body naming the copy.
-        let by_link = find_by_link(links, sink, &taken, &found.reference, sink_connector);
-        let matched = if by_link.is_some() {
-            Match::Link
-        } else {
-            Match::Marker
-        };
-        let found_pair = match by_link {
-            Some(pair) => Some(pair),
-            None => find_by_marker(found, sink, &taken),
-        };
+        match find_by_link(links, sink, &taken, &found.reference, sink_connector) {
+            Some(ByLink::Seen(position, link)) => {
+                taken[position] = true;
+                pairings.push(Pairing {
+                    source: Some(found.clone()),
+                    sink: Some(sink[position].clone()),
+                    link: Some(link),
+                    matched: Match::Link,
+                });
+                continue;
+            }
+            Some(ByLink::Unseen(link)) => {
+                // The store recorded a pair this pass could not read on the other side -
+                // a list lagging its own write. Carry the link (and no sink) so the judge
+                // can tell "not seen yet" from "never paired" and skip, instead of
+                // re-creating the copy made moments ago.
+                pairings.push(Pairing {
+                    source: Some(found.clone()),
+                    sink: None,
+                    link: Some(link),
+                    matched: Match::Link,
+                });
+                continue;
+            }
+            None => {}
+        }
 
-        match found_pair {
+        match find_by_marker(found, sink, &taken) {
             Some((position, link)) => {
                 taken[position] = true;
                 pairings.push(Pairing {
                     source: Some(found.clone()),
                     sink: Some(sink[position].clone()),
                     link,
-                    matched,
+                    matched: Match::Marker,
                 });
             }
             None => pairings.push(Pairing {
@@ -167,37 +184,61 @@ pub fn pair_up(
         }
     }
 
-    // Whatever is left on the sink side has no counterpart on the source.
+    // Whatever is left on the sink side has no counterpart on the source. A link still
+    // proves the pair - the source end is just not in this pass's read - and the same lag
+    // rule applies in that direction.
     for (index, found) in sink.iter().enumerate() {
         if taken[index] {
             continue;
         }
+        let link = links
+            .iter()
+            .find(|link| link.pairs(&found.reference, source_connector))
+            .cloned();
+        let matched = if link.is_some() {
+            Match::Link
+        } else {
+            Match::Nothing
+        };
         pairings.push(Pairing {
             source: None,
             sink: Some(found.clone()),
-            link: None,
-            matched: Match::Nothing,
+            link,
+            matched,
         });
     }
 
     pairings
 }
 
+/// What a stored link says about one entity.
+enum ByLink {
+    /// The counterpart was read in this pass; this is where it sits in the other list.
+    Seen(usize, Link),
+    /// The link names a counterpart this pass did not read.
+    Unseen(Link),
+}
+
 fn find_by_link(
     links: &[Link],
-    sink: &[Found],
+    other: &[Found],
     taken: &[bool],
     reference: &EntityRef,
-    sink_connector: &ConnectorId,
-) -> Option<(usize, Option<Link>)> {
+    other_connector: &ConnectorId,
+) -> Option<ByLink> {
     let link = links
         .iter()
-        .find(|link| link.pairs(reference, sink_connector))?;
+        .find(|link| link.pairs(reference, other_connector))?;
     let counterpart = link.counterpart(reference)?;
-    let position = sink
+    match other
         .iter()
-        .position(|candidate| candidate.reference.same_entity(counterpart))?;
-    (!taken[position]).then(|| (position, Some(link.clone())))
+        .position(|candidate| candidate.reference.same_entity(counterpart))
+    {
+        Some(position) if !taken[position] => Some(ByLink::Seen(position, link.clone())),
+        // Read but already claimed by an earlier entity, or not read at all: either way a
+        // link exists, so this is not a stranger to create from.
+        _ => Some(ByLink::Unseen(link.clone())),
+    }
 }
 
 fn find_by_marker(found: &Found, sink: &[Found], taken: &[bool]) -> Option<(usize, Option<Link>)> {
@@ -292,7 +333,7 @@ mod tests {
         let source = vec![found(&linear(), "issue-1", "VED", "One", "Todo")];
         let sink = vec![found(&forge(), "12", "Vedaru/linear-cli-rs", "One", "open")];
 
-        let pairings = pair_up(&source, &sink, &forge(), &[link()]);
+        let pairings = pair_up(&source, &sink, &linear(), &forge(), &[link()]);
 
         assert_eq!(pairings.len(), 1);
         assert!(pairings[0].is_pair());
@@ -307,7 +348,7 @@ mod tests {
             markers::with_marker("body", &markers::OriginMarker::new("linear", "issue-1"));
         let source = vec![found(&linear(), "issue-1", "VED", "One", "Todo")];
 
-        let pairings = pair_up(&source, &[copied], &forge(), &[]);
+        let pairings = pair_up(&source, &[copied], &linear(), &forge(), &[]);
 
         assert_eq!(pairings.len(), 1);
         assert_eq!(pairings[0].matched, Match::Marker);
@@ -331,7 +372,7 @@ mod tests {
             markers::with_marker("body", &markers::OriginMarker::new("forgejo", "12"));
         let sink = vec![found(&forge(), "12", "Vedaru/linear-cli-rs", "One", "open")];
 
-        let pairings = pair_up(&[original], &sink, &forge(), &[]);
+        let pairings = pair_up(&[original], &sink, &linear(), &forge(), &[]);
 
         assert_eq!(pairings.len(), 1);
         assert_eq!(pairings[0].matched, Match::Marker);
@@ -367,7 +408,7 @@ mod tests {
         );
         let source = vec![project(&linear(), "project-uuid", "Mirror the widget")];
 
-        let pairings = pair_up(&source, &[copied], &forge(), &[]);
+        let pairings = pair_up(&source, &[copied], &linear(), &forge(), &[]);
 
         assert_eq!(pairings.len(), 1);
         assert!(pairings[0].is_pair());
@@ -394,7 +435,7 @@ mod tests {
             "open",
         )];
 
-        let pairings = pair_up(&source, &sink, &forge(), &[]);
+        let pairings = pair_up(&source, &sink, &linear(), &forge(), &[]);
 
         assert_eq!(pairings.len(), 2, "one unpaired on each side, not a pair");
         assert!(pairings.iter().all(|pairing| !pairing.is_pair()));
@@ -411,7 +452,7 @@ mod tests {
         ];
         let sink = vec![found(&forge(), "12", "Vedaru/linear-cli-rs", "One", "open")];
 
-        let pairings = pair_up(&source, &sink, &forge(), &[link()]);
+        let pairings = pair_up(&source, &sink, &linear(), &forge(), &[link()]);
 
         assert_eq!(pairings.len(), 2);
         assert!(pairings
@@ -430,6 +471,38 @@ mod tests {
                 .native_id,
             "issue-2"
         );
+    }
+
+    #[test]
+    fn a_link_whose_counterpart_is_absent_survives_the_missing_read() {
+        // The list lagged the write: the source is here, the copy it was linked to is
+        // not. The pairing must keep the link so the judge can tell this from a stranger
+        // it should create from - which is the duplicate VED-291 describes.
+        let source = vec![found(&linear(), "issue-1", "VED", "One", "Todo")];
+
+        let pairings = pair_up(&source, &[], &linear(), &forge(), &[link()]);
+
+        assert_eq!(pairings.len(), 1);
+        assert!(!pairings[0].is_pair());
+        assert_eq!(pairings[0].matched, Match::Link);
+        assert!(
+            pairings[0].link.is_some(),
+            "the link must survive the read that missed its counterpart"
+        );
+    }
+
+    #[test]
+    fn a_link_whose_source_is_absent_survives_on_the_sink_side() {
+        // The same lag on the other list: the sink entity is here and linked, its source
+        // counterpart is not. A sweep must not create a second source from it.
+        let sink = vec![found(&forge(), "12", "Vedaru/linear-cli-rs", "One", "open")];
+
+        let pairings = pair_up(&[], &sink, &linear(), &forge(), &[link()]);
+
+        assert_eq!(pairings.len(), 1);
+        assert!(!pairings[0].is_pair());
+        assert_eq!(pairings[0].matched, Match::Link);
+        assert!(pairings[0].link.is_some());
     }
 
     fn view<'a>(found: &'a Found, fields: &'a IssueFields, names: &'a StateNames) -> View<'a> {

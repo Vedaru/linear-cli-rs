@@ -14,8 +14,8 @@ impl ReconcileHandler {
     ) -> Result<Entry> {
         match (pairing.source.as_ref(), pairing.sink.as_ref()) {
             (Some(source), Some(sink)) => self.judge_pair(mapping, pairing, source, sink, ends),
-            (Some(source), None) => self.judge_single(mapping, source, Side::Source, ends),
-            (None, Some(sink)) => self.judge_single(mapping, sink, Side::Sink, ends),
+            (Some(source), None) => self.judge_single(mapping, pairing, source, Side::Source, ends),
+            (None, Some(sink)) => self.judge_single(mapping, pairing, sink, Side::Sink, ends),
             (None, None) => unreachable!("a pairing names at least one entity"),
         }
     }
@@ -204,6 +204,7 @@ impl ReconcileHandler {
     pub(super) fn judge_single(
         &mut self,
         mapping: &Mapping,
+        pairing: &sweep::Pairing,
         found: &Found,
         side: Side,
         ends: Ends<'_>,
@@ -222,6 +223,14 @@ impl ReconcileHandler {
             sink_scope: sink_scope.to_string(),
             source_project: None,
         };
+        if pairing.link.is_some() {
+            // The store knows this pair, but this pass did not read the other end. That is
+            // a platform's list lagging its own write (GitHub's issue list does), not a
+            // deletion: creating here is exactly how the copy made moments ago becomes a
+            // spurious second copy (VED-291). Treat it as not seen and wait for a pass
+            // that can see both ends.
+            return Ok(not_mirrored("the counterpart was not seen in this pass"));
+        }
         if !mapping.policy.direction.allows(side) {
             return Ok(not_mirrored("the mapping only mirrors the other way"));
         }
