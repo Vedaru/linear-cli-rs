@@ -13,7 +13,7 @@ mod support;
 
 use serde_json::{json, Value};
 
-use linear_bridge::domain::{Change, IssueFields, Patch};
+use linear_bridge::domain::{Change, IssueFields, Label, Patch};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::presets;
 
@@ -109,6 +109,39 @@ fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
     assert_eq!(create.body["assignees"], json!(["vedaru"]));
     // The preset's auth header, prefix included, is what a forge expects.
     fake.only("GET", "/api/v1/repos/Vedaru/linear-cli-rs/labels");
+}
+
+#[test]
+fn a_forge_label_is_created_with_the_colour_the_neutral_model_carries() {
+    // VED-292: the neutral model carried a label's name and nothing else, so this lookup
+    // created every label with the colour `#ededed` hardcoded in the preset and a mirrored
+    // label was grey. The colour is content now, and the create body is where it has to
+    // arrive - the one request that proves the fix reaches the wire, not just the struct.
+    let fake = Fake::start_from("forgejo");
+    let sink = fake.sink("forgejo");
+
+    let coloured = IssueFields {
+        title: "Mirror the thing".into(),
+        body: "why it matters".into(),
+        labels: vec![Label {
+            name: "Feature".into(),
+            color: Some("#bb87fc".into()),
+        }],
+        ..Default::default()
+    };
+    sink.create_issue("Vedaru/linear-cli-rs", &coloured, None)
+        .expect("create");
+
+    let created = fake.only("POST", "/api/v1/repos/Vedaru/linear-cli-rs/labels");
+    assert_eq!(created.body["name"], "feature");
+    assert_eq!(
+        created.body["color"], "#bb87fc",
+        "the forge label create must send the neutral colour, not a hardcoded grey"
+    );
+
+    // And the id the create answered with is the id the issue create uses.
+    let issue = fake.only("POST", "/api/v1/repos/Vedaru/linear-cli-rs/issues");
+    assert_eq!(issue.body["labels"], json!([42]));
 }
 
 #[test]
@@ -541,6 +574,15 @@ fn linear_routes(_method: &str, path: &str, body: &Value) -> (u16, Value) {
             { "message": "Access denied: issueArchive requires admin" }
         ] }),
         ),
+        // The create half of the label lookup: a label the team does not have is created,
+        // and its input is where the neutral colour has to travel (VED-292).
+        _ if query.contains("IssueLabelCreate") => (
+            200,
+            json!({ "data": { "issueLabelCreate": {
+            "success": true,
+            "issueLabel": { "id": "label-feature" }
+        } } }),
+        ),
         _ => (
             200,
             json!({ "errors": [{ "message": format!("unrouted query: {query}") }] }),
@@ -591,6 +633,35 @@ fn a_linear_issue_is_created_through_names_resolved_to_ids() {
     assert_eq!(input["description"], "why it matters");
     assert_eq!(input["dueDate"], "2026-10-09");
     assert_eq!(input["priority"], 2, "Linear carries priority 0-4 natively");
+}
+
+#[test]
+fn a_linear_label_is_created_with_the_colour_the_neutral_model_carries() {
+    // The other half of VED-292: Linear's `IssueLabelCreate` was given the neutral colour
+    // too, and this is the request that proves it reaches that API's input.
+    let fake = Fake::start(linear_routes);
+    let sink = fake.sink("linear");
+
+    let coloured = IssueFields {
+        title: "Mirror the thing".into(),
+        body: "why it matters".into(),
+        labels: vec![Label {
+            name: "Feature".into(),
+            color: Some("#bb87fc".into()),
+        }],
+        ..Default::default()
+    };
+    sink.create_issue("VED", &coloured, Some("Todo"))
+        .expect("create");
+
+    let creates = fake.graphql("IssueLabelCreate");
+    assert_eq!(creates.len(), 1, "{creates:?}");
+    let input = &creates[0].body["variables"]["input"];
+    assert_eq!(input["name"], "feature");
+    assert_eq!(
+        input["color"], "#bb87fc",
+        "Linear's label create must carry the neutral colour, not a hardcoded grey"
+    );
 }
 
 #[test]

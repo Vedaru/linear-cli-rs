@@ -186,6 +186,15 @@ answer = '''[
   { "id": 21, "name": "due:2026-10-09" }
 ]'''
 
+# The create half of the label lookup. A label the repository does not have is created,
+# so its body is where a colour has to travel: the neutral model used to carry a name
+# only and the create hardcoded `#ededed`, which is how a mirrored label came out grey.
+[[api]]
+method = "POST"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/labels"
+status = 201
+answer = '''{ "id": 42, "name": "Feature", "color": "bb87fc" }'''
+
 [[api]]
 method = "GET"
 path = "/api/v1/repos/Vedaru/linear-cli-rs/issues?limit=50&page=1&state=all"
