@@ -44,11 +44,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo fmt --all --check
+      # `cargo fmt --check` is deliberately not in this gate. The repo's gate is build + test +
+      # clippy - the same gate `.forgejo/workflows/release.yml` runs - because rustfmt's output
+      # drifts with the toolchain, so a check here can fail on formatting the maintained tree never
+      # produced. Format locally; it is not a merge gate.
       - name: Clippy
         if: matrix.os == 'ubuntu-latest'
         # `--all-features` so the service half is linted too; `--no-default-features` so the shape
