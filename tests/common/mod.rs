@@ -468,6 +468,13 @@ pub fn mock_env(server: &MockLinearServer) -> Vec<(String, String)> {
             "XDG_CONFIG_HOME".to_string(),
             home.join(".config").display().to_string(),
         ),
+        // Windows resolves the config home from `%APPDATA%`, not `HOME`/`XDG_CONFIG_HOME`
+        // (`src/paths.rs` mirrors upstream), so redirect that too on a platform that reads it - a
+        // test must never touch the developer's real `%APPDATA%\linear\`.
+        (
+            "APPDATA".to_string(),
+            home.join(".config").display().to_string(),
+        ),
         ("LINEAR_GRAPHQL_ENDPOINT".to_string(), server.get_endpoint()),
         ("LINEAR_API_KEY".to_string(), "test-token".to_string()),
         ("LINEAR_IGNORE_ENV_FILE".to_string(), "1".to_string()),

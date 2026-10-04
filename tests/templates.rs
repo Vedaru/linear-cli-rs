@@ -34,6 +34,13 @@ fn env_for(server: Option<&MockLinearServer>, home: &tempfile::TempDir) -> Vec<(
         "XDG_CONFIG_HOME".to_string(),
         home.path().join(".config").to_string_lossy().to_string(),
     ));
+    // Windows resolves the config home from `%APPDATA%`, not `HOME`/`XDG_CONFIG_HOME` (see
+    // `src/paths.rs`), so a scratch config has to move this one too or the CLI reads and writes the
+    // real `%APPDATA%\linear\` while the test looks in the temp dir.
+    env.push((
+        "APPDATA".to_string(),
+        home.path().join(".config").to_string_lossy().to_string(),
+    ));
     env
 }
 
