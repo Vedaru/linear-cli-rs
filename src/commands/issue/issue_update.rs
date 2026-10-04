@@ -261,6 +261,40 @@ pub fn run(args: IssueUpdateArgs) -> Result<()> {
             ));
         }
 
+        // With no field flags there is nothing to change. `teamId` is always in the
+        // input, so without this the mutation is sent carrying only the issue's own
+        // team and the command reports "Updated" for a write that changed nothing -
+        // worse than useless to an agent that branches on the exit code. Siblings
+        // already guard: `document update` and `milestone update` both refuse.
+        let nothing_to_change = title.is_none()
+            && assignee.is_none()
+            && !unassign
+            && due_date.is_none()
+            && !clear_due_date
+            && parent.is_none()
+            && !clear_parent
+            && priority.is_none()
+            && estimate.is_none()
+            && !clear_estimate
+            && description.is_none()
+            && description_file.is_none()
+            && labels.is_empty()
+            && add_label.is_empty()
+            && remove_label.is_empty()
+            && team.is_none()
+            && project.is_none()
+            && !clear_project
+            && state.is_none()
+            && milestone.is_none()
+            && !clear_milestone
+            && cycle.is_none()
+            && !clear_cycle;
+        if nothing_to_change {
+            return Err(CliError::validation("No update fields provided").suggestion(
+                "Pass at least one field flag, for example --title, --state, --assignee, --priority, --label, or --project.",
+            ));
+        }
+
         // Read description from file if provided. An empty --description is
         // falsy and so is silently replaced by the file's contents, matching
         // upstream.
