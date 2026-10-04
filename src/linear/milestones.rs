@@ -24,6 +24,22 @@ pub fn resolve_milestone_id(name_or_id: &str, project_id: Option<&str>) -> Resul
     })
 }
 
+/// Rewrite Linear's internal not-found for a milestone mutation.
+///
+/// A mutation on a missing (or name-shaped) milestone answers
+/// "Could not find referenced ProjectMilestone." - an internal GraphQL type that
+/// means nothing to the user and suggests nothing. `view` already reports
+/// `Milestone not found`; this gives `update` and `delete` the same answer.
+pub fn missing_milestone(error: CliError, reference: &str) -> CliError {
+    if error.is_not_found() {
+        CliError::not_found("Milestone", reference).suggestion(
+            "Pass the milestone UUID (run `linear milestone list`), or view it by name with `linear milestone view <name> --project <project>`.",
+        )
+    } else {
+        error
+    }
+}
+
 /// A milestone ID for an exact, case-insensitive name within a project.
 pub fn get_milestone_id_by_name(name: &str, project_id: &str) -> Result<Option<String>> {
     let client = graphql::client()?;

@@ -10,7 +10,7 @@ use clap::Args;
 use serde_json::{json, Value};
 
 use crate::errors::{CliError, Result};
-use crate::{graphql, output, prompt};
+use crate::{graphql, linear, output, prompt};
 
 const DELETE_PROJECT_MILESTONE_MUTATION: &str = r#"
 mutation DeleteProjectMilestone($id: String!) {
@@ -51,7 +51,9 @@ pub fn run(args: DeleteArgs) -> Result<()> {
     }
 
     let client = graphql::client()?;
-    let result = client.request(DELETE_PROJECT_MILESTONE_MUTATION, json!({ "id": args.id }))?;
+    let result = client
+        .request(DELETE_PROJECT_MILESTONE_MUTATION, json!({ "id": args.id }))
+        .map_err(|error| linear::missing_milestone(error, &args.id))?;
 
     let success = result
         .get("projectMilestoneDelete")

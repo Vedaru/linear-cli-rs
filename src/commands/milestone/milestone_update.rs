@@ -85,10 +85,12 @@ pub fn run(args: UpdateArgs) -> Result<()> {
     }
 
     let client = graphql::client()?;
-    let result = client.request(
-        UPDATE_PROJECT_MILESTONE_MUTATION,
-        json!({ "id": args.id, "input": Value::Object(input) }),
-    )?;
+    let result = client
+        .request(
+            UPDATE_PROJECT_MILESTONE_MUTATION,
+            json!({ "id": args.id, "input": Value::Object(input) }),
+        )
+        .map_err(|error| linear::missing_milestone(error, &args.id))?;
 
     let payload = result
         .get("projectMilestoneUpdate")
