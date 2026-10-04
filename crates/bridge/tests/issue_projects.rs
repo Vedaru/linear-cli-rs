@@ -22,6 +22,7 @@ use linear_bridge::connector::Source;
 use linear_bridge::domain::{ConnectorId, EntityKind, EntityRef, Secret, UserMap};
 use linear_bridge::queue::Handler;
 use linear_bridge::reconcile::handler::{default_policy, Endpoint, Mapping, ReconcileHandler};
+use linear_bridge::reconcile::survey::Action;
 use linear_bridge::reconcile::{Sides, StateNames, Step};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::declarative::DeclarativeSource;
@@ -47,6 +48,10 @@ struct World {
     /// the fake never had anybody drag a card across reports the card on no column, which is
     /// the truth about a placement this fake never recorded.
     card_in: Option<String>,
+    /// A second source/sink pair, for a test that needs two cards on one board. `None`
+    /// everywhere else, so the single-issue tests read exactly what they did before.
+    second_issue: Option<Value>,
+    second_forge_issue: Option<Value>,
 }
 
 fn state() -> Arc<Mutex<World>> {
@@ -92,22 +97,24 @@ fn linear_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u1
             let world = world.lock().expect("not poisoned");
             let carries =
                 |issue: &Value| issue.get("project").map(|p| !p.is_null()).unwrap_or(false);
-            let nodes: Vec<Value> = world
+            let carries_a_project = world
                 .issue
-                .as_ref()
-                .filter(|issue| carries(issue))
-                .map(|_| {
-                    vec![json!({
-                        "id": "project-uuid",
-                        "slugId": "widget",
-                        "name": "The widget",
-                        "description": "",
-                        "state": "started",
-                        "url": "https://linear.app/vedaru/project/widget",
-                        "externalLinks": { "nodes": [] }
-                    })]
-                })
-                .unwrap_or_default();
+                .iter()
+                .chain(world.second_issue.iter())
+                .any(&carries);
+            let nodes: Vec<Value> = if carries_a_project {
+                vec![json!({
+                    "id": "project-uuid",
+                    "slugId": "widget",
+                    "name": "The widget",
+                    "description": "",
+                    "state": "started",
+                    "url": "https://linear.app/vedaru/project/widget",
+                    "externalLinks": { "nodes": [] }
+                })]
+            } else {
+                Vec::new()
+            };
             return (
                 200,
                 json!({ "data": { "projects": { "nodes": nodes, "pageInfo": {
@@ -116,7 +123,12 @@ fn linear_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u1
         }
         if query.contains("query Issues(") {
             let world = world.lock().expect("not poisoned");
-            let nodes: Vec<Value> = world.issue.clone().into_iter().collect();
+            let nodes: Vec<Value> = world
+                .issue
+                .clone()
+                .into_iter()
+                .chain(world.second_issue.clone())
+                .collect();
             return (
                 200,
                 json!({ "data": { "issues": { "nodes": nodes, "pageInfo": {
@@ -153,7 +165,12 @@ fn forgejo_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u
         // The collection: a survey reads it to find the counterpart of each source issue, where
         // a delivery only ever read back the one issue it had just written.
         if path == issues && method == "GET" {
-            let listed: Vec<Value> = world.forge_issue.clone().into_iter().collect();
+            let listed: Vec<Value> = world
+                .forge_issue
+                .clone()
+                .into_iter()
+                .chain(world.second_forge_issue.clone())
+                .collect();
             return (200, json!(listed));
         }
         if path.starts_with(&issues) {
@@ -197,9 +214,15 @@ fn forgejo_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u
         // is: the harness has one board, but the path names it. Each column carries its
         // cards, because that is what a *sweep* reads to see a card somebody moved.
         if path.ends_with("/columns") && method == "GET" {
+            let numbers: Vec<Value> = world
+                .forge_issue
+                .iter()
+                .chain(world.second_forge_issue.iter())
+                .filter_map(|issue| issue.get("number").cloned())
+                .collect();
             let cards = |title: &str| -> Value {
                 if world.card_in.as_deref() == Some(title) {
-                    json!([12])
+                    json!(numbers)
                 } else {
                     json!([])
                 }
@@ -387,6 +410,15 @@ impl Harness {
             })
             .map(|record| record.body)
             .collect()
+    }
+
+    /// How many times the forge was asked for a board's columns.
+    fn board_reads(&self) -> usize {
+        self.forgejo
+            .seen()
+            .into_iter()
+            .filter(|record| record.method == "GET" && record.path.ends_with("/columns"))
+            .count()
     }
 
     /// Somebody drags the card to another column, as the board would then report it.
@@ -649,5 +681,96 @@ fn a_sweep_reports_a_card_that_drifted_and_moves_it_only_when_asked() {
             .any(|entry| matches!(entry.step, Some(Step::Place { .. }))),
         "a card already in the right column is not a difference: {:?}",
         quiet.entries
+    );
+}
+
+/// A sweep over two cards on one board reads the board **once** (VED-301).
+///
+/// A board is the same for every card on it, so a per-card read is N HTTP requests
+/// for one answer. Both pairs are in step and both names a project, so both reach
+/// the placement check - which is what makes the request count mean something: with
+/// the cache, two checks are one read; without it, two.
+#[test]
+fn a_sweep_reads_a_board_once_for_every_card_on_it() {
+    let mut harness = Harness::start();
+    harness.pair_projects("project-uuid", 4);
+
+    let linear = |id: &str, number: i64, title: &str, body: &str| {
+        json!({
+            "id": id,
+            "identifier": format!("VED-{number}"),
+            "url": format!("https://linear.app/vedaru/issue/VED-{number}/x"),
+            "title": title,
+            "description": body,
+            "dueDate": null,
+            "priority": 0,
+            "state": { "name": "In Progress" },
+            "labels": { "nodes": [] },
+            "assignee": null,
+            "project": { "id": "project-uuid" }
+        })
+    };
+    let forge = |number: i64, title: &str, body: &str| {
+        json!({
+            "number": number,
+            "html_url": format!("http://forge/{SCOPE}/issues/{number}"),
+            "title": title,
+            "body": body,
+            "state": "open",
+            "labels": [],
+            "assignees": [],
+            "due_date": "0001-01-01T00:00:00Z"
+        })
+    };
+
+    {
+        let mut world = harness.world.lock().expect("not poisoned");
+        world.issue = Some(linear("issue-a", 1, "One", "body one"));
+        world.second_issue = Some(linear("issue-b", 2, "Two", "body two"));
+        world.forge_issue = Some(forge(12, "One", "body one"));
+        world.second_forge_issue = Some(forge(13, "Two", "body two"));
+        // Both cards sit where their state names, so both pairs are in step.
+        world.card_in = Some("In Progress".to_string());
+    }
+
+    let issue_ref = |connector: &str, scope: &str, id: &str| EntityRef {
+        connector: ConnectorId::new(connector),
+        kind: EntityKind::Issue,
+        scope: Some(scope.to_string()),
+        native_id: id.to_string(),
+        url: None,
+    };
+    for (linear_id, forge_number) in [("issue-a", 12), ("issue-b", 13)] {
+        harness
+            .store
+            .upsert_link(
+                &Link::new(
+                    issue_ref("linear", "VED", linear_id),
+                    issue_ref("forgejo", SCOPE, &forge_number.to_string()),
+                )
+                .with_project(Some("4")),
+            )
+            .expect("the issue pair is recorded");
+    }
+
+    let before = harness.board_reads();
+    let survey = harness.handler.survey(0).expect("a survey");
+    let after = harness.board_reads();
+
+    let in_step = survey
+        .entries
+        .iter()
+        .filter(|entry| entry.action == Action::InStep)
+        .count();
+    assert!(
+        in_step >= 2,
+        "both pairs must be in step or the count means nothing: {:?}",
+        survey.entries
+    );
+    assert_eq!(
+        after - before,
+        1,
+        "two cards on one board must be one read, not two: {:?}",
+        survey.entries
     );
 }
