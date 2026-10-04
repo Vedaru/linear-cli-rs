@@ -278,15 +278,6 @@ pub fn ensure_loaded() -> Result<()> {
     load_into(&mut state)
 }
 
-/// Reload credentials from disk, discarding cached state.
-pub fn load() -> Result<Credentials> {
-    let mut state = lock_state();
-    state.loaded = false;
-    state.load_error = None;
-    load_into(&mut state)?;
-    Ok(state.credentials.clone())
-}
-
 fn write_credentials(text: &str) -> Result<()> {
     let path =
         credentials_path().ok_or_else(|| CliError::cli("Could not determine credentials path"))?;

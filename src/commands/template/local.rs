@@ -20,23 +20,6 @@ use serde_json::{Map, Value};
 use crate::errors::{CliError, Result};
 use crate::paths;
 
-/// The fields a local template may carry, in the order they are written to the file.
-pub const FIELDS: [&str; 13] = [
-    "title",
-    "description",
-    "team",
-    "project",
-    "state",
-    "assignee",
-    "priority",
-    "estimate",
-    "labels",
-    "cycle",
-    "milestone",
-    "parent",
-    "due_date",
-];
-
 /// A local template that exists: its name and its fields.
 pub struct Local {
     pub name: String,
@@ -85,29 +68,6 @@ pub fn validate_name(name: &str) -> Result<()> {
     .suggestion(
         "Use letters, digits, dots, dashes and underscores, starting with a letter or digit - a template name is also the name of its file.",
     ))
-}
-
-/// Every local template name, sorted.
-pub fn list() -> Result<Vec<String>> {
-    let directory = directory()?;
-    let Ok(entries) = std::fs::read_dir(&directory) else {
-        // No directory yet is "no local templates", not a failure: nothing has been created.
-        return Ok(Vec::new());
-    };
-    let mut names: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
-                return None;
-            }
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(str::to_string)
-        })
-        .collect();
-    names.sort();
-    Ok(names)
 }
 
 /// The local template with this name, if this machine has one.

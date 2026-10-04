@@ -32,12 +32,6 @@ pub enum IssueSort {
 }
 
 impl IssueSort {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            IssueSort::Manual => "manual",
-            IssueSort::Priority => "priority",
-        }
-    }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -57,13 +51,6 @@ pub enum AssignSelf {
 }
 
 impl AssignSelf {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AssignSelf::Always => "always",
-            AssignSelf::Auto => "auto",
-            AssignSelf::Never => "never",
-        }
-    }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -83,12 +70,6 @@ pub enum Vcs {
 }
 
 impl Vcs {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Vcs::Git => "git",
-            Vcs::Jj => "jj",
-        }
-    }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -727,10 +708,6 @@ pub fn team_id_resolved(cli_value: Option<&str>) -> Option<Resolved<String>> {
     resolved_string("team_id", cli_value)
 }
 
-pub fn team_id(cli_value: Option<&str>) -> Option<String> {
-    team_id_resolved(cli_value).map(|resolved| resolved.value)
-}
-
 /// `api_key` from the project or global config. Environment and flag handling
 /// for keys lives in `graphql::get_resolved_api_key`, which owns the full
 /// precedence chain.
@@ -757,10 +734,6 @@ pub fn vcs() -> Option<Vcs> {
 
 pub fn download_images() -> Option<bool> {
     resolved_bool("download_images", None).map(|resolved| resolved.value)
-}
-
-pub fn hyperlink_format() -> Option<String> {
-    resolved_string("hyperlink_format", None).map(|resolved| resolved.value)
 }
 
 pub fn attachment_dir() -> Option<String> {

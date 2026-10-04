@@ -247,7 +247,6 @@ struct Comment {
     id: String,
     body: String,
     created_at: String,
-    url: String,
     resolved_at: Option<String>,
     parent_id: Option<String>,
     author: String,
@@ -259,7 +258,6 @@ fn parse_comment(value: &Value) -> Comment {
         id: string_at("id").unwrap_or_default(),
         body: string_at("body").unwrap_or_default(),
         created_at: string_at("createdAt").unwrap_or_default(),
-        url: string_at("url").unwrap_or_default(),
         resolved_at: string_at("resolvedAt"),
         parent_id: value
             .pointer("/parent/id")

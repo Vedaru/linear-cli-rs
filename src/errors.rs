@@ -315,12 +315,6 @@ pub fn translate_not_found<T>(
     }
 }
 
-/// Wrap an operation, adding context to whatever error comes out. Mirrors
-/// `withContext()`.
-pub fn with_context<T>(context: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    f().map_err(|error| error.with_context(context))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
