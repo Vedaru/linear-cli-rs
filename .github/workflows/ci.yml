@@ -2,10 +2,11 @@ name: CI
 
 # One workflow for the GitHub mirror: test, then build, then publish.
 #
-#   test    - the three-OS matrix (fmt and clippy on Linux, tests everywhere);
+#   test    - the three-OS matrix (clippy on Linux, tests everywhere);
 #             runs on pull requests too, so nothing publishes from a PR.
-#   build   - release binaries for five targets, each staged with README,
-#             AGENTS.md and LICENSE and a .sha256 beside the archive.
+#   build   - two release archives per target - the service build (the bridge
+#             half) and the CLI alone - for five targets, each staged with
+#             README, AGENTS.md and LICENSE and a .sha256 beside the archive.
 #   publish - one release tagged `rolling`, whose assets are replaced on every
 #             push to main, so a download URL always serves the newest green
 #             build. Mirrors what .forgejo/workflows/release.yml does for the
@@ -95,35 +96,75 @@ jobs:
       - name: Install musl tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build
-        # `--all-features` so the published binaries carry the service half, as the rolling asset
-        # does. A bare build is the CLI only.
-        run: cargo build --release --workspace --all-features --locked --target ${{ matrix.target }}
+      - name: Build both shapes
+        # Two builds, because the two archives are the same tool at two sizes: the **service**
+        # build (the mirroring engine and the intake server - what a deployment installs) and the
+        # **CLI** build (what a laptop installs). They differ only by the `service` feature. Both
+        # write `target/<triple>/release/linear`, so the service binary is copied aside *before*
+        # the CLI build overwrites it; packaging the wrong one is silent (the archive would just
+        # be missing `webhook`), so the sizes are compared and `webhook` is probed on both.
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          exe=""
+          if [ "${{ runner.os }}" = "Windows" ]; then exe=".exe"; fi
+          mkdir -p bins
+          cargo build --release --workspace --all-features --locked --target "$target"
+          cp "target/$target/release/linear$exe" "bins/linear-service$exe"
+          cargo build --release -p linear --no-default-features --locked --target "$target"
+          cp "target/$target/release/linear$exe" "bins/linear-cli$exe"
+          service_size=$(wc -c < "bins/linear-service$exe")
+          cli_size=$(wc -c < "bins/linear-cli$exe")
+          echo "service binary: $service_size bytes; cli binary: $cli_size bytes"
+          if [ "$service_size" -le "$cli_size" ]; then
+            echo "the service build is not larger than the CLI build - the feature gate is not doing anything" >&2
+            exit 1
+          fi
+          "./bins/linear-service$exe" webhook --help >/dev/null 2>&1 || {
+            echo "the service build does not answer \`webhook\` - it was built without the service feature" >&2
+            exit 1
+          }
+          if "./bins/linear-cli$exe" webhook --help >/dev/null 2>&1; then
+            echo "the CLI build answers \`webhook\` - it was built with the service feature" >&2
+            exit 1
+          fi
       - name: Stage (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
-          name="linear-cli-rs-${sha}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          install -m 0755 "target/${{ matrix.target }}/release/linear" "dist/$name/linear"
-          cp README.md AGENTS.md LICENSE "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
+          stage() { # <archive-name> <binary>
+            name="$1"; bin="$2"
+            rm -rf "dist/$name"; mkdir -p "dist/$name"
+            install -m 0755 "$bin" "dist/$name/linear"
+            cp README.md AGENTS.md LICENSE "dist/$name/"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            rm -rf "dist/$name"
+            ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
+          }
+          mkdir -p dist
+          stage "linear-cli-rs-${sha}-service-${{ matrix.target }}" bins/linear-service
+          stage "linear-cli-rs-${sha}-${{ matrix.target }}" bins/linear-cli
           ls -l dist
       - name: Stage (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $sha = $env:GITHUB_SHA.Substring(0,12)
-          $name = "linear-cli-rs-$sha-${{ matrix.target }}"
-          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/linear.exe" "dist/$name/linear.exe"
-          Copy-Item README.md,AGENTS.md,LICENSE "dist/$name/"
-          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
-          $h = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "dist/$name.zip.sha256" -Value "$h  $name.zip"
+          function Stage($Name, $Bin) {
+            New-Item -ItemType Directory -Force -Path "dist/$Name" | Out-Null
+            Copy-Item $Bin "dist/$Name/linear.exe"
+            Copy-Item README.md,AGENTS.md,LICENSE "dist/$Name/"
+            Compress-Archive -Path "dist/$Name" -DestinationPath "dist/$Name.zip"
+            Remove-Item -Recurse -Force "dist/$Name"
+            $h = (Get-FileHash "dist/$Name.zip" -Algorithm SHA256).Hash.ToLower()
+            Set-Content -Path "dist/$Name.zip.sha256" -Value "$h  $Name.zip"
+          }
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Stage "linear-cli-rs-$sha-service-${{ matrix.target }}" "bins/linear-service.exe"
+          Stage "linear-cli-rs-$sha-${{ matrix.target }}" "bins/linear-cli.exe"
           Get-ChildItem dist
       - uses: actions/upload-artifact@v4
         with:
@@ -152,9 +193,9 @@ jobs:
           sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
           notes="Rolling build of \`${sha}\` - the newest commit on main that passed the tests.
 
-          Assets are rebuilt and replaced on every push to main. A \`.sha256\` sits next to
-          each archive; the binary is also inside its own directory alongside README.md,
-          AGENTS.md and LICENSE."
+          Two archives per target, as the Forgejo release does: \`*-service-*\` carries the bridge
+          half (\`linear sync\` and \`linear webhook\`) and is what a deployment installs; the other
+          is the CLI alone. A \`.sha256\` sits next to each archive."
           # Idempotent: create the release if it is missing, then always move the
           # tag to this commit and replace the assets. Both are best-effort steps
           # whose failure is not fatal - the upload below is what must succeed.
