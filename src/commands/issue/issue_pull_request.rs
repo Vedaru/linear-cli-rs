@@ -173,6 +173,14 @@ pub fn run(args: IssuePullRequestArgs) -> Result<()> {
         }
 
         let arg_refs: Vec<&str> = gh_args.iter().map(String::as_str).collect();
+        // `gh` missing is the common failure and the one the user can fix, and the
+        // bare message names nothing (`LINEAR_DEBUG` adds nothing here either), so
+        // say which dependency is absent before handing over the terminal.
+        if !proc::exists("gh") {
+            return Err(CliError::cli("gh is not installed").suggestion(
+                "Install the GitHub CLI (https://cli.github.com) and authenticate with `gh auth login`, or create the pull request in the browser.",
+            ));
+        }
         // `gh` inherits our terminal; give it the editor-length deadline rather
         // than the short default so a `--web`/credential prompt is not killed.
         let status = proc::run_inherit("gh", &arg_refs, None, proc::EDITOR_TIMEOUT);
