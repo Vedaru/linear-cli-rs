@@ -204,6 +204,8 @@ pub struct GraphQlError {
 }
 
 impl GraphQlError {
+// Test-only constructor: the client builds the struct directly; the module's tests use this.
+#[allow(dead_code)]
     pub fn new(message: impl Into<String>) -> Self {
         GraphQlError {
             user_presentable_message: None,

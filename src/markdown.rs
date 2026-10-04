@@ -27,6 +27,8 @@ use crate::graphql;
 /// Appended as a second paragraph to the description of every command that
 /// takes a rich Markdown body. It carries the rule an agent gets wrong when it
 /// has never been told (`@name` mentions nobody) plus the lookup it needs next.
+// Test-only: the `markdown` command prints the reference, not this hint.
+#[allow(dead_code)]
 pub const MARKDOWN_HINT: &str =
     "Linear Markdown: a plain Linear URL creates a mention; `@name`, `@[Name](id)`,\n\
 and `[Name](url)` do not. Get a person's URL from the `url` field of\n\
@@ -34,6 +36,8 @@ and `[Name](url)` do not. Get a person's URL from the `url` field of\n\
 Run `linear markdown` for collapsible sections and the full reference.";
 
 /// Joins a command's own summary line to the shared Markdown hint.
+// Test-only: the `markdown` command prints the reference, not this hint.
+#[allow(dead_code)]
 pub fn with_markdown_hint(description: &str) -> String {
     format!("{description}\n\n{MARKDOWN_HINT}")
 }

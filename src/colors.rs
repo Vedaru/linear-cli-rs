@@ -81,6 +81,8 @@ color_fn!(underline, "\x1b[4m", "\x1b[24m", "Underline.");
 // --- Composite styles from src/utils/styling.ts ---
 
 /// `error(text)` upstream: red + bold.
+// Test-only composite; the CLI uses `red`/`bold`/`warning` directly.
+#[allow(dead_code)]
 pub fn error(text: &str) -> String {
     red(&bold(text))
 }

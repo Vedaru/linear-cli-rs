@@ -44,6 +44,8 @@ impl fmt::Display for KeyringError {
 
 impl std::error::Error for KeyringError {}
 
+// Only reached on platforms without a supported keyring.
+#[allow(dead_code)]
 fn unsupported() -> KeyringError {
     KeyringError::new(format!("Unsupported platform: {}", std::env::consts::OS))
 }

@@ -8,10 +8,10 @@
 //! One thing happens before all of that, because nothing else can be trusted
 //! until it does: [`restore_default_sigpipe`].
 
-// The port lands one command group at a time, so helpers for not-yet-wired
-// commands are deliberately present ahead of their callers. Remove this once
-// every command port is complete (verification pass, todo #9).
-#![allow(dead_code)]
+// There is deliberately no crate-level `allow(dead_code)`: a new dead item should
+// fail the gate. The few helpers with no non-test caller carry a targeted
+// `#[allow(dead_code)]` and a line saying why (a test-only helper, the
+// byte-identical copy of the bridge's `net.rs`, a non-Linux keyring path).
 
 mod actions;
 mod atomic;

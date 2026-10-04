@@ -95,6 +95,8 @@ pub fn is_repeatable_document(document: &str) -> bool {
 ///
 /// `POST` is not here even though many APIs use it for reads, because "many" is not "all" - the
 /// document check covers the GraphQL case, which is where the reads live.
+// The service calls this; the CLI copy is kept byte-identical (see `net_policy.rs`).
+#[allow(dead_code)]
 pub fn is_repeatable_method(method: &str) -> bool {
     matches!(
         method.to_ascii_uppercase().as_str(),

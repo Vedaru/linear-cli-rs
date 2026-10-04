@@ -56,6 +56,8 @@ pub fn is_inside_git_repo() -> bool {
 }
 
 /// Whether a local branch (or any rev) resolves. Swallows every failure.
+// Test-only: `vcs` wraps this to turn a missing git into an error.
+#[allow(dead_code)]
 pub fn branch_exists(branch: &str) -> bool {
     match git(&["rev-parse", "--verify", branch]) {
         Some(output) => output.success,

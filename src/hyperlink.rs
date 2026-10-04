@@ -6,6 +6,8 @@
 use std::io::IsTerminal;
 
 /// Wrap text in an OSC-8 hyperlink escape sequence.
+// Test-only: a port of upstream's `hyperlink.ts`, kept for parity.
+#[allow(dead_code)]
 pub fn hyperlink(text: &str, url: &str) -> String {
     format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
 }
@@ -22,6 +24,8 @@ pub fn should_show_spinner() -> bool {
 }
 
 /// Resolve the `"default"` hyperlink format to its actual template.
+// Test-only: a port of upstream's `hyperlink.ts`, kept for parity.
+#[allow(dead_code)]
 pub fn resolve_hyperlink_format(format: &str) -> String {
     if format == "default" {
         "file://{host}{path}".to_string()
@@ -35,6 +39,8 @@ pub fn resolve_hyperlink_format(format: &str) -> String {
 /// Read from `HOSTNAME` first (set by most shells and container runtimes), then
 /// `/etc/hostname`, then the `hostname` command. Falls back to `localhost` so a
 /// hyperlink is always well-formed.
+// Test-only: a port of upstream's `hyperlink.ts`, kept for parity.
+#[allow(dead_code)]
 pub fn hostname() -> String {
     if let Ok(name) = std::env::var("HOSTNAME") {
         if !name.trim().is_empty() {
@@ -61,6 +67,8 @@ pub fn hostname() -> String {
 /// Percent-encode a path for a `file://` URL the way `encodeURI` does, then
 /// escape `#` as well (as the TypeScript version does explicitly) so a path
 /// containing a fragment separator stays a single URL.
+// Test-only: a port of upstream's `hyperlink.ts`, kept for parity.
+#[allow(dead_code)]
 fn encode_uri(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     for byte in path.bytes() {
@@ -100,6 +108,8 @@ fn encode_uri(path: &str) -> String {
 ///
 /// Remote URLs link directly; local paths are run through the format template,
 /// which defaults to `file://{host}{path}`.
+// Test-only: a port of upstream's `hyperlink.ts`, kept for parity.
+#[allow(dead_code)]
 pub fn format_path_hyperlink(display_text: &str, path_or_url: &str, format: &str) -> String {
     let resolved = resolve_hyperlink_format(format);
     let url = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
