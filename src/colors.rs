@@ -66,14 +66,9 @@ macro_rules! color_fn {
     };
 }
 
-color_fn!(black, "\x1b[30m", "\x1b[39m", "Black foreground.");
 color_fn!(red, "\x1b[31m", "\x1b[39m", "Red foreground.");
 color_fn!(green, "\x1b[32m", "\x1b[39m", "Green foreground.");
 color_fn!(yellow, "\x1b[33m", "\x1b[39m", "Yellow foreground.");
-color_fn!(blue, "\x1b[34m", "\x1b[39m", "Blue foreground.");
-color_fn!(magenta, "\x1b[35m", "\x1b[39m", "Magenta foreground.");
-color_fn!(cyan, "\x1b[36m", "\x1b[39m", "Cyan foreground.");
-color_fn!(white, "\x1b[37m", "\x1b[39m", "White foreground.");
 color_fn!(
     gray,
     "\x1b[90m",
@@ -81,26 +76,13 @@ color_fn!(
     "Bright black (gray) foreground."
 );
 color_fn!(bold, "\x1b[1m", "\x1b[22m", "Bold.");
-color_fn!(dim, "\x1b[2m", "\x1b[22m", "Dim (faint).");
-color_fn!(italic, "\x1b[3m", "\x1b[23m", "Italic.");
 color_fn!(underline, "\x1b[4m", "\x1b[24m", "Underline.");
-color_fn!(strikethrough, "\x1b[9m", "\x1b[29m", "Strikethrough.");
 
 // --- Composite styles from src/utils/styling.ts ---
 
 /// `error(text)` upstream: red + bold.
 pub fn error(text: &str) -> String {
     red(&bold(text))
-}
-
-/// `success(text)` upstream: green + bold.
-pub fn success(text: &str) -> String {
-    green(&bold(text))
-}
-
-/// `info(text)` upstream: blue.
-pub fn info(text: &str) -> String {
-    blue(text)
 }
 
 /// `warning(text)` upstream: yellow.
@@ -111,11 +93,6 @@ pub fn warning(text: &str) -> String {
 /// `muted(text)` upstream: gray.
 pub fn muted(text: &str) -> String {
     gray(text)
-}
-
-/// `highlight(text)` upstream: cyan + bold.
-pub fn highlight(text: &str) -> String {
-    cyan(&bold(text))
 }
 
 /// `header(text)` upstream: bold + underline.

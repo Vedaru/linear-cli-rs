@@ -246,14 +246,6 @@ query GetIssueDetailsWithComments($id: String!) {
 }
 "#;
 
-pub(crate) const FETCH_PARENT_ISSUE_TITLE_QUERY: &str = r#"
-query FetchParentIssueTitle($id: String!) {
-  issue(id: $id) {
-    identifier
-    title
-  }
-}
-"#;
 
 pub(crate) const FETCH_PARENT_ISSUE_DATA_QUERY: &str = r#"
 query FetchParentIssueData($id: String!) {

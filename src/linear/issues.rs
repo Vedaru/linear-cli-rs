@@ -42,20 +42,6 @@ pub fn fetch_issue_details(issue_id: &str, include_comments: bool) -> Result<Val
     Ok(Value::Object(object))
 }
 
-/// The parent issue's `IDENTIFIER: title`, or `None` when the lookup fails.
-/// Titles are metadata: a failure must not sink the issue being displayed.
-pub fn fetch_parent_issue_title(parent_id: &str) -> Option<String> {
-    let data = (|| -> Result<Value> {
-        let client = graphql::client()?;
-        client.request(FETCH_PARENT_ISSUE_TITLE_QUERY, json!({ "id": parent_id }))
-    })()
-    .ok()?;
-
-    let identifier = data.get("issue")?.get("identifier")?.as_str()?;
-    let title = data.get("issue")?.get("title")?.as_str()?;
-    Some(format!("{identifier}: {title}"))
-}
-
 /// The parent issue's identifier, title, and project ID, or `None` on failure.
 pub fn fetch_parent_issue_data(parent_id: &str) -> Option<Value> {
     let data = (|| -> Result<Value> {

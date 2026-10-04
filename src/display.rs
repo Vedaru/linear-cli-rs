@@ -70,12 +70,6 @@ pub fn pad_display(s: &str, width: usize) -> String {
     format!("{s}{}", " ".repeat(width.saturating_sub(w)))
 }
 
-/// Pad a string that may contain styling and `%c` markers.
-pub fn pad_display_formatted(s: &str, width: usize) -> String {
-    let w = display_width(s);
-    format!("{s}{}", " ".repeat(width.saturating_sub(w)))
-}
-
 /// Truncate to `max_width` display columns, appending `...` when it does not
 /// fit. Unicode-aware: never splits a character.
 pub fn truncate_text(text: &str, max_width: usize) -> String {

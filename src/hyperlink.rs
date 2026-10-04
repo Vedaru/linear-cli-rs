@@ -10,16 +10,6 @@ pub fn hyperlink(text: &str, url: &str) -> String {
     format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
 }
 
-/// Hyperlinks are disabled when `NO_COLOR` is set or stdout is not a terminal.
-/// A headless agent writing to a pipe therefore never receives the escapes.
-pub fn should_enable_hyperlinks() -> bool {
-    if crate::colors::no_color_env() {
-        false
-    } else {
-        std::io::stdout().is_terminal()
-    }
-}
-
 /// Spinners are disabled for the same reasons as hyperlinks. `linear` has no
 /// spinner in the Rust port (agents need machine-readable, line-oriented
 /// output), but the predicate is kept because commands and tests ask for it.

@@ -411,8 +411,3 @@ pub fn workflow_state_filter(selection: &StateSelection) -> Result<Option<Value>
     Ok(Some(Value::Object(filter)))
 }
 
-/// The state to move an issue to on `issue start`: the team's lowest-position
-/// `started` state. Delegates to [`get_started_state`].
-pub fn update_issue_state(team_key: &str) -> Result<WorkflowState> {
-    get_started_state(team_key)
-}

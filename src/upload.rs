@@ -287,15 +287,6 @@ fn upload_agent() -> ureq::Agent {
         .new_agent()
 }
 
-/// Upload several files in order.
-pub fn upload_files(filepaths: &[String], options: &UploadOptions) -> Result<Vec<UploadResult>> {
-    let mut results = Vec::with_capacity(filepaths.len());
-    for filepath in filepaths {
-        results.push(upload_file(filepath, options)?);
-    }
-    Ok(results)
-}
-
 /// Check that a path exists and is a readable file.
 pub fn validate_file_path(filepath: &str) -> Result<()> {
     match std::fs::metadata(filepath) {

@@ -66,17 +66,6 @@ pub fn set_jj_description(description: &str) -> Result<()> {
     Ok(())
 }
 
-/// Create a new empty change (leaving the current one behind).
-pub fn create_jj_new_change() -> Result<()> {
-    let output = jj(&["new"])
-        .ok_or_else(|| CliError::cli("Failed to create new jj change: jj is not available"))?;
-    if !output.success {
-        eprint!("{}", output.stderr_string());
-        return Err(CliError::cli("Failed to create new jj change"));
-    }
-    Ok(())
-}
-
 /// Pull a Linear issue identifier out of a `Linear-issue` trailer value.
 ///
 /// Handles both the new `"Fixes ABC-123"` form and the old markdown-link form

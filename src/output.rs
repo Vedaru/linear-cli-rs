@@ -75,11 +75,6 @@ pub fn write_json<W: Write>(writer: &mut W, value: &Value) -> std::io::Result<()
     serde_json::to_writer_pretty(writer, value).map_err(std::io::Error::other)
 }
 
-/// Print raw JSON text already formatted upstream (used by `linear api`).
-pub fn print_json_raw(raw_json: &str) {
-    line(raw_json);
-}
-
 /// Write a warning to stderr. Warnings never touch stdout so `--json` output
 /// and shell-completion scripts stay clean.
 pub fn warn(message: &str) {

@@ -54,12 +54,6 @@ pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     result
 }
 
-/// Best-effort read of a file, with "not found" and "unreadable" collapsed into
-/// `None`. Used for optional state where absence is normal.
-pub fn read_optional(path: &Path) -> Option<String> {
-    fs::read_to_string(path).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

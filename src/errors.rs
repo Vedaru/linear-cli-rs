@@ -321,21 +321,6 @@ pub fn with_context<T>(context: &str, f: impl FnOnce() -> Result<T>) -> Result<T
     f().map_err(|error| error.with_context(context))
 }
 
-/// Build a closure that maps "not found" into a typed error, for use with
-/// `map_err`. Mirrors `handleNotFound()`.
-pub fn handle_not_found(
-    entity_type: &'static str,
-    identifier: String,
-) -> impl FnOnce(CliError) -> CliError {
-    move |error| {
-        if error.kind != ErrorKind::NotFound && error.is_not_found() {
-            CliError::not_found(entity_type, &identifier)
-        } else {
-            error
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

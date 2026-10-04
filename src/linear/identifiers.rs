@@ -5,12 +5,6 @@ use super::*;
 // Issue identifiers
 // ---------------------------------------------------------------------------
 
-/// Normalise an identifier, or upper-case the input when it cannot be parsed.
-/// Mirrors `formatIssueIdentifier`.
-pub fn format_issue_identifier(provided_id: &str) -> String {
-    normalize_issue_identifier(provided_id).unwrap_or_else(|| provided_id.to_uppercase())
-}
-
 /// The configured team reference (`team_id`) and where it came from.
 ///
 /// Upstream's `config` command writes a team KEY into this field, but every
