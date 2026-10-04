@@ -70,37 +70,43 @@ pub fn get_team_key_with_source() -> Result<Option<Resolved<String>>> {
 ///
 /// Accepts a pasted issue URL, a `TEAMKEY-NUMBER` identifier, or a bare
 /// integer when a team is configured. When `provided_id` is `None` the current
-/// issue is read from VCS state — not yet ported, so this returns `None`.
+/// issue is read from VCS state: the branch name for git, or the `Linear-issue`
+/// trailer for jj.
 pub fn get_issue_identifier(provided_id: Option<&str>) -> Result<Option<String>> {
-    if let Some(provided) = provided_id {
-        // A pasted URL carries the identifier in its path; reading it here
-        // covers every command and flag that funnels through this function.
-        if let Some(LinearUrlRef::Issue { identifier, .. }) = expect_linear_url_kind(
-            provided,
-            "issue",
-            "an issue URL or an identifier like ENG-123",
-        )? {
-            return Ok(Some(identifier));
-        }
+    // Nothing on the command line: the working copy names the issue. This is what
+    // makes "start an issue, then read it back" work, and it is only the `None`
+    // arm - an explicit id that does not parse must not silently fall back to the
+    // branch and ignore the argument the caller typed.
+    let Some(provided) = provided_id else {
+        return crate::vcs::get_current_issue_from_vcs();
+    };
 
-        if let Some(normalized) = normalize_issue_identifier(provided) {
-            return Ok(Some(normalized));
-        }
-
-        if is_bare_integer(provided) {
-            let Some(team_key) = get_team_key()? else {
-                return Err(
-                    CliError::validation("an integer id was provided, but no team is set")
-                        .suggestion("Run `linear config` to set a team."),
-                );
-            };
-            return Ok(normalize_issue_identifier(&format!(
-                "{team_key}-{provided}"
-            )));
-        }
+    // A pasted URL carries the identifier in its path; reading it here
+    // covers every command and flag that funnels through this function.
+    if let Some(LinearUrlRef::Issue { identifier, .. }) = expect_linear_url_kind(
+        provided,
+        "issue",
+        "an issue URL or an identifier like ENG-123",
+    )? {
+        return Ok(Some(identifier));
     }
 
-    // TODO(#13): read the current issue from git/jj branch state.
+    if let Some(normalized) = normalize_issue_identifier(provided) {
+        return Ok(Some(normalized));
+    }
+
+    if is_bare_integer(provided) {
+        let Some(team_key) = get_team_key()? else {
+            return Err(
+                CliError::validation("an integer id was provided, but no team is set")
+                    .suggestion("Run `linear config` to set a team."),
+            );
+        };
+        return Ok(normalize_issue_identifier(&format!(
+            "{team_key}-{provided}"
+        )));
+    }
+
     Ok(None)
 }
 
