@@ -286,3 +286,88 @@ fn a_config_without_mappings_is_an_intake_service() {
     // The webhook endpoints still exist: receiving events needs no mapping.
     assert_eq!(json["endpoints"].as_array().expect("endpoints").len(), 2);
 }
+
+/// A running service must stop on SIGTERM itself, because as container PID 1 the
+/// kernel discards a signal whose default action the process never replaced - so
+/// `podman stop` could only SIGKILL after its grace period. The regression is a
+/// signal death (no exit code) instead of an orderly exit 0.
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_the_service_cleanly() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let config = Config::new("sigterm", &document());
+    let (env, remove) = service_env();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_linear"));
+    command.args([
+        "webhook",
+        "serve",
+        "--bind",
+        "127.0.0.1:0",
+        "--config",
+        &config.path(),
+    ]);
+    command.env("NO_COLOR", "1");
+    for key in remove {
+        command.env_remove(key);
+    }
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    // stdout carries the human banner; the line that says the socket is live goes to
+    // stderr, and seeing it proves the signal handler is installed before we signal.
+    command.stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = command.spawn().expect("spawn the service");
+
+    let stderr = child.stderr.take().expect("stderr");
+    let mut reader = BufReader::new(stderr);
+    let mut line = String::new();
+    let mut listening = false;
+    while reader.read_line(&mut line).expect("read the service's stderr") > 0 {
+        if line.contains("bridge listening") {
+            listening = true;
+            break;
+        }
+        line.clear();
+    }
+    if !listening {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("the service never reported that it was listening");
+    }
+
+    send_sigterm(child.id());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().expect("wait for the service") {
+            assert_eq!(
+                status.code(),
+                Some(0),
+                "SIGTERM must be an orderly exit, not a signal death"
+            );
+            return;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the service did not stop within 5s of SIGTERM");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+fn send_sigterm(pid: u32) {
+    // Declared here for the same reason `restore_default_sigpipe` declares it: one
+    // symbol is cheaper than a `libc` dependency.
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    const SIGTERM: i32 = 15;
+    // SAFETY: the pid is our own child and SIGTERM is a valid signal number.
+    let _ = unsafe { kill(pid as i32, SIGTERM) };
+}

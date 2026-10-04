@@ -162,14 +162,67 @@ pub fn run(args: ServeArgs) -> Result<()> {
     }
     output::line("Press Ctrl-C to stop.");
 
-    // The process is supervised: SIGINT/SIGTERM terminate it, and the queue is
-    // durable, so a hard stop loses nothing that was already acknowledged. A
-    // signal handler that set this flag would only make shutdown tidier.
+    // The process is supervised, and the queue is durable, so a hard stop loses
+    // nothing already acknowledged. The handler below still matters: as container
+    // PID 1 the kernel discards SIGTERM, and a service that ignores `podman stop`
+    // is only stopped by the runtime's SIGKILL after its grace period.
     let shutdown = Arc::new(AtomicBool::new(false));
+    install_shutdown_signals(Arc::clone(&shutdown));
     bridge
         .run(shutdown)
         .map_err(|error| CliError::cli(format!("The webhook service stopped: {error}")))
 }
+
+/// Make SIGINT/SIGTERM set the service's shutdown flag.
+///
+/// It matters most when this process is PID 1 in a container: the kernel does not
+/// apply a signal's default action to PID 1, so a handler is not a nicety there -
+/// without one, `podman stop`'s SIGTERM is discarded and the runtime has to SIGKILL
+/// after the grace period. The handler only stores to a static flag (the one thing a
+/// signal handler may safely do); a watcher thread mirrors that onto the same
+/// `Arc<AtomicBool>` [`Bridge::run`] already waits on.
+#[cfg(unix)]
+fn install_shutdown_signals(shutdown: Arc<AtomicBool>) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    // `signal(2)` and two constants, declared here rather than depending on `libc`
+    // for three symbols - the same choice `restore_default_sigpipe` makes.
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+    // From `signal.h`; both are portable across the libcs this builds against.
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    extern "C" fn request(_signal: i32) {
+        REQUESTED.store(true, Ordering::Relaxed);
+    }
+
+    // SAFETY: called on the main thread before the bridge's threads are spawned; the
+    // handler does one lock-free store, which is all a signal handler may do.
+    unsafe {
+        signal(SIGINT, request as *const () as usize);
+        signal(SIGTERM, request as *const () as usize);
+    }
+
+    // The thread outlives this call by design; its only job is to watch a flag that
+    // is set once, if at all. A failed spawn is not fatal: the default SIGINT
+    // disposition still ends the process when it is not PID 1.
+    let _ = std::thread::Builder::new()
+        .name("shutdown-signal".into())
+        .spawn(move || {
+            while !REQUESTED.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            shutdown.store(true, Ordering::Relaxed);
+        });
+}
+
+/// Windows has no SIGTERM, and Ctrl-C already terminates the process there.
+#[cfg(not(unix))]
+fn install_shutdown_signals(_shutdown: Arc<AtomicBool>) {}
 
 /// Build one reconciler, with its own store connection.
 ///
