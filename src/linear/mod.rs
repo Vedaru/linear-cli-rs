@@ -35,6 +35,7 @@ mod states;
 mod teams;
 mod users;
 mod views;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -59,6 +60,7 @@ pub use states::*;
 pub use teams::*;
 pub use users::*;
 pub use views::*;
+pub use workspace::*;
 
 pub(crate) use queries::*;
 

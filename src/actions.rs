@@ -19,11 +19,7 @@ pub fn open_issue_page(provided_id: Option<&str>, app: bool) -> Result<()> {
         return Err(CliError::cli(vcs::get_no_issue_found_message()));
     };
 
-    let Some(workspace) = config::cli_workspace().or_else(config::workspace) else {
-        return Err(CliError::validation(
-            "workspace is not set via command line, configuration file, or environment",
-        ));
-    };
+    let workspace = workspace_slug()?;
 
     let url = format!(
         "{}/{}/issue/{}",
@@ -39,11 +35,7 @@ pub fn open_issue_page(provided_id: Option<&str>, app: bool) -> Result<()> {
 /// Open a project's page in the web browser, or the Linear desktop app when
 /// `app`. Port of `openProjectPage`.
 pub fn open_project_page(project_id: &str, app: bool) -> Result<()> {
-    let Some(workspace) = config::cli_workspace().or_else(config::workspace) else {
-        return Err(CliError::validation(
-            "workspace is not set via command line, configuration file, or environment",
-        ));
-    };
+    let workspace = workspace_slug()?;
 
     let url = format!(
         "{}/{}/project/{}",
@@ -70,11 +62,7 @@ pub fn open_team_assignee_view(app: bool) -> Result<()> {
         ));
     };
 
-    let Some(workspace) = config::cli_workspace().or_else(config::workspace) else {
-        return Err(CliError::validation(
-            "workspace is not set via command line, configuration file, or environment",
-        ));
-    };
+    let workspace = workspace_slug()?;
 
     let filter_obj = serde_json::json!({
         "and": [{ "assignee": { "or": [{ "isMe": { "eq": true } }] } }],
@@ -110,6 +98,22 @@ fn base64_encode(input: &[u8]) -> String {
         }
     }
     out
+}
+
+/// The workspace slug for a `linear.app` URL: the configured one when there is
+/// one, otherwise the one Linear reports for the key - so `--web`/`-a` work in a
+/// single-workspace setup that names no workspace.
+fn workspace_slug() -> Result<String> {
+    if let Some(workspace) = config::cli_workspace().or_else(config::workspace) {
+        return Ok(workspace);
+    }
+    if let Some(workspace) = linear::workspace_url_key()? {
+        return Ok(workspace);
+    }
+    Err(CliError::validation(
+        "workspace is not set via command line, configuration file, or environment",
+    )
+    .suggestion("Pass --workspace <slug>, or add `workspace = \"<slug>\"` to linear.toml."))
 }
 
 /// Open a URL with the platform opener. `app` asks for the Linear desktop app
