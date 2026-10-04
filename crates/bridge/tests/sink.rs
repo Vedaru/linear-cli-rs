@@ -708,3 +708,28 @@ fn a_platform_error_is_reported_with_its_status() {
     let message = error.to_string();
     assert!(message.contains("404"), "{message}");
 }
+
+#[test]
+fn a_board_is_read_once_as_card_to_column_pairs() {
+    // VED-301: a sweep asks about every card on a board, so the board is read once
+    // and answered from the pairs - not once per card. This pins the extraction the
+    // batch is built on: the column's name, and which cards it holds.
+    let fake = Fake::start_from("forgejo");
+    let sink = fake.sink("forgejo");
+
+    let cards = sink
+        .board_cards("Vedaru/linear-cli-rs", "4")
+        .expect("the board is read")
+        .expect("the preset declares a board");
+
+    assert_eq!(
+        cards,
+        vec![("12".to_string(), Some("In Progress".to_string()))],
+        "one read gives every card and the column it sits in"
+    );
+    // Exactly one request, which `only` enforces by failing on zero or many.
+    fake.only(
+        "GET",
+        "/api/v1/repos/Vedaru/linear-cli-rs/projects/4/columns",
+    );
+}

@@ -281,3 +281,14 @@ body = '''{
   "repository": { "full_name": "a/b" },
   "pull_request": { "number": 4, "title": "Fixes VED-2", "body": "why", "html_url": "http://forge/a/b/pulls/4", "merged": true }
 }'''
+
+# A board, read once by a sweep: each column carries its cards. `board_cards`
+# turns this into `(issue, column)` pairs, which is what lets a sweep over a
+# whole board make one request instead of one per card.
+[[api]]
+method = "GET"
+path = "/api/v1/repos/Vedaru/linear-cli-rs/projects/4/columns"
+answer = '''[
+  { "id": 31, "title": "To Do", "cards": [] },
+  { "id": 32, "title": "In Progress", "cards": [12] }
+]'''
