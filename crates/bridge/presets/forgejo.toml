@@ -138,7 +138,7 @@ body = "$body"
 labels = "$label_ids"
 # `$field` disappears when the value is absent, which is what a create wants:
 # nothing to say about a due date means the field is never mentioned.
-due_date = "$due_date"
+due_date = "$due_date_timestamp"
 milestone = "$milestone_id"
 assignees = "$assignees"
 
@@ -155,7 +155,7 @@ state = "$state"
 # the request at all, and `!` would turn "not mentioned" into "set it to null" -
 # silently clearing a due date nobody touched. A due date the other side really did
 # clear arrives as an explicit null and is written.
-due_date = "$due_date"
+due_date = "$due_date_timestamp"
 milestone = "$milestone_id"
 assignees = "$assignees"
 

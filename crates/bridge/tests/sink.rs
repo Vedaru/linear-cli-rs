@@ -104,7 +104,9 @@ fn a_forge_issue_is_created_with_the_ids_the_forge_wants() {
     // the priority rode along as the label this platform understands, because its
     // capabilities say it has no priority field.
     assert_eq!(create.body["labels"], json!([3, 9, 11]));
-    assert_eq!(create.body["due_date"], "2026-10-09");
+    // A forge's due-date field is a timestamp; the neutral model's date is widened
+    // (`$due_date_timestamp`), because sending the bare date is a 422 (VED-486).
+    assert_eq!(create.body["due_date"], "2026-10-09T00:00:00Z");
     // The neutral model carries one assignee; a forge wants a list.
     assert_eq!(create.body["assignees"], json!(["vedaru"]));
     // The preset's auth header, prefix included, is what a forge expects.

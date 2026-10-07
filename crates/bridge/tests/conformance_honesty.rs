@@ -290,6 +290,10 @@ fn a_preset_that_claims_a_field_it_never_sends_fails_this_suite() {
     // field in its create *and* its update is still honest if one of them is stripped -
     // the claim would be backed, and this test would pass for the wrong reason.
     for body in operation_bodies(&mut sink) {
+        // Both spellings: a calendar date (`$due_date`, for Linear) and the RFC 3339 timestamp a
+        // forge wants (`$due_date_timestamp`). Removing only one would leave the claim backed by
+        // the other and this test would pass for the wrong reason.
+        *body = replace_strings(body, "$due_date_timestamp", "$title");
         *body = replace_strings(body, "$due_date", "$title");
     }
     spec.sink = Some(sink.clone());

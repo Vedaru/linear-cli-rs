@@ -108,6 +108,9 @@ pub const DIRECTIVES: &[&str] = &[
     "color",
     "priority",
     "due_date",
+    // The same date as an RFC 3339 timestamp (`2026-10-20` -> `2026-10-20T00:00:00Z`), for a
+    // platform whose due-date field is a timestamp rather than a calendar date (a forge).
+    "due_date_timestamp",
     "assignee",
     "assignees",
     "assignee_id",

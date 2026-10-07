@@ -220,3 +220,20 @@ fn a_linear_shaped_response_reads_the_same_fields() {
     assert_eq!(fields.canonical_labels(), vec!["bug"]);
     assert_eq!(fields.assignee.as_deref(), Some("loner@example.com"));
 }
+
+#[test]
+fn a_due_date_becomes_the_rfc3339_timestamp_a_forge_stores() {
+    // VED-486: a forge's due-date field is a timestamp, and it rejects the bare
+    // `YYYY-MM-DD` the neutral model holds (`422 parsing time "2026-10-20" ...`).
+    assert_eq!(
+        due_date_timestamp(&json!("2026-10-20")),
+        json!("2026-10-20T00:00:00Z")
+    );
+    // "No due date" stays absent rather than becoming a date, and a value that is
+    // already a timestamp is left alone.
+    assert_eq!(due_date_timestamp(&Value::Null), Value::Null);
+    assert_eq!(
+        due_date_timestamp(&json!("2026-10-20T00:00:00Z")),
+        json!("2026-10-20T00:00:00Z")
+    );
+}

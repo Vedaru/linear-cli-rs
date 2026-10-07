@@ -362,6 +362,14 @@ impl DeclarativeSink {
             // a team key.
             values["scope_id"] = json!(self.resolve(TEAM, scope, scope)?);
         }
+        if uses(&operation.body, "$due_date_timestamp") {
+            // Derived from `due_date` after every path has set it (the field model and a patch
+            // alike), so a date an update never mentions stays absent here too - and
+            // `$due_date_timestamp` drops the key exactly as `$due_date` would.
+            if let Some(value) = values.get("due_date").cloned() {
+                values["due_date_timestamp"] = due_date_timestamp(&value);
+            }
+        }
         Ok(values)
     }
 
@@ -1256,6 +1264,19 @@ impl<'a> Call<'a> {
 /// the directives (`$field` drops the key, `$field!` sends null).
 fn optional(value: Option<&str>) -> Value {
     value.map(|value| json!(value)).unwrap_or(Value::Null)
+}
+
+/// A due date in the neutral model (`YYYY-MM-DD`) as the RFC 3339 timestamp a forge stores.
+///
+/// A forge's due-date field is a `time.Time`, and it rejects the bare date (`422 parsing time
+/// "2026-10-20" as "2006-01-02T15:04:05Z07:00"`). `null` and anything that is not a `YYYY-MM-DD`
+/// string pass through unchanged, so "no due date" stays "no due date" and a value the source
+/// already sent as a timestamp is not damaged.
+fn due_date_timestamp(value: &Value) -> Value {
+    match value {
+        Value::String(date) if date.len() == 10 => json!(format!("{date}T00:00:00Z")),
+        other => other.clone(),
+    }
 }
 
 fn scalar(value: &Value) -> Option<String> {
