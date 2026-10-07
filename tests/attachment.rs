@@ -44,7 +44,10 @@ fn attachment_list_prints_the_ids_the_other_commands_take() {
                 "pageInfo": { "hasNextPage": false, "endCursor": null }
             }
         } } }),
-    )]);
+    )
+    // The query declares `$id: String!`; a mock that accepts any variables would pass even when
+    // the CLI never sends it (which is how the command shipped broken - see VED-482).
+    .with_variables(json!({ "id": "ENG-1" }))]);
 
     let out = run_cli(
         &["issue", "attachment", "list", "ENG-1"],

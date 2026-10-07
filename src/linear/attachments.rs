@@ -115,13 +115,17 @@ mutation AttachmentDelete($id: String!) {
 /// resolver every other command already funnels loose input through.
 pub fn list_issue_attachments(issue: &str) -> Result<(String, Vec<Value>, Value)> {
     let client = graphql::client()?;
-    let variables = Map::new();
+    // Resolve before the request: the query declares `$id: String!` and Linear ignores an
+    // undeclared/unset variable by refusing the whole operation, so the resolved identifier has to
+    // be in `variables` - not merely computed afterwards for the human sentence.
+    let identifier = get_issue_identifier(Some(issue))?.unwrap_or_else(|| issue.to_string());
+    let mut variables = Map::new();
+    variables.insert("id".to_string(), json!(identifier));
     let (nodes, page_info) = client.paginate_connection_page(
         LIST_ATTACHMENTS_QUERY,
         variables,
         &["issue", "attachments"],
     )?;
-    let identifier = get_issue_identifier(Some(issue))?.unwrap_or_else(|| issue.to_string());
     Ok((identifier, nodes, page_info))
 }
 
