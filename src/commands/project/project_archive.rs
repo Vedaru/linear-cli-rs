@@ -45,9 +45,11 @@ pub fn run(args: ProjectArchiveArgs) -> Result<()> {
         .unwrap_or(&args.project_id);
     let verb = if args.trash { "Trashed" } else { "Archived" };
     output::line(&format!("✓ {verb} project: {name}"));
+    // The UUID, not the input: slug and name only resolve while the project is unarchived
+    // (`projects(filter:)` omits `includeArchived`), so a hint echoing a slug would describe a
+    // command that cannot work. See VED-483.
     output::line(&format!(
-        "  Restore it with `linear project unarchive {}`",
-        args.project_id
+        "  Restore it with `linear project unarchive {project_id}`"
     ));
     Ok(())
 }

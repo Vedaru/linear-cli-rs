@@ -269,15 +269,25 @@ fn project_label_set_with_force_replaces_the_whole_set() {
 
 #[test]
 fn project_archive_reports_the_way_back() {
-    let server = MockLinearServer::start(vec![MockResponse::new(
-        "ArchiveProject",
-        json!({ "data": { "projectArchive": { "success": true, "entity": {
-            "id": PROJECT, "name": "Board"
-        } } } }),
-    )
-    .with_variables(json!({ "id": PROJECT, "trash": false }))]);
+    // Addressed by name, not UUID: the hint must name the UUID, because a slug/name stops
+    // resolving once the project is archived (VED-483).
+    let server = MockLinearServer::start(vec![
+        MockResponse::new(
+            "GetProjectByName",
+            json!({ "data": { "projects": { "nodes": [
+                { "id": PROJECT, "name": "Board" }
+            ] } } }),
+        ),
+        MockResponse::new(
+            "ArchiveProject",
+            json!({ "data": { "projectArchive": { "success": true, "entity": {
+                "id": PROJECT, "name": "Board"
+            } } } }),
+        )
+        .with_variables(json!({ "id": PROJECT, "trash": false })),
+    ]);
 
-    let out = run_cli(&["project", "archive", PROJECT], &common::mock_env(&server));
+    let out = run_cli(&["project", "archive", "Board"], &common::mock_env(&server));
 
     assert!(out.success(), "stderr: {}", out.stderr);
     assert!(
@@ -286,8 +296,9 @@ fn project_archive_reports_the_way_back() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("linear project unarchive"),
-        "{}",
+        out.stdout
+            .contains(&format!("linear project unarchive {PROJECT}")),
+        "the hint must be the UUID, not the name: {}",
         out.stdout
     );
 }
