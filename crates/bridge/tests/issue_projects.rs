@@ -110,7 +110,6 @@ fn linear_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u1
                     "description": "",
                     "state": "started",
                     "url": "https://linear.app/vedaru/project/widget",
-                    "externalLinks": { "nodes": [] }
                 })]
             } else {
                 Vec::new()
