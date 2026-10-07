@@ -7,8 +7,8 @@
 //!
 //! - a configured project is created in the repository its entry names;
 //! - an issue in that project lands in the same repository as the project's mirror;
-//! - a project with no entry is not mirrored, and its issue falls back to the mapping's
-//!   own repository (as does an issue with no project at all);
+//! - a project with no entry is not mirrored, and neither is its issue; an issue with no
+//!   project at all still falls back to the mapping's own repository;
 //! - several entries may name the same repository;
 //! - an existing pair whose project is now configured elsewhere is *not* relocated - the
 //!   update still goes to the repository the pair lives in.
@@ -549,13 +549,13 @@ fn linear_project_event(id: &str, action: &str) -> String {
 }
 
 #[test]
-fn a_configured_projects_entry_places_it_and_its_issues_and_the_rest_fall_to_the_mapping_scope() {
+fn a_configured_projects_entry_places_it_and_its_issues_and_an_unconfigured_one_is_not_mirrored() {
     let mut harness = Harness::start();
 
     // The harness configures `project-kuro` into `Vedaru/kuro`. Another project has no
-    // entry, and a bare issue has no project at all: those still have a home - the
-    // mapping's own scope - because an issue that lives nowhere is worse than one that
-    // lives in the team's repository. A project with no entry is not mirrored at all.
+    // entry, so neither it nor its issue is mirrored. A bare issue has no project at all:
+    // that one still has a home - the mapping's own scope - because an issue that lives
+    // nowhere is worse than one that lives in the team's repository.
     harness.set_linear_project("project-kuro", "Kuro", "kuro");
     harness.set_linear_project("project-plain", "Plain", "plain");
     harness.deliver("Project", &linear_project_event("project-kuro", "create"));
@@ -595,8 +595,8 @@ fn a_configured_projects_entry_places_it_and_its_issues_and_the_rest_fall_to_the
     assert_eq!(count("Vedaru/kuro"), 1, "the linked issue: {posts:?}");
     assert_eq!(
         count(DEFAULT_SCOPE),
-        2,
-        "a project-less issue and an unlinked project's issue fall to the mapping scope: {posts:?}"
+        1,
+        "only the project-less issue falls to the mapping scope: {posts:?}"
     );
 }
 
@@ -673,8 +673,7 @@ fn a_sweep_compares_each_issue_against_its_own_repository() {
 #[test]
 fn a_configured_entry_places_its_issues_and_an_unconfigured_project_is_not_a_candidate() {
     // Placement is configuration. One project is configured into the forge; the other is
-    // not configured at all, so it is not mirrored - and its issue, with no entry to
-    // follow, falls to the mapping's own scope.
+    // not configured at all, so neither it nor its issue is mirrored.
     let mut harness = Harness::with_projects(ProjectScopes::new(vec![ProjectScope {
         project: "linked".into(),
         scope: "Vedaru/linked".into(),
@@ -696,11 +695,8 @@ fn a_configured_entry_places_its_issues_and_an_unconfigured_project_is_not_a_can
         .collect();
     assert_eq!(
         posts,
-        vec![
-            "/api/v1/repos/Vedaru/linked/issues".to_string(),
-            format!("/api/v1/repos/{DEFAULT_SCOPE}/issues"),
-        ],
-        "the configured project's issue goes to its repository, the other to the mapping scope: {posts:?}"
+        vec!["/api/v1/repos/Vedaru/linked/issues".to_string()],
+        "only the configured project's issue is mirrored: {posts:?}"
     );
     // The project itself was created in the repo its entry names.
     assert!(
@@ -765,8 +761,8 @@ fn a_sweep_places_a_configured_project_and_carries_its_unpaired_issue_with_it() 
 
 #[test]
 fn a_sweep_skips_a_project_with_no_entry() {
-    // The project names no repository in configuration, so it is not mirrored; its issue
-    // still is, in the mapping's own scope.
+    // The project names no repository in configuration, so neither it nor its issue is
+    // mirrored.
     let mut harness = Harness::start();
     harness.set_linear_project("project-plain", "Plain", "plain");
     harness.set_linear_issue("issue-plain", "VED-101", Some("project-plain"), &[]);
@@ -784,8 +780,7 @@ fn a_sweep_skips_a_project_with_no_entry() {
     assert!(
         requests
             .iter()
-            .any(|(method, path)| method == "POST"
-                && path == &format!("/api/v1/repos/{DEFAULT_SCOPE}/issues")),
-        "its issue still lands in the mapping scope: {requests:?}"
+            .all(|(method, path)| !(method == "POST" && path.ends_with("/issues"))),
+        "its issue must not be mirrored either: {requests:?}"
     );
 }

@@ -265,8 +265,9 @@ source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
 
 # Which project's mirror lives in which repository. Placement is configuration: a
-# project with no entry is not mirrored, an issue follows its project (or falls back
-# to the mapping's repository), and a project's own links are never consulted.
+# project with no entry is not mirrored, and neither is its issue - an issue that
+# names no project at all falls back to the mapping's repository. A project's own
+# links are never consulted.
 [[mapping.project]]
 project = "kuro"
 scope = "Vedaru/kuro"

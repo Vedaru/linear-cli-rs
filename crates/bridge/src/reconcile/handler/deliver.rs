@@ -83,7 +83,7 @@ impl ReconcileHandler {
                     self.placement(&mapping, &subject, &fields, link.as_ref(), &facts)?
                 else {
                     log::debug!(
-                        "mapping `{}`: project {} declares no repository link and is not paired, so it is not mirrored",
+                        "mapping `{}`: {} is not mirrored: no `[[mapping.project]]` entry places it and no pairing pins it",
                         mapping.name,
                         subject.describe()
                     );

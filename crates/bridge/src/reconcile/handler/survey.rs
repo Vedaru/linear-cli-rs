@@ -52,7 +52,7 @@ impl ReconcileHandler {
             match self.found_scope(&mapping, found, &mut project_facts)? {
                 Some(scope) => issue_groups.entry(scope).or_default().push(found.clone()),
                 None => log::debug!(
-                    "mapping `{}`: {} declares no repository link and is not paired, so it is not mirrored",
+                    "mapping `{}`: {} is not mirrored: no `[[mapping.project]]` entry places it and no pairing pins it",
                     mapping.name,
                     found.reference.describe()
                 ),
@@ -63,7 +63,7 @@ impl ReconcileHandler {
             match self.found_scope(&mapping, found, &mut project_facts)? {
                 Some(scope) => project_groups.entry(scope).or_default().push(found.clone()),
                 None => log::debug!(
-                    "mapping `{}`: {} declares no repository link and is not paired, so it is not mirrored",
+                    "mapping `{}`: {} is not mirrored: no `[[mapping.project]]` entry places it and no pairing pins it",
                     mapping.name,
                     found.reference.describe()
                 ),

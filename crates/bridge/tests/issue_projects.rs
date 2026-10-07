@@ -490,11 +490,11 @@ fn a_mirrored_issue_lands_on_its_paired_project_board() {
 }
 
 #[test]
-fn an_issue_naming_a_project_the_mapping_does_not_have_is_a_no_op() {
+fn an_issue_naming_a_project_no_entry_names_is_not_mirrored() {
     let mut harness = Harness::start();
-    // No project pairing exists for this id: the issue names a project the mirror
-    // has never seen. That must place nothing - and, the point, must not be an error
-    // that parks the delivery.
+    // No project pairing exists for this id, and no `[[mapping.project]]` entry names
+    // it: the issue names a project the mapping does not mirror. That must place
+    // nothing - and, the point, must not be an error that parks the delivery.
     harness.set_issue(linear_issue(
         "Mirror the widget",
         "why it matters",
@@ -508,15 +508,16 @@ fn an_issue_naming_a_project_the_mapping_does_not_have_is_a_no_op() {
         "an unpaired project must place nothing: {:?}",
         harness.membership_requests()
     );
-    // The issue itself still crossed: an unknown container is not a reason to drop
-    // the issue.
+    // Neither does the issue cross: an issue belongs to its project, and neither is
+    // mirrored.
     assert!(
         harness
             .forgejo
             .seen()
             .iter()
-            .any(|record| record.method == "POST" && record.path.ends_with("/issues")),
-        "the issue should still have been mirrored"
+            .all(|record| !(record.method == "POST" && record.path.ends_with("/issues"))),
+        "an issue of an unmapped project must not be mirrored: {:?}",
+        harness.forgejo.seen()
     );
 }
 

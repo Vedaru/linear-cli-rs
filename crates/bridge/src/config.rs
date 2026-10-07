@@ -174,8 +174,8 @@ pub struct MappingConfig {
     ///
     /// This is the only source: a project's *links* are written for people (a reference
     /// implementation, a design doc) and change for human reasons, so they are not a sync
-    /// contract. A project no entry names is not mirrored; several entries may name the
-    /// same repository.
+    /// contract. A project no entry names is not mirrored, and neither is its issue;
+    /// several entries may name the same repository.
     pub project: Vec<ProjectScope>,
     /// `[mapping.columns]`: what the sink's *board* calls each of the source's states.
     ///

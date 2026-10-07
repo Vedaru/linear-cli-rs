@@ -104,8 +104,9 @@ pub enum Origin {
     ContainerPair,
     /// A `[[mapping.project]]` entry named it (its own, or its container's).
     Configured,
-    /// Nothing said, so the mapping's own sink scope applies. A *container* (a project)
-    /// never lands here: a project no entry names is not mirrored at all.
+    /// Nothing said, and the entity names no container of its own, so the mapping's own
+    /// sink scope applies. A project never lands here, and neither does an issue whose
+    /// project the config does not name: those are not mirrored at all.
     Default,
 }
 
@@ -153,7 +154,8 @@ pub struct Entity<'a> {
     /// The entity's own identity, when it is itself a container.
     pub own: Option<Identity<'a>>,
     /// Whether the entity is itself a container (a project). A container no entry names
-    /// is not mirrored; a contained entity (an issue) falls back to the mapping's scope.
+    /// is not mirrored, and neither is an issue in it: only an issue that names no project
+    /// at all has nothing to ask and falls back to the mapping's scope.
     pub is_container: bool,
 }
 
@@ -196,10 +198,15 @@ pub fn place(
             configured: Some(scope),
         });
     }
-    // Nothing said. A project is not mirrored anywhere; an issue still has a home - the
-    // mapping's own scope - because an issue that lives nowhere is worse than one that
-    // lives in the team's repository.
-    (!entity.is_container).then(|| Placement {
+    // Nothing said. A project is not mirrored anywhere, and neither is an issue whose
+    // project the config does not name: projects are opt-in and an issue belongs to its
+    // project. Only an issue that names no project at all has no container to ask, and
+    // that one keeps the mapping's own scope - an issue that lives nowhere is worse than
+    // one that lives in the team's repository.
+    if entity.is_container || entity.container.is_some() {
+        return None;
+    }
+    Some(Placement {
         scope: default_scope.to_string(),
         origin: Origin::Default,
         configured: None,
@@ -338,12 +345,28 @@ mod tests {
     }
 
     #[test]
-    fn an_issue_with_no_entry_lands_in_the_mapping_scope() {
-        // A project-less issue, or one whose project no entry names, still has a home.
+    fn a_project_less_issue_lands_in_the_mapping_scope() {
+        // An issue that names no project at all has no container to ask, so it keeps the
+        // mapping's own scope.
         let placement = place(&projects(), DEFAULT, issue(None, None, None)).expect("placed");
         assert_eq!(placement.scope, DEFAULT);
         assert_eq!(placement.origin, Origin::Default);
         assert!(!placement.would_move());
+    }
+
+    #[test]
+    fn an_issue_whose_project_no_entry_names_is_not_placed() {
+        // Projects are opt-in, and an issue belongs to its project.
+        let placement = place(
+            &projects(),
+            DEFAULT,
+            issue(
+                None,
+                None,
+                Some(identity("project-plain", None, Some("Plain"))),
+            ),
+        );
+        assert!(placement.is_none());
     }
 
     #[test]
