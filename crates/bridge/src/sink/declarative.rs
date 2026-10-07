@@ -74,6 +74,15 @@ impl DeclarativeSink {
 
     fn send(&self, request: &Request) -> Result<Response> {
         let response = self.client.send(request)?;
+        self.check(request, response)
+    }
+
+    /// Turn a transport response into an operation result.
+    ///
+    /// A transport-level success is not an operation-level success: GraphQL
+    /// reports a rejected mutation as `200 OK` with an `errors` array, and a
+    /// sync that believed the status code would be silently wrong.
+    fn check(&self, request: &Request, response: Response) -> Result<Response> {
         if !response.is_success() {
             return Err(Error::Upstream(format!(
                 "{} {} -> {} {}",
@@ -83,9 +92,6 @@ impl DeclarativeSink {
                 response.summary()
             )));
         }
-        // A transport-level success is not an operation-level success: GraphQL
-        // reports a rejected mutation as `200 OK` with an `errors` array, and a
-        // sync that believed the status code would be silently wrong.
         if let Some(pointer) = &self.spec.error_pointer {
             if let Some(errors) = resolve(&response.body, pointer) {
                 if errors.as_array().is_some_and(|errors| !errors.is_empty()) {
@@ -100,6 +106,24 @@ impl DeclarativeSink {
             }
         }
         Ok(response)
+    }
+
+    /// Run a deletion, treating "it is already gone" as done.
+    ///
+    /// A delete states a desired end state - the remote entity is absent - and a
+    /// `404` is that state already holding. A retry of a delete whose response
+    /// was lost, or a delivery replayed after the copy was removed by hand, must
+    /// converge rather than fail forever. Only the entity's own absence is
+    /// tolerated: every other status, and a GraphQL error inside a `200`, still
+    /// fails through [`Self::check`].
+    fn execute_delete(&self, operation: &Operation, values: &Value) -> Result<()> {
+        let request = self.spec.request(operation, values, self.secret.as_ref())?;
+        let response = self.client.send(&request)?;
+        if response.status == 404 {
+            return Ok(());
+        }
+        self.check(&request, response)?;
+        Ok(())
     }
 
     fn operation<'a>(&self, name: &str, operation: Option<&'a Operation>) -> Result<&'a Operation> {
@@ -970,8 +994,7 @@ impl Sink for DeclarativeSink {
             .and_then(|comment| comment.delete.as_ref());
         let comment = self.operation("comment.delete", delete)?;
         let values = self.context(comment, &Call::new(scope).id(id))?;
-        self.execute(comment, &values)?;
-        Ok(())
+        self.execute_delete(comment, &values)
     }
 
     fn transition(&self, scope: &str, id: &str, state: &str) -> Result<()> {
@@ -984,8 +1007,7 @@ impl Sink for DeclarativeSink {
     fn delete_issue(&self, scope: &str, id: &str) -> Result<()> {
         let delete = self.operation("delete", self.spec.issue.delete.as_ref())?;
         let values = self.context(delete, &Call::new(scope).id(id))?;
-        self.execute(delete, &values)?;
-        Ok(())
+        self.execute_delete(delete, &values)
     }
 
     fn attach(&self, scope: &str, id: &str, url: &str, title: &str) -> Result<()> {

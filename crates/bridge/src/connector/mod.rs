@@ -158,7 +158,11 @@ pub trait Source: Send + Sync {
     /// carrying webhook configuration it has no use for.
     fn secret(&self) -> Option<&Secret>;
 
-    /// Verify the delivery signature against the *raw* body.
+    /// Verify a raw delivery before it is queued: the signature says who sent
+    /// it, and a source whose platform signs a timestamp also refuses one
+    /// outside its freshness bound here. Both are intake-time properties;
+    /// [`Source::parse`] applies them, and [`Source::reparse`] deliberately
+    /// does not, so a stored body can still be replayed.
     ///
     /// Defaulted so that a connector cannot forget, or silently diverge from,
     /// the check: a connector with an unusual scheme overrides this, and that
@@ -173,6 +177,17 @@ pub trait Source: Send + Sync {
     /// An empty result is a valid outcome (a `ping`, or an event type this
     /// deployment does not model): the delivery is acknowledged, not retried.
     fn parse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject>;
+
+    /// Translate a *stored* delivery that intake already accepted, for a replay.
+    ///
+    /// The queue re-runs a stored body after it may have waited far longer than
+    /// the delivery would have survived on the wire. Intake's checks were made
+    /// at intake - [`Source::parse`] is where they live - and applying them
+    /// again here would make a backlog unable to drain. The default is honest
+    /// for a connector whose parse has no intake-only half.
+    fn reparse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject> {
+        self.parse(headers, body)
+    }
 
     /// The headers a *stored* delivery needs to be parsed again.
     ///

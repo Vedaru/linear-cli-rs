@@ -564,100 +564,13 @@ impl Source for DeclarativeSource {
     }
 
     fn parse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject> {
-        let document: serde_json::Value =
-            serde_json::from_slice(body).map_err(|error| Reject::Malformed(error.to_string()))?;
+        self.translate(headers, body, true)
+    }
 
-        if let Some(freshness) = &self.spec.freshness {
-            check_freshness(&document, freshness)?;
-        }
-
-        let event_name = self.event_name(headers, &document).ok_or_else(|| {
-            Reject::MissingHeader(
-                self.spec
-                    .event
-                    .headers
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| self.spec.event.body_field.clone().unwrap_or_default()),
-            )
-        })?;
-
-        let delivery = DeliveryId::new(
-            headers
-                .get_any(
-                    &self
-                        .spec
-                        .delivery
-                        .headers
-                        .iter()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>(),
-                )
-                .map(str::to_owned)
-                .unwrap_or_else(|| body_digest(body)),
-        );
-
-        // No rule: an event this deployment does not model. Acknowledged with
-        // nothing to do, so the provider never retries it.
-        let Some(rule) = self.rule_for(&event_name) else {
-            return Ok(Vec::new());
-        };
-
-        let kind_name = rule
-            .kinds
-            .get(&event_name)
-            .map(String::as_str)
-            .unwrap_or(rule.kind.as_str());
-        let Some(kind) = Kind::parse(kind_name) else {
-            // Unreachable for a validated spec; reported rather than panicked.
-            return Err(Reject::Malformed(format!(
-                "rule for `{event_name}` declares unknown kind `{kind_name}`"
-            )));
-        };
-        if kind == Kind::Skip {
-            return Ok(Vec::new());
-        }
-        let entity_kind = match kind {
-            Kind::Issue => EntityKind::Issue,
-            Kind::Comment => EntityKind::Comment,
-            Kind::Reference => EntityKind::Reference,
-            Kind::Project => EntityKind::Project,
-            Kind::EventName => EntityKind::Other(event_name.clone()),
-            Kind::Skip => unreachable!("handled above"),
-        };
-
-        match &rule.fields.fan_out {
-            None => Ok(vec![self.build_event(
-                rule,
-                &event_name,
-                entity_kind,
-                &delivery,
-                &document,
-                &document,
-            )?]),
-            Some(pointer) => {
-                let items = resolve(&document, pointer)
-                    .and_then(|value| value.as_array())
-                    .ok_or_else(|| {
-                        Reject::Malformed(format!(
-                            "`{event_name}` delivery has no array at `{pointer}`"
-                        ))
-                    })?;
-                items
-                    .iter()
-                    .map(|item| {
-                        self.build_event(
-                            rule,
-                            &event_name,
-                            entity_kind.clone(),
-                            &delivery,
-                            item,
-                            &document,
-                        )
-                    })
-                    .collect()
-            }
-        }
+    /// Replay a stored body: intake's freshness bound was already applied when
+    /// the delivery arrived, and this body has been in the durable queue since.
+    fn reparse(&self, headers: &HeaderMap, body: &[u8]) -> Result<Vec<Event>, Reject> {
+        self.translate(headers, body, false)
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -762,3 +675,109 @@ fn check_freshness(document: &serde_json::Value, freshness: &FreshnessSpec) -> R
 
 #[cfg(test)]
 mod tests;
+
+impl DeclarativeSource {
+    fn translate(
+        &self,
+        headers: &HeaderMap,
+        body: &[u8],
+        enforce_freshness: bool,
+    ) -> Result<Vec<Event>, Reject> {
+        let document: serde_json::Value =
+            serde_json::from_slice(body).map_err(|error| Reject::Malformed(error.to_string()))?;
+
+        if enforce_freshness {
+            if let Some(freshness) = &self.spec.freshness {
+                check_freshness(&document, freshness)?;
+            }
+        }
+
+        let event_name = self.event_name(headers, &document).ok_or_else(|| {
+            Reject::MissingHeader(
+                self.spec
+                    .event
+                    .headers
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| self.spec.event.body_field.clone().unwrap_or_default()),
+            )
+        })?;
+
+        let delivery = DeliveryId::new(
+            headers
+                .get_any(
+                    &self
+                        .spec
+                        .delivery
+                        .headers
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                )
+                .map(str::to_owned)
+                .unwrap_or_else(|| body_digest(body)),
+        );
+
+        // No rule: an event this deployment does not model. Acknowledged with
+        // nothing to do, so the provider never retries it.
+        let Some(rule) = self.rule_for(&event_name) else {
+            return Ok(Vec::new());
+        };
+
+        let kind_name = rule
+            .kinds
+            .get(&event_name)
+            .map(String::as_str)
+            .unwrap_or(rule.kind.as_str());
+        let Some(kind) = Kind::parse(kind_name) else {
+            // Unreachable for a validated spec; reported rather than panicked.
+            return Err(Reject::Malformed(format!(
+                "rule for `{event_name}` declares unknown kind `{kind_name}`"
+            )));
+        };
+        if kind == Kind::Skip {
+            return Ok(Vec::new());
+        }
+        let entity_kind = match kind {
+            Kind::Issue => EntityKind::Issue,
+            Kind::Comment => EntityKind::Comment,
+            Kind::Reference => EntityKind::Reference,
+            Kind::Project => EntityKind::Project,
+            Kind::EventName => EntityKind::Other(event_name.clone()),
+            Kind::Skip => unreachable!("handled above"),
+        };
+
+        match &rule.fields.fan_out {
+            None => Ok(vec![self.build_event(
+                rule,
+                &event_name,
+                entity_kind,
+                &delivery,
+                &document,
+                &document,
+            )?]),
+            Some(pointer) => {
+                let items = resolve(&document, pointer)
+                    .and_then(|value| value.as_array())
+                    .ok_or_else(|| {
+                        Reject::Malformed(format!(
+                            "`{event_name}` delivery has no array at `{pointer}`"
+                        ))
+                    })?;
+                items
+                    .iter()
+                    .map(|item| {
+                        self.build_event(
+                            rule,
+                            &event_name,
+                            entity_kind.clone(),
+                            &delivery,
+                            item,
+                            &document,
+                        )
+                    })
+                    .collect()
+            }
+        }
+    }
+}

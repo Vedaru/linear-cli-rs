@@ -263,10 +263,12 @@ impl Handler for ReconcileHandler {
         // The stored body is re-parsed rather than trusted from the row: one
         // delivery can carry several events (a push fans out per commit), and the
         // row keeps only the first one's summary. The event name comes from the row
-        // because the header that carried it was not stored.
+        // because the header that carried it was not stored. `reparse`, not
+        // `parse`: freshness was intake's to check, and this body has waited in a
+        // durable queue since it passed.
         let headers = source.replay_headers(&delivery.event);
         let events = source
-            .parse(&headers, delivery.body.as_bytes())
+            .reparse(&headers, delivery.body.as_bytes())
             .map_err(|reject| Error::Handler(format!("stored body no longer parses: {reject}")))?;
 
         for event in &events {

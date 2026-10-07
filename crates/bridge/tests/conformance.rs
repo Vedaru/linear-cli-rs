@@ -234,6 +234,40 @@ fn every_adapter_refuses_a_stale_delivery_where_its_payload_carries_time() {
 }
 
 #[test]
+fn every_adapter_replays_a_delivery_older_than_its_window() {
+    // Freshness is an intake bound, and only an intake bound. A delivery that was
+    // accepted and then sat in the durable queue longer than the window - which is
+    // exactly what a backlog is - is replayed from its stored body and must still
+    // run. `parse` is the intake path and keeps refusing it; `reparse` is the
+    // queue's path and must not re-apply the check.
+    for (name, fixture) in conformance_fixtures()
+        .into_iter()
+        .filter(|(_, f)| f.binds_time())
+    {
+        let source = source(&name);
+        let body = fixture.body_at(now_millis() - 3_600_000);
+        let headers = delivery_headers(&source, &fixture, TEST_SECRET, &body);
+
+        let refused = source
+            .parse(&headers, &body)
+            .expect_err(&format!("{name} accepted an hour-old delivery at intake"));
+        assert_eq!(
+            refused,
+            Reject::Stale,
+            "{name}: intake must refuse the stale delivery, not {refused:?}"
+        );
+
+        let replayed = source.reparse(&headers, &body).unwrap_or_else(|reject| {
+            panic!("{name}: a replay of a stored body must not re-apply freshness: {reject}")
+        });
+        assert!(
+            !replayed.is_empty(),
+            "{name}: a replayed delivery must still yield its events"
+        );
+    }
+}
+
+#[test]
 fn every_preset_verifies_what_the_platform_really_sends() {
     // Built from the preset, the harness would happily sign whatever header and prefix the
     // preset named - so this is the check that the *preset* matches the platform: the

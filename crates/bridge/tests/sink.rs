@@ -378,6 +378,28 @@ fn a_mirrored_comment_can_be_edited_and_removed() {
 }
 
 #[test]
+fn deleting_a_comment_that_is_already_gone_is_done() {
+    let fake = Fake::start_from("forgejo");
+    let sink = fake.sink("forgejo");
+
+    // No route matches this comment, so the platform answers 404 because it is not
+    // there - which is exactly the end state the delete asks for. The queue
+    // retries, so the operation has to be idempotent instead of parking a
+    // delivery as dead.
+    sink.delete_comment("Vedaru/linear-cli-rs", "already-gone")
+        .expect("a delete of an absent comment is done");
+}
+
+#[test]
+fn deleting_an_issue_that_is_already_gone_is_done() {
+    let fake = Fake::start_from("forgejo");
+    let sink = fake.sink("forgejo");
+
+    sink.delete_issue("Vedaru/linear-cli-rs", "999")
+        .expect("a delete of an absent issue is done");
+}
+
+#[test]
 fn a_platform_that_cannot_edit_a_comment_says_so_by_name() {
     // The engine refuses an operation the spec does not declare rather than
     // inventing a request: a mapping that needs comment edits on a platform that
