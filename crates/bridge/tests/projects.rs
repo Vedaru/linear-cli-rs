@@ -19,6 +19,7 @@ use linear_bridge::connector::Source;
 use linear_bridge::domain::{EntityKind, EntityRef, Secret, UserMap};
 use linear_bridge::queue::Handler;
 use linear_bridge::reconcile::handler::{default_policy, Endpoint, Mapping, ReconcileHandler};
+use linear_bridge::reconcile::placement::{ProjectScope, ProjectScopes};
 use linear_bridge::reconcile::{Side, Sides, StateNames};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::declarative::DeclarativeSource;
@@ -254,8 +255,11 @@ impl Harness {
             users: UserMap::default(),
             source: Endpoint::parse("linear:VED").unwrap(),
             sink: Endpoint::parse(&format!("forgejo:{SCOPE}")).unwrap(),
-            routes: Default::default(),
-            sink_location: Default::default(),
+            // Placement is configuration: the project this file mirrors is named here.
+            project_scopes: ProjectScopes::new(vec![ProjectScope {
+                project: "project-uuid".into(),
+                scope: SCOPE.into(),
+            }]),
             policy,
         };
 

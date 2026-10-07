@@ -43,24 +43,31 @@ impl ReconcileHandler {
                     ContainerFacts {
                         slug: found.fields.slug.clone(),
                         name: Some(found.fields.title.clone()),
-                        links: found.fields.links.clone(),
                     },
                 )
             })
             .collect();
         let mut issue_groups: BTreeMap<String, Vec<Found>> = BTreeMap::new();
         for found in &issues_source {
-            issue_groups
-                .entry(self.found_scope(&mapping, found, &mut project_facts)?)
-                .or_default()
-                .push(found.clone());
+            match self.found_scope(&mapping, found, &mut project_facts)? {
+                Some(scope) => issue_groups.entry(scope).or_default().push(found.clone()),
+                None => log::debug!(
+                    "mapping `{}`: {} declares no repository link and is not paired, so it is not mirrored",
+                    mapping.name,
+                    found.reference.describe()
+                ),
+            }
         }
         let mut project_groups: BTreeMap<String, Vec<Found>> = BTreeMap::new();
         for found in &projects_source {
-            project_groups
-                .entry(self.found_scope(&mapping, found, &mut project_facts)?)
-                .or_default()
-                .push(found.clone());
+            match self.found_scope(&mapping, found, &mut project_facts)? {
+                Some(scope) => project_groups.entry(scope).or_default().push(found.clone()),
+                None => log::debug!(
+                    "mapping `{}`: {} declares no repository link and is not paired, so it is not mirrored",
+                    mapping.name,
+                    found.reference.describe()
+                ),
+            }
         }
 
         // The sink scopes to read: the mapping's default, every route's, and every
@@ -161,16 +168,17 @@ impl ReconcileHandler {
         Ok(survey)
     }
 
-    /// The sink scope a source entity's mirror belongs in, for grouping a sweep.
+    /// The sink scope a source entity's mirror belongs in, for grouping a sweep, or
+    /// `None` when neither a pairing nor a declared link names one.
     ///
-    /// `found_facts` caches each project's routing facts, so a sweep reads a project
-    /// once however many of its issues it judges.
+    /// `found_facts` caches each project's links, so a sweep reads a project once
+    /// however many of its issues it judges.
     pub(super) fn found_scope(
         &mut self,
         mapping: &Mapping,
         found: &Found,
         project_facts: &mut BTreeMap<String, ContainerFacts>,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         let link = self
             .store
             .find_link(&found.reference, &mapping.sink.connector)?;
@@ -184,28 +192,27 @@ impl ReconcileHandler {
         )?;
 
         // A re-pointed project keeps its mirror where the pairing put it, which is the
-        // whole point - but it has to be *said*, or the operator who runs a sweep to
-        // find out what the config change did gets `Nothing to do` and concludes it did
+        // whole point - but it has to be *said*, so an operator who runs a sweep to find
+        // out what a link change did does not get `Nothing to do` and conclude it did
         // nothing. The delivery path reports this per event; a sweep judges a whole
-        // project at once, so it reports the *container* whose route moved - one line
-        // per re-pointed project per sweep, not one per issue on its board, which would
-        // be the same event counted a hundred times and repeated every sweep until
-        // somebody acts. An issue an `issue` rule re-points on its own is the one case
-        // this leaves to the delivery path.
-        if found.reference.kind == EntityKind::Project
-            && placement.would_move()
-            && placement.origin == crate::reconcile::Origin::Pair
-        {
-            log::warn!(
-                "mapping `{}`: {} is mirrored in `{}`, but its route now says `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
-                mapping.name,
-                found.reference.describe(),
-                placement.scope,
-                placement.routed.as_deref().unwrap_or("-"),
-                placement.scope
-            );
+        // project at once, so it reports the container whose link moved - one line per
+        // re-pointed project per sweep, not one per issue on its board.
+        if let Some(placement) = &placement {
+            if found.reference.kind == EntityKind::Project
+                && placement.would_move()
+                && placement.origin == crate::reconcile::Origin::Pair
+            {
+                log::warn!(
+                    "mapping `{}`: {} is mirrored in `{}`, but its entry now names `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
+                    mapping.name,
+                    found.reference.describe(),
+                    placement.scope,
+                    placement.configured.as_deref().unwrap_or("-"),
+                    placement.scope
+                );
+            }
         }
-        Ok(placement.scope)
+        Ok(placement.map(|placement| placement.scope))
     }
 
     /// The routing facts of a source entity's container (a project's own, or its
@@ -220,7 +227,6 @@ impl ReconcileHandler {
             EntityKind::Project => Ok(ContainerFacts {
                 slug: found.fields.slug.clone(),
                 name: Some(found.fields.title.clone()),
-                links: found.fields.links.clone(),
             }),
             EntityKind::Issue => {
                 let Some(project) = found.fields.project.clone() else {

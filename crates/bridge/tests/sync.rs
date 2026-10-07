@@ -267,8 +267,7 @@ impl Harness {
             source: Endpoint::parse("linear:VED").expect("an endpoint"),
             sink: Endpoint::parse(&format!("forgejo:{SCOPE}")).expect("an endpoint"),
             users: UserMap::default(),
-            routes: Default::default(),
-            sink_location: Default::default(),
+            project_scopes: Default::default(),
             policy: policy(),
         };
         let path = support::test_database("linear-bridge-sync");

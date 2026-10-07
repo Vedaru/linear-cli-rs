@@ -549,116 +549,54 @@ fn project_mirroring_is_off_unless_a_mapping_asks_for_it() {
 }
 
 #[test]
-fn routes_reach_the_reconciler() {
-    let config = parse(&document(
-        "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"Vedaru/kuro\"\n\
-             \n[[mapping.route]]\nissue = \"VED-119\"\nscope = \"Vedaru/one-off\"\n\
-             \n[[mapping.route]]\nlabel = \"urgent\"\nscope = \"Vedaru/hotfix\"\n",
-    ))
-    .expect("the config loads");
-
-    let routes = &config.mappings[0].route;
-    assert_eq!(routes.len(), 3);
-    assert_eq!(routes[0].project.as_deref(), Some("project-uuid"));
-    assert_eq!(routes[0].scope, "Vedaru/kuro");
-    assert_eq!(routes[1].issue.as_deref(), Some("VED-119"));
-    assert_eq!(routes[2].label.as_deref(), Some("urgent"));
-
-    // And it reaches the mapping the reconciler runs with.
-    let mappings = config.reconcile_mappings().expect("the mapping resolves");
-    let routes = &mappings[0].routes;
-    assert_eq!(routes.len(), 3);
-    assert_eq!(
-        routes.scopes(),
-        vec!["Vedaru/kuro", "Vedaru/one-off", "Vedaru/hotfix"]
-    );
-}
-
-#[test]
-fn a_route_naming_a_scope_on_another_connector_is_refused() {
+fn a_route_table_is_refused() {
+    // Placement is the project's declared link now; a `[[mapping.route]]` is no longer a
+    // config key, so a config that still carries one fails loudly rather than silently
+    // placing everything in the mapping's own scope.
     let error = parse(&document(
-        "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"linear:VED\"\n",
+        "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"Vedaru/kuro\"\n",
     ))
-    .expect_err("a route may only name a scope on the mapping's sink")
+    .expect_err("a route table is no longer a config key")
     .to_string();
-    assert!(error.contains("connector `linear`"), "{error}");
-    assert!(error.contains("writes to `forgejo`"), "{error}");
+    assert!(error.contains("route"), "{error}");
 }
 
 #[test]
-fn a_route_with_nothing_to_match_on_is_refused() {
-    let error = parse(&document("\n[[mapping.route]]\nscope = \"Vedaru/kuro\"\n"))
-        .expect_err("a route needs a key")
+fn a_project_entry_reaches_the_mapping() {
+    // Placement is configuration: an entry names the project and the repository its
+    // mirror lives in, and several entries may name the same repository.
+    let config = parse(&document(concat!(
+        "\n[[mapping.project]]\nproject = \"kuro\"\nscope = \"Vedaru/kuro\"\n",
+        "\n[[mapping.project]]\nproject = \"aoe-pipelets\"\nscope = \"Vedaru/kuro\"\n",
+    )))
+    .expect("the config loads");
+    assert_eq!(config.mappings[0].project.len(), 2);
+    assert_eq!(config.mappings[0].project[0].project, "kuro");
+    assert_eq!(config.mappings[0].project[0].scope, "Vedaru/kuro");
+
+    // And it reaches the mapping the reconciler runs with, by the name a person wrote.
+    let mappings = config.reconcile_mappings().expect("the mapping resolves");
+    let scopes = &mappings[0].project_scopes;
+    assert_eq!(scopes.len(), 2);
+    assert_eq!(
+        scopes.scope(&crate::reconcile::Identity {
+            id: "a-uuid",
+            slug: None,
+            name: Some("kuro"),
+        }),
+        Some("Vedaru/kuro")
+    );
+}
+
+#[test]
+fn a_project_entry_needs_both_keys() {
+    let error = parse(&document("\n[[mapping.project]]\nproject = \"kuro\"\n"))
+        .expect_err("a scope is required")
         .to_string();
-    assert!(
-        error.contains("no `project`, `issue` or `label`"),
-        "{error}"
-    );
-}
+    assert!(error.contains("names no scope"), "{error}");
 
-#[test]
-fn a_route_may_repeat_the_mappings_own_sink_connector() {
-    let config = parse(&document(
-        "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"forgejo:Vedaru/kuro\"\n",
-    ))
-    .expect("the document loads");
-    // The prefix is the mapping's own sink; it is accepted and stripped.
-    assert_eq!(config.mappings[0].route[0].scope, "Vedaru/kuro");
-}
-
-#[test]
-fn a_route_may_name_every_key_at_once() {
-    let config = parse(&document(
-            "\n[[mapping.route]]\nproject = \"p\"\nissue = \"VED-1\"\nlabel = \"urgent\"\nscope = \"Vedaru/kuro\"\n",
-        ))
-        .expect("the config loads");
-    let route = &config.mappings[0].route[0];
-    assert_eq!(route.project.as_deref(), Some("p"));
-    assert_eq!(route.issue.as_deref(), Some("VED-1"));
-    assert_eq!(route.label.as_deref(), Some("urgent"));
-}
-
-#[test]
-fn a_relative_url_shape_follows_the_deployment_rather_than_the_preset() {
-    // A shipped preset must not name one deployment's host. `/{scope}` is resolved
-    // against the connector's own address, so the same preset serves any instance -
-    // and a link to whatever host the preset's default happens to name is no longer
-    // this deployment's repository.
-    let text = document("").replace(
-        "[platform.forgejo]",
-        "[platform.forgejo]\napi_url = \"http://127.0.0.1:4000/api/v1\"",
-    );
-    let config = parse(&text).expect("the config loads");
-    let mappings = config.reconcile_mappings().expect("the mapping resolves");
-    let location = mappings[0]
-        .sink_location
-        .as_ref()
-        .expect("forgejo declares its URL shape");
-    assert_eq!(
-        location.scope("http://127.0.0.1:4000/Vedaru/kuro"),
-        Some("Vedaru/kuro")
-    );
-    assert_eq!(location.scope("https://git.vedaru.cn/Vedaru/kuro"), None);
-}
-
-#[test]
-fn a_presets_url_shape_reaches_the_mapping() {
-    // The forgejo preset declares how its own web URLs name a repository, so a
-    // project linking to one is routed there without an explicit route. The shape is
-    // relative, so it resolves against the address this deployment talks to - here the
-    // preset's own default.
-    let config = parse(&document("")).expect("the config loads");
-    let mappings = config.reconcile_mappings().expect("the mapping resolves");
-    let location = mappings[0]
-        .sink_location
-        .as_ref()
-        .expect("forgejo declares its URL shape");
-    assert_eq!(
-        location.scope("http://127.0.0.1:3000/Vedaru/kuro"),
-        Some("Vedaru/kuro")
-    );
-    assert_eq!(
-        location.scope("https://github.com/h-paetzold/linforge"),
-        None
-    );
+    let error = parse(&document("\n[[mapping.project]]\nscope = \"Vedaru/kuro\"\n"))
+        .expect_err("a project is required")
+        .to_string();
+    assert!(error.contains("names no project"), "{error}");
 }

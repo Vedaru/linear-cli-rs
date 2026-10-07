@@ -16,7 +16,7 @@ use crate::domain::{
 use crate::error::{Error, Result};
 use crate::queue::Handler;
 use crate::reconcile::projection::{Projected, Projection, Skipped};
-use crate::reconcile::route::{Identity, Placement, Routes};
+use crate::reconcile::placement::Placement;
 use crate::reconcile::survey::{Action, Entry};
 use crate::reconcile::sweep::{self, Found};
 use crate::reconcile::{
@@ -59,7 +59,6 @@ struct Ends<'a> {
 struct ContainerFacts {
     slug: Option<String>,
     name: Option<String>,
-    links: Vec<String>,
 }
 
 /// The reconciler as the queue sees it: one delivery in, one outcome out.
@@ -164,11 +163,37 @@ impl ReconcileHandler {
         })
     }
 
+    /// A sink event the mapping's declared scopes do not cover, but the link store does:
+    /// the entity is already paired with this mapping's source, so the mapping owns it.
+    ///
+    /// Placement is per entity by its link, so a mapping occupies no fixed set of
+    /// repositories and `side_of` can only check the scope it declares. This is the other
+    /// half: a repository nobody paired stays nobody's, which is what keeps a delivery
+    /// from an unmapped repository from becoming a call against a scope we do not hold.
+    fn linked_side(&mut self, index: usize, event: &Event) -> Result<Option<Side>> {
+        let (sink_connector, source_connector) = {
+            let mapping = &self.mappings[index];
+            (
+                mapping.sink.connector.clone(),
+                mapping.source.connector.clone(),
+            )
+        };
+        if event.connector != sink_connector {
+            return Ok(None);
+        }
+        let paired = self.store.find_link(&event.subject, &source_connector)?;
+        Ok(paired.map(|_| Side::Sink))
+    }
+
     /// Apply one event. Every mapping that claims it gets a chance, in order.
     fn apply(&mut self, event: &Event) -> Result<()> {
         let mut claimed = false;
         for index in 0..self.mappings.len() {
-            let Some(side) = self.mappings[index].side_of(event) else {
+            let side = match self.mappings[index].side_of(event) {
+                Some(side) => Some(side),
+                None => self.linked_side(index, event)?,
+            };
+            let Some(side) = side else {
                 continue;
             };
             claimed = true;
@@ -350,8 +375,7 @@ mod tests {
             source: endpoint("linear:VED"),
             sink: endpoint("forgejo:Vedaru/linear-cli-rs"),
             users: UserMap::default(),
-            routes: Routes::default(),
-            sink_location: None,
+            project_scopes: Default::default(),
             policy: default_policy(Sides::new(
                 StateNames {
                     closed: vec!["Done".into(), "Canceled".into()],
@@ -413,26 +437,15 @@ mod tests {
     }
 
     #[test]
-    fn a_mapping_claims_an_event_from_a_routed_scope() {
-        // A routed repository is still this mapping's: an event from it must be
-        // claimed here rather than nowhere.
-        let mut mapping = mapping();
-        mapping.routes = Routes::new(vec![crate::reconcile::route::Route {
-            project: Some("project-kuro".into()),
-            issue: None,
-            label: None,
-            scope: "Vedaru/kuro".into(),
-        }]);
-        assert_eq!(
-            mapping.sink_scopes(),
-            vec!["Vedaru/linear-cli-rs", "Vedaru/kuro"]
-        );
-        assert_eq!(
-            mapping.side_of(&event("forgejo", "Vedaru/kuro")),
-            Some(Side::Sink)
-        );
-        // A repository nobody routed is still nobody's.
-        assert_eq!(mapping.side_of(&event("forgejo", "Vedaru/other")), None);
+    fn a_mapping_does_not_claim_a_scope_it_does_not_declare() {
+        // A repository a project *links* to is not in the mapping's declared set, so
+        // `side_of` must not claim it: the handler asks the link store instead, and a
+        // repository nobody paired stays nobody's rather than causing a call against a
+        // scope this deployment does not hold.
+        let mapping = mapping();
+        assert_eq!(mapping.side_of(&event("forgejo", "Vedaru/kuro")), None);
+        // The source side is unaffected.
+        assert_eq!(mapping.side_of(&event("linear", "VED")), Some(Side::Source));
     }
 
     #[test]

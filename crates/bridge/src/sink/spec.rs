@@ -33,11 +33,6 @@ use crate::sink::template;
 pub struct SinkSpec {
     /// Base URL of the API, e.g. `http://127.0.0.1:3000/api/v1`.
     pub base_url: String,
-    /// How this platform recognises its own web URLs, so an entity that *declares* a
-    /// location elsewhere can be resolved to a scope here. Optional: a platform with
-    /// no such shape simply never has links consulted for it.
-    #[serde(default)]
-    pub location: Option<LocationSpec>,
     #[serde(default)]
     pub auth: Option<AuthSpec>,
     /// Static headers sent with every request (`Accept`, an API version, ...).
@@ -86,19 +81,6 @@ pub struct AuthSpec {
     pub header: String,
     #[serde(default)]
     pub prefix: Option<String>,
-}
-
-/// How a platform's own URLs name a scope (a repository, a board).
-///
-/// The pattern is a URL template with one `{scope}` capture, e.g.
-/// `https://git.example.com/{scope}`. It is how the engine can tell a link that
-/// points at this platform from one that points at another: a URL that does not
-/// match is simply not this platform's, never an error.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocationSpec {
-    /// A URL template carrying exactly one `{scope}` capture.
-    pub url: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -389,20 +371,10 @@ pub struct ReadSpec {
     #[serde(default)]
     pub project: Option<ReadField>,
     /// A container's alias (a project's slug), where the platform exposes one. Read
-    /// only so a route may name a project by it; it is an identity field, never part
-    /// of the content a mirror compares or writes.
+    /// only so a `[[mapping.project]]` entry may name a project by it; it is an identity
+    /// field, never part of the content a mirror compares or writes.
     #[serde(default)]
     pub slug: Option<ReadField>,
-    /// The identifier a person sees (`VED-119`), where the platform has one apart
-    /// from the id. Read only so a route may name an issue by it; identity, not
-    /// content.
-    #[serde(default)]
-    pub identifier: Option<ReadField>,
-    /// Locations the entity declares elsewhere (a project's external links), as a list
-    /// of URLs. Identity, not content: never compared or written, only consulted to
-    /// resolve a scope from a link that points at the sink platform.
-    #[serde(default)]
-    pub links: Option<ReadField>,
     /// The platform's state, as a name (`/state/name` on Linear, `/state` on a
     /// forge).
     #[serde(default)]
@@ -428,14 +400,6 @@ impl SinkSpec {
     pub fn validate(&self) -> std::result::Result<(), String> {
         if !self.base_url.starts_with("http://") && !self.base_url.starts_with("https://") {
             return Err(format!("base_url `{}` must be http(s)", self.base_url));
-        }
-        if let Some(location) = &self.location {
-            if location.url.matches("{scope}").count() != 1 {
-                return Err(format!(
-                    "location.url `{}` must carry exactly one `{{scope}}` capture",
-                    location.url
-                ));
-            }
         }
         if let Some(auth) = &self.auth {
             if auth.header.trim().is_empty() {

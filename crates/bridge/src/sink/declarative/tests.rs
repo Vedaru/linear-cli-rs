@@ -84,7 +84,6 @@ fn a_platform_with_no_due_date_field_carries_the_date_in_a_label() {
             "forgejo",
             SinkSpec {
                 base_url: "http://127.0.0.1:1".into(),
-                location: None,
                 auth: None,
                 headers: Default::default(),
                 error_pointer: None,
@@ -157,8 +156,6 @@ fn read_fields_map_a_flat_response_and_a_rich_one() {
         assignee: Some(ReadField::Pointer("/assignees/0/login".into())),
         project: None,
         slug: None,
-        identifier: None,
-        links: None,
         state: Some(ReadField::Pointer("/state".into())),
         id: Some("/number".into()),
         url: Some("/html_url".into()),

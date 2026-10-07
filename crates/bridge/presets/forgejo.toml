@@ -112,16 +112,6 @@ actor_name = "/author/name"
 [sink]
 base_url = "http://127.0.0.1:3000/api/v1"
 
-# How a Forgejo web URL names a repository, so a project that declares a link to its
-# repo can be resolved to the scope the mirror lives in. A link that does not match -
-# a project also linking to a GitHub mirror, say - is simply not this platform's.
-[sink.location]
-# Where this platform's own URLs live, for reading a repository out of a link somebody
-# put on a project. Relative to this connector's `api_url` (its origin, since the API
-# prefix is not part of a repository URL), so a deployment only declares its address
-# once. An absolute URL here would pin the pattern to one host.
-url = "/{scope}"
-
 [sink.auth]
 header = "Authorization"
 # Forgejo (like Gitea) wants the scheme in the value, not in the header name.

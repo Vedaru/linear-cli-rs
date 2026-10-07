@@ -79,7 +79,16 @@ impl ReconcileHandler {
             Side::Source => {
                 let fields = observed.fields.clone().unwrap_or_default();
                 let facts = self.entity_facts(&mapping, &subject.kind, &fields)?;
-                let placed = self.placement(&mapping, &subject, &fields, link.as_ref(), &facts)?;
+                let Some(placed) =
+                    self.placement(&mapping, &subject, &fields, link.as_ref(), &facts)?
+                else {
+                    log::debug!(
+                        "mapping `{}`: project {} declares no repository link and is not paired, so it is not mirrored",
+                        mapping.name,
+                        subject.describe()
+                    );
+                    return Ok(());
+                };
                 let endpoint = Endpoint {
                     connector: mapping.sink.connector.clone(),
                     scope: placed.scope.clone(),
@@ -108,11 +117,14 @@ impl ReconcileHandler {
             {
                 let facts = self.entity_facts(&mapping, &reference.kind, fields)?;
                 placement =
-                    Some(self.placement(&mapping, reference, fields, link.as_ref(), &facts)?);
+                    self.placement(&mapping, reference, fields, link.as_ref(), &facts)?;
             }
         }
-        // A pair a route would have moved is reported, never relocated: moving a paired
-        // copy means deleting the one on the other side, and its history with it.
+        // A pair a link would have moved is reported, never relocated: moving a paired
+        // copy means deleting the one on the other side, and its history with it. On the
+        // source side a placement is required (it is where the write goes); on the sink
+        // side it may be absent, because a mirror being created onto the source has no
+        // source entity yet to place.
         if let Some(placement) = &placement {
             if placement.would_move() {
                 let pair = counterpart_ref
@@ -123,11 +135,11 @@ impl ReconcileHandler {
                     })
                     .unwrap_or_else(|| subject.describe());
                 log::warn!(
-                    "mapping `{}`: {} is mirrored in `{}`, but its project now routes to `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
+                    "mapping `{}`: {} is mirrored in `{}`, but its project's entry now names `{}`; keeping the mirror in `{}` rather than moving it (a move would delete the copy on the other side and lose its history)",
                     mapping.name,
                     pair,
                     placement.scope,
-                    placement.routed.as_deref().unwrap_or("-"),
+                    placement.configured.as_deref().unwrap_or("-"),
                     placement.scope
                 );
             }
@@ -250,7 +262,7 @@ impl ReconcileHandler {
         fields: &IssueFields,
         pair: Option<&Link>,
         container: &ContainerFacts,
-    ) -> Result<Placement> {
+    ) -> Result<Option<Placement>> {
         // The sink side of this entity's own pairing, when it has one: a pair never
         // moves repos, so this pins the entity wherever the mirror already is.
         let paired = pair
@@ -258,11 +270,11 @@ impl ReconcileHandler {
             .filter(|other| other.connector == mapping.sink.connector)
             .and_then(|other| other.scope.clone());
 
-        // The container an issue names, resolved through the container's *pairing*
-        // first: a mirrored project knows the repository its board lives in. Its
-        // identity - the id the issue names it by, plus the slug and name resolved
-        // for the container - is what a `project` route matches, so an issue
-        // inherits a route that names its project by slug or name, not only by id.
+        // The container an issue names, resolved through the container's pairing: a
+        // mirrored project knows the repository its board lives in. Its identity - the id
+        // the issue names it by, plus the slug and name resolved for the container - is
+        // what a `[[mapping.project]]` entry matches, so an entry may name a project by
+        // slug or name and not only by id.
         let container_id = (source.kind == EntityKind::Issue)
             .then(|| fields.project.clone())
             .flatten();
@@ -283,7 +295,7 @@ impl ReconcileHandler {
                     .and_then(|other| other.scope);
                 (
                     paired_scope,
-                    Some(Identity {
+                    Some(crate::reconcile::placement::Identity {
                         id: id.as_str(),
                         slug: container.slug.as_deref(),
                         name: container.name.as_deref(),
@@ -293,38 +305,25 @@ impl ReconcileHandler {
             None => (None, None),
         };
 
-        // A container is routed by its own identity; a contained entity by its
-        // container's project, then its own identifier, then its labels.
-        let own = (source.kind == EntityKind::Project).then_some(Identity {
+        // A project is configured by its own identity; an issue by its container's.
+        let own = (source.kind == EntityKind::Project).then_some(crate::reconcile::placement::Identity {
             id: source.native_id.as_str(),
             slug: fields.slug.as_deref(),
             name: Some(fields.title.as_str()),
         });
-        // The key an `issue` rule names the entity by: the identifier a person sees,
-        // falling back to the platform id when the platform exposes no other.
-        let issue_key = (source.kind == EntityKind::Issue).then(|| {
-            fields
-                .identifier
-                .as_deref()
-                .unwrap_or(source.native_id.as_str())
-        });
 
-        Ok(crate::reconcile::route::place(
-            &mapping.routes,
-            mapping.sink_location.as_ref(),
+        // The repository is the one a `[[mapping.project]]` entry names - its own for a
+        // project, its project's for an issue. A project no entry names is not mirrored;
+        // an issue with nothing to name one falls back to the mapping's own scope.
+        Ok(crate::reconcile::placement::place(
+            &mapping.project_scopes,
             &mapping.sink.scope,
-            crate::reconcile::route::Entity {
+            crate::reconcile::placement::Entity {
                 paired: paired.as_deref(),
                 container_paired: container_paired.as_deref(),
                 container: container_identity,
                 own,
-                issue: issue_key,
-                labels: &fields
-                    .labels
-                    .iter()
-                    .map(|label| label.name.clone())
-                    .collect::<Vec<_>>(),
-                links: &container.links,
+                is_container: source.kind == EntityKind::Project,
             },
         ))
     }
@@ -343,7 +342,6 @@ impl ReconcileHandler {
             EntityKind::Project => Ok(ContainerFacts {
                 slug: fields.slug.clone(),
                 name: Some(fields.title.clone()),
-                links: fields.links.clone(),
             }),
             EntityKind::Issue => self.project_facts(mapping, fields.project.as_deref()),
             _ => Ok(ContainerFacts::default()),
@@ -361,7 +359,7 @@ impl ReconcileHandler {
         mapping: &Mapping,
         project: Option<&str>,
     ) -> Result<ContainerFacts> {
-        if mapping.sink_location.is_none() {
+        if mapping.project_scopes.is_empty() {
             return Ok(ContainerFacts::default());
         }
         let Some(project) = project else {
@@ -378,7 +376,6 @@ impl ReconcileHandler {
             .map(|fields| ContainerFacts {
                 slug: fields.slug,
                 name: Some(fields.title),
-                links: fields.links,
             })
             .unwrap_or_default())
     }

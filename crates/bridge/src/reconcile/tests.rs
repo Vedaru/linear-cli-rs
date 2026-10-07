@@ -49,8 +49,6 @@ fn fields(title: &str, labels: &[&str], priority: u8) -> IssueFields {
         assignee: None,
         project: None,
         slug: None,
-        identifier: None,
-        links: Vec::new(),
     }
 }
 

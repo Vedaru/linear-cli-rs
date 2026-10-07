@@ -23,7 +23,7 @@
 
 pub mod handler;
 pub mod projection;
-pub mod route;
+pub mod placement;
 pub mod skipped_log;
 pub mod survey;
 pub mod sweep;
@@ -34,7 +34,7 @@ mod vocabulary;
 use planners::*;
 pub use vocabulary::{Direction, Openness, Side, Sides, StateNames};
 
-pub use route::{Entity, Identity, Location, Origin, Placement, Route, Routes};
+pub use placement::{Entity, Identity, Origin, Placement, ProjectScope, ProjectScopes};
 pub use survey::{Action, Entry, Survey};
 
 use std::collections::BTreeMap;

@@ -162,21 +162,6 @@ query = { state = "open", filter = "a/b" }
 }
 
 #[test]
-fn a_location_pattern_needs_a_scope_capture() {
-    let with_location =
-        format!("{FORGEJO}\n[location]\nurl = \"https://git.example.com/{{scope}}\"\n");
-    let spec = SinkSpec::from_toml(&with_location).expect("a valid location");
-    assert_eq!(
-        spec.location.expect("a location").url,
-        "https://git.example.com/{scope}"
-    );
-
-    let bad = format!("{FORGEJO}\n[location]\nurl = \"https://git.example.com/\"\n");
-    let error = SinkSpec::from_toml(&bad).unwrap_err().to_string();
-    assert!(error.contains("{scope}"), "{error}");
-}
-
-#[test]
 fn validation_catches_the_mistakes_a_preset_will_make() {
     let bad_method = FORGEJO.replace("method = \"POST\"", "method = \"FETCH\"");
     let error = SinkSpec::from_toml(&bad_method).unwrap_err().to_string();

@@ -769,21 +769,7 @@ fn read_fields(body: &Value, read: &ReadSpec) -> IssueFields {
         // A container's alias, for routing only - not part of the content a mirror
         // compares.
         slug: read_text(body, read.slug.as_ref()),
-        // The identifier a person sees, likewise for routing only.
-        identifier: read_text(body, read.identifier.as_ref()),
-        // A list of URLs the entity declares elsewhere, for resolving a scope from a
-        // link that points at the sink platform. Read with the same path/pick shape a
-        // label list uses; identity, never content.
-        links: read_names(body, read.links.as_ref()),
     }
-}
-
-/// The names of a path/pick list, for the fields that are identity rather than content.
-fn read_names(body: &Value, field: Option<&ReadField>) -> Vec<String> {
-    read_labels(body, field)
-        .into_iter()
-        .map(|label| label.name)
-        .collect()
 }
 
 fn read_text(body: &Value, field: Option<&ReadField>) -> Option<String> {

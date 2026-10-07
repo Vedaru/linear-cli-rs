@@ -263,6 +263,13 @@ secret_env = "FORGEJO_WEBHOOK_SECRET"
 [[mapping]]
 source = "linear:VED"
 sink = "forgejo:Vedaru/linear-cli-rs"
+
+# Which project's mirror lives in which repository. Placement is configuration: a
+# project with no entry is not mirrored, an issue follows its project (or falls back
+# to the mapping's repository), and a project's own links are never consulted.
+[[mapping.project]]
+project = "kuro"
+scope = "Vedaru/kuro"
 ```
 
 ```sh

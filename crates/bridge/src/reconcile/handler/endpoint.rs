@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::domain::parse_connector_ref;
-use crate::reconcile::route::Location;
+use crate::reconcile::placement::ProjectScopes;
 
 /// One end of a mapping: a platform, and the container inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,13 +41,10 @@ pub struct Mapping {
     /// How a person is known on each platform. Empty is meaningful: it means the
     /// deployment has not said, so assignee sync is off rather than guessed.
     pub users: UserMap,
-    /// Declarative routes: which sink scope an entity's project's mirror lives in.
-    /// Empty means every entity stays in the mapping's own sink scope.
-    pub routes: Routes,
-    /// The sink platform's URL shape, when its preset declares one: a project that
-    /// links to a location in this shape is routed to the scope the URL names. `None`
-    /// means links are never consulted.
-    pub sink_location: Option<Location>,
+    /// `[[mapping.project]]`: which sink scope each project's mirror lives in. Placement
+    /// is configuration, not something read off a project's links, which are written for
+    /// people and change for human reasons.
+    pub project_scopes: ProjectScopes,
 }
 
 impl Mapping {
@@ -57,9 +54,10 @@ impl Mapping {
     /// can be paired several times over (per team, per repository), and a mapping
     /// that ignored the scope would mirror the wrong repository's issues.
     ///
-    /// The sink side is matched against *every* scope this mapping writes through -
-    /// its default and each route's - because a routed repository is still this
-    /// mapping's, and an event from it must be claimed here rather than nowhere.
+    /// The sink side is matched against every scope this mapping declares. A repository a
+    /// project is configured into is not in that set - the handler asks the link store
+    /// instead ([`ReconcileHandler::linked_side`]), which is what keeps an event from a
+    /// repository nobody mapped out of this mapping.
     pub fn side_of(&self, event: &Event) -> Option<Side> {
         // A scope the platform did not report is not a mismatch: a Linear comment
         // payload names the issue but not the team, and the link - not the scope -
@@ -82,16 +80,13 @@ impl Mapping {
         }
     }
 
-    /// Every scope on the sink this mapping reads and writes through: its default
-    /// container, then each route's, distinct and in declaration order.
+    /// Every scope on the sink this mapping declares, which is its own container.
+    ///
+    /// A mapping also writes the scopes its entities are configured into; a sweep reads
+    /// those from the placement of each entity, and the link store answers for an event
+    /// from a configured repository.
     pub fn sink_scopes(&self) -> Vec<&str> {
-        let mut scopes = vec![self.sink.scope.as_str()];
-        for scope in self.routes.scopes() {
-            if !scopes.contains(&scope) {
-                scopes.push(scope);
-            }
-        }
-        scopes
+        vec![self.sink.scope.as_str()]
     }
 
     pub(super) fn endpoint(&self, side: Side) -> &Endpoint {

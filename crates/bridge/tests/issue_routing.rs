@@ -1,16 +1,16 @@
-//! Routing an entity to the repository its project - or its own assignment - lives in.
+//! Placement: which repository an entity's mirror lives in.
 //!
-//! One mapping, two (and more) forge repositories: an issue's repository is not a
-//! per-issue choice by default, it is a fact about the issue's project. This checks
-//! the whole path against stateful fakes where a create a later read must see really
-//! is remembered, and asserts on the actual request paths:
+//! One mapping, two (and more) forge repositories: where a project's mirror lives is
+//! configuration (`[[mapping.project]]`), and an issue follows its project. This checks
+//! the whole path against stateful fakes where a create a later read must see really is
+//! remembered, and asserts on the actual request paths:
 //!
-//! - a routed project is created in the routed repository;
+//! - a configured project is created in the repository its entry names;
 //! - an issue in that project lands in the same repository as the project's mirror;
-//! - an issue in an unrouted project lands in the mapping's default repository;
-//! - an issue with no project is assigned by a `label` or an `issue` rule, or falls
-//!   back to the default;
-//! - an existing pair whose project now routes elsewhere is *not* relocated - the
+//! - a project with no entry is not mirrored, and its issue falls back to the mapping's
+//!   own repository (as does an issue with no project at all);
+//! - several entries may name the same repository;
+//! - an existing pair whose project is now configured elsewhere is *not* relocated - the
 //!   update still goes to the repository the pair lives in.
 //!
 //! The fakes are hand-written rather than fixture-driven because this is behaviour,
@@ -25,7 +25,7 @@ use linear_bridge::connector::Source;
 use linear_bridge::domain::{EntityKind, EntityRef, Secret, UserMap};
 use linear_bridge::queue::Handler;
 use linear_bridge::reconcile::handler::{default_policy, Endpoint, Mapping, ReconcileHandler};
-use linear_bridge::reconcile::route::{Location, Route, Routes};
+use linear_bridge::reconcile::placement::{ProjectScope, ProjectScopes};
 use linear_bridge::reconcile::{Sides, StateNames};
 use linear_bridge::sink::Sink;
 use linear_bridge::sources::declarative::DeclarativeSource;
@@ -56,16 +56,13 @@ fn state() -> Arc<Mutex<World>> {
     Arc::new(Mutex::new(World::default()))
 }
 
-fn linear_project(id: &str, name: &str, slug: &str, links: &[&str]) -> Value {
+fn linear_project(id: &str, name: &str, slug: &str) -> Value {
     json!({
         "id": id,
         "slugId": slug,
         "name": name,
         "description": "why it matters",
         "url": format!("https://linear.app/vedaru/project/{slug}"),
-        "externalLinks": {
-            "nodes": links.iter().map(|url| json!({ "url": url, "label": "" })).collect::<Vec<_>>()
-        },
     })
 }
 
@@ -149,7 +146,7 @@ fn linear_routes(world: Arc<Mutex<World>>) -> impl Fn(&str, &str, &Value) -> (u1
         if query.contains("mutation ProjectCreate") {
             let input = body["variables"]["input"].clone();
             let id = format!("project-{}", world.linear_projects.len() + 1);
-            let project = linear_project(&id, input["name"].as_str().unwrap_or(""), &id, &[]);
+            let project = linear_project(&id, input["name"].as_str().unwrap_or(""), &id);
             world.linear_projects.insert(id.clone(), project.clone());
             return (
                 200,
@@ -334,31 +331,15 @@ fn database() -> String {
 
 impl Harness {
     fn start() -> Self {
-        Self::with_routes(Routes::new(vec![
-            Route {
-                project: Some("project-kuro".into()),
-                issue: None,
-                label: None,
-                scope: "Vedaru/kuro".into(),
-            },
-            Route {
-                project: None,
-                issue: Some("VED-200".into()),
-                label: None,
-                scope: "Vedaru/one-off".into(),
-            },
-            Route {
-                project: None,
-                issue: None,
-                label: Some("urgent".into()),
-                scope: "Vedaru/hotfix".into(),
-            },
-        ]))
+        Self::with_projects(ProjectScopes::new(vec![ProjectScope {
+            project: "project-kuro".into(),
+            scope: "Vedaru/kuro".into(),
+        }]))
     }
 
-    /// A harness whose mapping carries exactly these routes, so a test can route a
-    /// project by name or slug the way a live config does - not only by id.
-    fn with_routes(routes: Routes) -> Self {
+    /// A harness whose mapping carries exactly these project entries, so a test can show
+    /// where configuration places a project and its issues.
+    fn with_projects(projects: ProjectScopes) -> Self {
         let world = state();
         let linear = Fake::start(linear_routes(Arc::clone(&world)));
         let forgejo = Fake::start(forgejo_routes(Arc::clone(&world)));
@@ -399,12 +380,9 @@ impl Harness {
             users: UserMap::default(),
             source: Endpoint::parse("linear:VED").unwrap(),
             sink: Endpoint::parse(&format!("forgejo:{DEFAULT_SCOPE}")).unwrap(),
-            routes,
-            // The sink platform's own URL shape: a project linking to a repo there is
-            // routed to that repo without a route.
-            sink_location: Some(
-                Location::parse("https://git.vedaru.cn/{scope}").expect("a capture"),
-            ),
+            // Placement is configuration: a `[[mapping.project]]` entry says where a
+            // project's mirror lives. No default for a project, no link reading.
+            project_scopes: projects,
             policy,
         };
 
@@ -429,12 +407,12 @@ impl Harness {
         }
     }
 
-    fn set_linear_project(&self, id: &str, name: &str, slug: &str, links: &[&str]) {
+    fn set_linear_project(&self, id: &str, name: &str, slug: &str) {
         self.world
             .lock()
             .expect("not poisoned")
             .linear_projects
-            .insert(id.to_string(), linear_project(id, name, slug, links));
+            .insert(id.to_string(), linear_project(id, name, slug));
     }
 
     fn set_linear_issue(&self, id: &str, identifier: &str, project: Option<&str>, labels: &[&str]) {
@@ -571,27 +549,23 @@ fn linear_project_event(id: &str, action: &str) -> String {
 }
 
 #[test]
-fn one_mapping_writes_each_issue_to_the_repo_it_resolves_to() {
+fn a_configured_projects_entry_places_it_and_its_issues_and_the_rest_fall_to_the_mapping_scope() {
     let mut harness = Harness::start();
 
-    // A project routing to its own repository, and a project with no route.
-    harness.set_linear_project("project-kuro", "Kuro", "kuro", &[]);
-    harness.set_linear_project("project-plain", "Plain", "plain", &[]);
+    // The harness configures `project-kuro` into `Vedaru/kuro`. Another project has no
+    // entry, and a bare issue has no project at all: those still have a home - the
+    // mapping's own scope - because an issue that lives nowhere is worse than one that
+    // lives in the team's repository. A project with no entry is not mirrored at all.
+    harness.set_linear_project("project-kuro", "Kuro", "kuro");
+    harness.set_linear_project("project-plain", "Plain", "plain");
     harness.deliver("Project", &linear_project_event("project-kuro", "create"));
+    harness.deliver("Project", &linear_project_event("project-plain", "create"));
 
     harness.set_linear_issue("issue-kuro", "VED-100", Some("project-kuro"), &[]);
     harness.set_linear_issue("issue-default", "VED-101", Some("project-plain"), &[]);
-    harness.set_linear_issue("issue-label", "VED-102", None, &["urgent"]);
-    harness.set_linear_issue("issue-oneoff", "VED-200", None, &[]);
-    harness.set_linear_issue("issue-nothing", "VED-103", None, &[]);
+    harness.set_linear_issue("issue-bare", "VED-102", None, &[]);
 
-    for id in [
-        "issue-kuro",
-        "issue-default",
-        "issue-label",
-        "issue-oneoff",
-        "issue-nothing",
-    ] {
+    for id in ["issue-kuro", "issue-default", "issue-bare"] {
         harness.deliver("Issue", &linear_issue_event(id, "create"));
     }
 
@@ -601,47 +575,40 @@ fn one_mapping_writes_each_issue_to_the_repo_it_resolves_to() {
         .filter(|(method, path)| method == "POST" && path.ends_with("/issues"))
         .map(|(_, path)| path)
         .collect();
+    let count = |scope: &str| {
+        let wanted = format!("/api/v1/repos/{scope}/issues");
+        posts.iter().filter(|path| **path == wanted).count()
+    };
 
-    // The routed project landed in its repository...
-    assert!(
-        harness.forge_requests().contains(&(
-            "POST".to_string(),
-            "/api/v1/repos/Vedaru/kuro/projects".to_string()
-        )),
-        "the project was not created in its routed repo: {:?}",
-        harness.forge_requests()
-    );
-    // ...and each issue landed where its project, its label or its own rule says.
-    assert!(
-        posts.contains(&"/api/v1/repos/Vedaru/kuro/issues".to_string()),
-        "the project's issue did not land in the routed repo: {posts:?}"
-    );
-    assert!(
-        posts.contains(&"/api/v1/repos/Vedaru/hotfix/issues".to_string()),
-        "the label-assigned issue did not land in its repo: {posts:?}"
-    );
-    assert!(
-        posts.contains(&"/api/v1/repos/Vedaru/one-off/issues".to_string()),
-        "the issue-assigned issue did not land in its repo: {posts:?}"
-    );
-    let default_posts = posts
-        .iter()
-        .filter(|path| path.as_str() == "/api/v1/repos/Vedaru/linear-cli-rs/issues")
-        .count();
+    let projects: Vec<String> = harness
+        .forge_requests()
+        .into_iter()
+        .filter(|(method, path)| method == "POST" && path.ends_with("/projects"))
+        .map(|(_, path)| path)
+        .collect();
+
     assert_eq!(
-        default_posts, 2,
-        "the unrouted project's issue and the unassigned issue both go to the default: {posts:?}"
+        projects,
+        vec!["/api/v1/repos/Vedaru/kuro/projects".to_string()],
+        "only the linked project is mirrored: {projects:?}"
+    );
+    assert_eq!(count("Vedaru/kuro"), 1, "the linked issue: {posts:?}");
+    assert_eq!(
+        count(DEFAULT_SCOPE),
+        2,
+        "a project-less issue and an unlinked project's issue fall to the mapping scope: {posts:?}"
     );
 }
 
 #[test]
-fn a_paired_issue_is_not_relocated_when_its_project_routes_elsewhere() {
+fn a_paired_issue_is_not_relocated_when_its_project_is_configured_elsewhere() {
     let mut harness = Harness::start();
-    // The pair already lives in the default repository, but the issue's project now
-    // routes to kuro. Moving it would delete the forge copy and its history, so the
+    // The pair already lives in the default repository, but the issue's project is
+    // configured into kuro. Moving it would delete the forge copy and its history, so the
     // update must go to the repository the pair is in.
     harness.add_forge_issue(DEFAULT_SCOPE, 12, "Old title");
     harness.pair("issue-moved", DEFAULT_SCOPE, 12);
+    harness.set_linear_project("project-kuro", "Kuro", "kuro");
     harness.set_linear_issue("issue-moved", "VED-300", Some("project-kuro"), &[]);
 
     harness.deliver("Issue", &linear_issue_event("issue-moved", "update"));
@@ -672,10 +639,8 @@ fn a_paired_issue_is_not_relocated_when_its_project_routes_elsewhere() {
 #[test]
 fn a_sweep_compares_each_issue_against_its_own_repository() {
     let mut harness = Harness::start();
-    harness.set_linear_project("project-kuro", "Kuro", "kuro", &[]);
+    harness.set_linear_project("project-kuro", "Kuro", "kuro");
     harness.set_linear_issue("issue-kuro", "VED-100", Some("project-kuro"), &[]);
-    // The forge copy lives in the routed repo and is paired by the store; its title
-    // is stale, so the sweep has something to write there.
     harness.add_forge_issue("Vedaru/kuro", 5, "Old title");
     harness.pair("issue-kuro", "Vedaru/kuro", 5);
 
@@ -706,23 +671,16 @@ fn a_sweep_compares_each_issue_against_its_own_repository() {
 }
 
 #[test]
-fn a_projects_declared_link_routes_its_issues_and_another_host_does_not() {
-    let mut harness = Harness::start();
-    // No explicit route for either: the repo comes from the project's own links. One
-    // links to the forge; the other links only to a different host, which must be
-    // ignored rather than guessed at.
-    harness.set_linear_project(
-        "project-linked",
-        "Linked",
-        "linked",
-        &["https://git.vedaru.cn/Vedaru/linked"],
-    );
-    harness.set_linear_project(
-        "project-ghost",
-        "Ghost",
-        "ghost",
-        &["https://github.com/h-paetzold/linforge"],
-    );
+fn a_configured_entry_places_its_issues_and_an_unconfigured_project_is_not_a_candidate() {
+    // Placement is configuration. One project is configured into the forge; the other is
+    // not configured at all, so it is not mirrored - and its issue, with no entry to
+    // follow, falls to the mapping's own scope.
+    let mut harness = Harness::with_projects(ProjectScopes::new(vec![ProjectScope {
+        project: "linked".into(),
+        scope: "Vedaru/linked".into(),
+    }]));
+    harness.set_linear_project("project-linked", "Linked", "linked");
+    harness.set_linear_project("project-ghost", "Ghost", "ghost");
     harness.deliver("Project", &linear_project_event("project-linked", "create"));
 
     harness.set_linear_issue("issue-linked", "VED-400", Some("project-linked"), &[]);
@@ -736,13 +694,13 @@ fn a_projects_declared_link_routes_its_issues_and_another_host_does_not() {
         .filter(|(method, path)| method == "POST" && path.ends_with("/issues"))
         .map(|(_, path)| path)
         .collect();
-    assert!(
-        posts.contains(&"/api/v1/repos/Vedaru/linked/issues".to_string()),
-        "the linked project's issue did not land in the linked repo: {posts:?}"
-    );
-    assert!(
-        posts.contains(&"/api/v1/repos/Vedaru/linear-cli-rs/issues".to_string()),
-        "the other-host project's issue did not fall back to the default: {posts:?}"
+    assert_eq!(
+        posts,
+        vec![
+            "/api/v1/repos/Vedaru/linked/issues".to_string(),
+            format!("/api/v1/repos/{DEFAULT_SCOPE}/issues"),
+        ],
+        "the linked project's issue goes to its link, the other to the mapping scope: {posts:?}"
     );
     // The project itself was created in the repo it links to.
     assert!(
@@ -755,32 +713,26 @@ fn a_projects_declared_link_routes_its_issues_and_another_host_does_not() {
     );
 }
 
-/// A sweep where a route names the project by `named` - its *name* in one case, its
-/// *slug* in the other. Neither the project nor its issue is paired yet: this is the
-/// live case, the pass that creates the project. The project routes to `Vedaru/kuro`,
-/// and the guarantee is that its issue - judged in the same sweep - comes with it:
-/// both created in the routed repository, and the issue on its board *there*.
-fn sweep_unpaired_project_routed_by(named: &str) {
-    let mut harness = Harness::with_routes(Routes::new(vec![Route {
-        project: Some(named.into()),
-        issue: None,
-        label: None,
-        scope: "Vedaru/kuro".into(),
-    }]));
-    harness.set_linear_project("project-kuro", "Kuro", "kuro", &[]);
+/// A sweep of an unpaired project that links to a repository: the pass that creates both
+/// the project and its issue, and the guarantee that the issue comes with its project -
+/// both in the linked repository, and the issue on its board *there*.
+#[test]
+fn a_sweep_places_a_configured_project_and_carries_its_unpaired_issue_with_it() {
+    let mut harness = Harness::start();
+    harness.set_linear_project("project-kuro", "Kuro", "kuro");
     harness.set_linear_issue("issue-kuro", "VED-100", Some("project-kuro"), &[]);
 
     let survey = harness.handler.survey(0).expect("a survey");
     harness.handler.apply_survey(0, &survey).expect("applied");
 
     let requests = harness.forge_requests();
-    // The project itself was created in the routed repository...
+    // The project itself was created in its linked repository...
     assert!(
         requests.contains(&(
             "POST".to_string(),
             "/api/v1/repos/Vedaru/kuro/projects".to_string()
         )),
-        "the project was not created in the routed repo: {requests:?}"
+        "the project was not created in its linked repo: {requests:?}"
     );
     // ...the issue was created in that same repository, not the default...
     let posts: Vec<&String> = requests
@@ -792,7 +744,7 @@ fn sweep_unpaired_project_routed_by(named: &str) {
         posts
             .iter()
             .any(|path| path.as_str() == "/api/v1/repos/Vedaru/kuro/issues"),
-        "the issue was not created in the routed repo: {posts:?}"
+        "the issue was not created in the linked repo: {posts:?}"
     );
     assert!(
         !posts
@@ -800,23 +752,40 @@ fn sweep_unpaired_project_routed_by(named: &str) {
             .any(|path| path.as_str() == format!("/api/v1/repos/{DEFAULT_SCOPE}/issues").as_str()),
         "the issue fell back to the default repo: {posts:?}"
     );
-    // ...and it landed on its board, in that same routed repository.
+    // ...and it landed on its board, in that same linked repository.
     assert!(
         requests.iter().any(|(method, path)| {
             method == "POST"
                 && path.starts_with("/api/v1/repos/Vedaru/kuro/projects/")
                 && path.ends_with("/issues/1")
         }),
-        "the issue did not land on its board in the routed repo: {requests:?}"
+        "the issue did not land on its board in the linked repo: {requests:?}"
     );
 }
 
 #[test]
-fn a_project_routed_by_name_carries_its_unpaired_issue_to_the_same_repo() {
-    sweep_unpaired_project_routed_by("Kuro");
-}
+fn a_sweep_skips_a_project_with_no_entry() {
+    // The project names no repository in configuration, so it is not mirrored; its issue
+    // still is, in the mapping's own scope.
+    let mut harness = Harness::start();
+    harness.set_linear_project("project-plain", "Plain", "plain");
+    harness.set_linear_issue("issue-plain", "VED-101", Some("project-plain"), &[]);
 
-#[test]
-fn a_project_routed_by_slug_carries_its_unpaired_issue_to_the_same_repo() {
-    sweep_unpaired_project_routed_by("kuro");
+    let survey = harness.handler.survey(0).expect("a survey");
+    harness.handler.apply_survey(0, &survey).expect("applied");
+
+    let requests = harness.forge_requests();
+    assert!(
+        requests
+            .iter()
+            .all(|(method, path)| !(method == "POST" && path.ends_with("/projects"))),
+        "the unlinked project must not be mirrored: {requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|(method, path)| method == "POST"
+                && path == &format!("/api/v1/repos/{DEFAULT_SCOPE}/issues")),
+        "its issue still lands in the mapping scope: {requests:?}"
+    );
 }

@@ -32,8 +32,6 @@ fn fields() -> IssueFields {
         assignee: Some("vedaru".into()),
         project: None,
         slug: None,
-        identifier: None,
-        links: Vec::new(),
     }
 }
 
@@ -603,8 +601,6 @@ fn linear_fields() -> IssueFields {
         assignee: Some("vedaru@example.com".into()),
         project: None,
         slug: None,
-        identifier: None,
-        links: Vec::new(),
     }
 }
 

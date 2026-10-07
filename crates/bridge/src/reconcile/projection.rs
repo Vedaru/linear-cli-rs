@@ -239,8 +239,6 @@ mod tests {
             assignee: Some("loner@example.com".into()),
             project: None,
             slug: None,
-            identifier: None,
-            links: Vec::new(),
         }
     }
 

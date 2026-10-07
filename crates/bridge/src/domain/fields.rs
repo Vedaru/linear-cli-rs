@@ -50,26 +50,13 @@ pub struct IssueFields {
     /// A container's human-facing alias (a project's slug), when the platform
     /// exposes one.
     ///
-    /// This is an *identity* field, not a synced one: it is what a route may name a
-    /// project by, and no platform writes another's slug. It is deliberately absent
-    /// from [`IssueFields::signature`] and from [`diff`], so a platform that has no
-    /// slug reads and writes exactly as it did before this field existed - putting it
-    /// in the content comparison would make every project differ from its copy for
-    /// ever.
+    /// This is an *identity* field, not a synced one: it is what a
+    /// `[[mapping.project]]` entry may name a project by, and no platform writes
+    /// another's slug. It is deliberately absent from [`IssueFields::signature`] and
+    /// from [`diff`], so a platform that has no slug reads and writes exactly as it did
+    /// before this field existed - putting it in the content comparison would make every
+    /// project differ from its copy for ever.
     pub slug: Option<String>,
-    /// The identifier a platform shows a person (`VED-119`), where it has one apart
-    /// from the id.
-    ///
-    /// Like [`IssueFields::slug`], an *identity* field rather than a synced one: it is
-    /// what a `[[mapping.route]]` may name an issue by, and it is never written to the
-    /// other side. A forge has no such identifier, so this is `None` there and the
-    /// mirror is unchanged.
-    pub identifier: Option<String>,
-    /// URLs an entity declares about itself - a project's external links. Identity,
-    /// not content: a link is consulted only to resolve a scope on the sink platform
-    /// (the repository a project lives in), never compared or written. A platform
-    /// that declares none reads and writes exactly as it did before this field.
-    pub links: Vec<String>,
 }
 
 impl IssueFields {
