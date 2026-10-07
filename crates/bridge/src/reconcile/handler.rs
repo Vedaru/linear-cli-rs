@@ -166,7 +166,7 @@ impl ReconcileHandler {
     /// A sink event the mapping's declared scopes do not cover, but the link store does:
     /// the entity is already paired with this mapping's source, so the mapping owns it.
     ///
-    /// Placement is per entity by its link, so a mapping occupies no fixed set of
+    /// Placement is per entity by configuration, so a mapping occupies no fixed set of
     /// repositories and `side_of` can only check the scope it declares. This is the other
     /// half: a repository nobody paired stays nobody's, which is what keeps a delivery
     /// from an unmapped repository from becoming a call against a scope we do not hold.

@@ -169,10 +169,10 @@ impl ReconcileHandler {
     }
 
     /// The sink scope a source entity's mirror belongs in, for grouping a sweep, or
-    /// `None` when neither a pairing nor a declared link names one.
+    /// `None` when neither a pairing nor a `[[mapping.project]]` entry names one.
     ///
-    /// `found_facts` caches each project's links, so a sweep reads a project once
-    /// however many of its issues it judges.
+    /// `found_facts` caches each project's slug and name, so a sweep reads a project
+    /// once however many of its issues it judges.
     pub(super) fn found_scope(
         &mut self,
         mapping: &Mapping,

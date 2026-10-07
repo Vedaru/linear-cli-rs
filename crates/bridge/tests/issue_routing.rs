@@ -700,22 +700,22 @@ fn a_configured_entry_places_its_issues_and_an_unconfigured_project_is_not_a_can
             "/api/v1/repos/Vedaru/linked/issues".to_string(),
             format!("/api/v1/repos/{DEFAULT_SCOPE}/issues"),
         ],
-        "the linked project's issue goes to its link, the other to the mapping scope: {posts:?}"
+        "the configured project's issue goes to its repository, the other to the mapping scope: {posts:?}"
     );
-    // The project itself was created in the repo it links to.
+    // The project itself was created in the repo its entry names.
     assert!(
         harness.forge_requests().contains(&(
             "POST".to_string(),
             "/api/v1/repos/Vedaru/linked/projects".to_string()
         )),
-        "the linked project was not created in its linked repo: {:?}",
+        "the configured project was not created in its repository: {:?}",
         harness.forge_requests()
     );
 }
 
-/// A sweep of an unpaired project that links to a repository: the pass that creates both
-/// the project and its issue, and the guarantee that the issue comes with its project -
-/// both in the linked repository, and the issue on its board *there*.
+/// A sweep of an unpaired project that an entry places: the pass that creates both the
+/// project and its issue, and the guarantee that the issue comes with its project - both
+/// in the configured repository, and the issue on its board *there*.
 #[test]
 fn a_sweep_places_a_configured_project_and_carries_its_unpaired_issue_with_it() {
     let mut harness = Harness::start();
@@ -726,13 +726,13 @@ fn a_sweep_places_a_configured_project_and_carries_its_unpaired_issue_with_it() 
     harness.handler.apply_survey(0, &survey).expect("applied");
 
     let requests = harness.forge_requests();
-    // The project itself was created in its linked repository...
+    // The project itself was created in its configured repository...
     assert!(
         requests.contains(&(
             "POST".to_string(),
             "/api/v1/repos/Vedaru/kuro/projects".to_string()
         )),
-        "the project was not created in its linked repo: {requests:?}"
+        "the project was not created in its repository: {requests:?}"
     );
     // ...the issue was created in that same repository, not the default...
     let posts: Vec<&String> = requests

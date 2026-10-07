@@ -550,9 +550,9 @@ fn project_mirroring_is_off_unless_a_mapping_asks_for_it() {
 
 #[test]
 fn a_route_table_is_refused() {
-    // Placement is the project's declared link now; a `[[mapping.route]]` is no longer a
-    // config key, so a config that still carries one fails loudly rather than silently
-    // placing everything in the mapping's own scope.
+    // Placement is the `[[mapping.project]]` table now; a `[[mapping.route]]` is no
+    // longer a config key, so a config that still carries one fails loudly rather than
+    // silently placing everything in the mapping's own scope.
     let error = parse(&document(
         "\n[[mapping.route]]\nproject = \"project-uuid\"\nscope = \"Vedaru/kuro\"\n",
     ))
