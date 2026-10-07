@@ -18,7 +18,7 @@ use serde_json::{json, Map, Value};
 use crate::errors::{CliError, Result};
 use crate::{graphql, linear, output};
 
-use super::project_create::{api_status_type, resolve_project_content};
+use super::project_create::{api_status_type, parse_priority, resolve_project_content};
 use super::project_description::resolve_project_description;
 
 mod helpers;
@@ -153,6 +153,9 @@ pub struct ProjectUpdateArgs {
     /// Status (planned, started, paused, completed, canceled, backlog)
     #[arg(short = 's', long, value_name = "status")]
     pub status: Option<String>,
+    /// Project priority (none, urgent, high, medium, low)
+    #[arg(long, value_name = "priority")]
+    pub priority: Option<String>,
     /// Project lead (username, email, or @me). Use --clear-lead to remove it
     #[arg(short = 'l', long, value_name = "lead")]
     pub lead: Option<String>,
@@ -218,6 +221,7 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
         || args.content.is_some()
         || args.content_file.is_some()
         || args.status.as_ref().is_some_and(|value| !value.is_empty())
+        || args.priority.as_ref().is_some_and(|value| !value.is_empty())
         || args.lead.as_ref().is_some_and(|value| !value.is_empty())
         || args.clear_lead
         || args.start_date.is_some()
@@ -238,7 +242,7 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
             "At least one update option must be provided",
         )
         .suggestion(
-            "Use --name, --description, --description-file, --content, --content-file, --status, --lead, --clear-lead, --start-date, --clear-start-date, --target-date, --clear-target-date, --team, --add-team, --remove-team, --label, --add-label, --remove-label, --initiative, --add-initiative, or --remove-initiative",
+            "Use --name, --description, --description-file, --content, --content-file, --status, --priority, --lead, --clear-lead, --start-date, --clear-start-date, --target-date, --clear-target-date, --team, --add-team, --remove-team, --label, --add-label, --remove-label, --initiative, --add-initiative, or --remove-initiative",
         ));
     }
 
@@ -362,6 +366,12 @@ pub fn run(args: ProjectUpdateArgs) -> Result<()> {
                 return Err(CliError::not_found("Project status", api_type));
             };
             input.insert("statusId".to_string(), json!(status_id));
+        }
+    }
+
+    if let Some(priority) = &args.priority {
+        if !priority.is_empty() {
+            input.insert("priority".to_string(), json!(parse_priority(priority)?));
         }
     }
 

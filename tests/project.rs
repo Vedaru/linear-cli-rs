@@ -270,6 +270,54 @@ fn project_update_sends_update_input() {
 }
 
 #[test]
+fn project_update_sends_the_priority_it_was_given() {
+    // VED-484: `project create` had `--priority` but `project update` did not, though
+    // `ProjectUpdateInput.priority` accepts it.
+    let server = MockLinearServer::start(vec![MockResponse::new(
+        "UpdateProject",
+        json!({ "data": { "projectUpdate": {
+            "success": true,
+            "project": {
+                "id": PROJECT_ID,
+                "slugId": "launch",
+                "name": "Launch",
+                "description": null,
+                "url": "https://linear.app/acme/project/launch",
+                "updatedAt": "2024-02-01T00:00:00.000Z"
+            }
+        } } }),
+    )
+    .with_variables(json!({ "id": PROJECT_ID, "input": { "priority": 2 } }))]);
+
+    let out = run_cli(
+        &["project", "update", PROJECT_ID, "--priority", "high"],
+        &common::mock_env(&server),
+    );
+    assert!(out.success(), "stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("✓ Updated project: Launch"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn project_update_rejects_an_unknown_priority_before_the_write() {
+    let server = MockLinearServer::start(vec![]);
+
+    let out = run_cli(
+        &["project", "update", PROJECT_ID, "--priority", "whenever"],
+        &common::mock_env(&server),
+    );
+    assert!(!out.success());
+    assert!(
+        out.stderr.contains("Invalid priority"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
 fn project_delete_without_force_requires_confirmation_in_headless_run() {
     let server = MockLinearServer::start(vec![]);
 

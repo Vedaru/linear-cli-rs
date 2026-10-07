@@ -134,9 +134,9 @@ pub struct ProjectCreateArgs {
     pub json: bool,
 }
 
-const PRIORITY_HELP: &str = "Valid values: none, urgent, high, medium, low";
+pub(crate) const PRIORITY_HELP: &str = "Valid values: none, urgent, high, medium, low";
 
-fn parse_priority(priority: &str) -> Result<i64> {
+pub(crate) fn parse_priority(priority: &str) -> Result<i64> {
     match priority.to_lowercase().as_str() {
         "none" => Ok(0),
         "urgent" => Ok(1),
